@@ -51,6 +51,82 @@ func (a *staticApprover) Approve(_ context.Context, action approval.Action) (boo
 	return a.approved, nil
 }
 
+func TestToolSchemasRequireEveryProperty(t *testing.T) {
+	registry := newTestRegistry(t, t.TempDir(), &staticApprover{}, tools.Options{
+		MaxResultBytes:  1024,
+		MaxSearchResult: 10,
+		ParallelReads:   1,
+		CommandTimeout:  time.Second,
+	})
+	for _, def := range registry.Definitions() {
+		assertStrictSchema(t, def.Name, def.Parameters)
+	}
+}
+
+func assertStrictSchema(t *testing.T, name string, schema map[string]any) {
+	t.Helper()
+	if schema == nil {
+		return
+	}
+	if items, ok := schema["items"].(map[string]any); ok {
+		assertStrictSchema(t, name+".items", items)
+	}
+	if !schemaHasObjectType(schema["type"]) {
+		return
+	}
+	properties, _ := schema["properties"].(map[string]any)
+	required := stringSlice(schema["required"])
+	seen := make(map[string]bool, len(required))
+	for _, key := range required {
+		seen[key] = true
+	}
+	for key, raw := range properties {
+		if !seen[key] {
+			t.Fatalf("%s: property %q must be listed in required for strict tools", name, key)
+		}
+		if nested, ok := raw.(map[string]any); ok {
+			assertStrictSchema(t, name+"."+key, nested)
+		}
+	}
+}
+
+func schemaHasObjectType(value any) bool {
+	switch typed := value.(type) {
+	case string:
+		return typed == "object"
+	case []string:
+		for _, item := range typed {
+			if item == "object" {
+				return true
+			}
+		}
+	case []any:
+		for _, item := range typed {
+			text, _ := item.(string)
+			if text == "object" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func stringSlice(value any) []string {
+	switch typed := value.(type) {
+	case []string:
+		return typed
+	case []any:
+		out := make([]string, 0, len(typed))
+		for _, item := range typed {
+			text, _ := item.(string)
+			out = append(out, text)
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
 func TestReadToolsReturnUsefulBoundedResults(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "src/main.go", "package main\n\nfunc main() {}\n")

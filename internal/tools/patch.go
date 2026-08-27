@@ -66,33 +66,28 @@ Do not mix add, update, and delete on the same path. Prefer one apply_patch call
 			Parameters: objectSchema(map[string]any{
 				"changes": map[string]any{
 					"type": "array",
-					"items": map[string]any{
-						"type": "object",
-						"properties": map[string]any{
-							"path": map[string]any{
-								"type":        "string",
-								"description": "Workspace-relative file path.",
-							},
-							"action": map[string]any{
-								"type":        "string",
-								"description": "add, update, or delete.",
-							},
-							"content": map[string]any{
-								"type":        "string",
-								"description": "Full file contents for add.",
-							},
-							"old_text": map[string]any{
-								"type":        "string",
-								"description": "Exact text to replace for update; must occur once.",
-							},
-							"new_text": map[string]any{
-								"type":        "string",
-								"description": "Replacement text for update.",
-							},
+					"items": objectSchema(map[string]any{
+						"path": map[string]any{
+							"type":        "string",
+							"description": "Workspace-relative file path.",
 						},
-						"required":             []string{"path", "action"},
-						"additionalProperties": false,
-					},
+						"action": map[string]any{
+							"type":        "string",
+							"description": "add, update, or delete.",
+						},
+						"content": map[string]any{
+							"type":        []string{"string", "null"},
+							"description": "Full file contents for add, or null otherwise.",
+						},
+						"old_text": map[string]any{
+							"type":        []string{"string", "null"},
+							"description": "Exact text to replace for update, or null otherwise. Must occur once.",
+						},
+						"new_text": map[string]any{
+							"type":        []string{"string", "null"},
+							"description": "Replacement text for update, or null otherwise.",
+						},
+					}, "path", "action", "content", "old_text", "new_text"),
 					"description": "File operations to apply together.",
 				},
 			}, "changes"),
