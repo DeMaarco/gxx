@@ -5,6 +5,7 @@ set -eu
 repo="DeMaarco/gxx"
 install_dir="${GXX_INSTALL_DIR:-$HOME/.local/bin}"
 version="${GXX_VERSION:-latest}"
+token="${GITHUB_TOKEN:-${GH_TOKEN:-}}"
 
 usage() {
 	cat <<'EOF'
@@ -12,12 +13,17 @@ Install gxx from GitHub Releases.
 
 Usage:
   curl -fsSL https://raw.githubusercontent.com/DeMaarco/gxx/main/install.sh | sh
-  curl -fsSL https://raw.githubusercontent.com/DeMaarco/gxx/main/install.sh | sh -s -- --version v0.0.3
-  curl -fsSL https://raw.githubusercontent.com/DeMaarco/gxx/main/install.sh | sh -s -- --dir /usr/local/bin
+  gh api -H "Accept: application/vnd.github.raw" repos/DeMaarco/gxx/contents/install.sh | sh
+  sh install.sh --version v0.0.3
+  sh install.sh --dir /usr/local/bin
+
+The GitHub repo is private until made public. Anonymous curl only works for
+public repositories. Private installs need GitHub CLI (`gh`) or GITHUB_TOKEN.
 
 Environment:
   GXX_VERSION       Release tag or "latest" (default: latest)
   GXX_INSTALL_DIR   Install directory (default: ~/.local/bin)
+  GITHUB_TOKEN      Optional token for private release downloads
 EOF
 }
 
@@ -43,11 +49,6 @@ while [ $# -gt 0 ]; do
 	esac
 done
 
-if ! command -v curl >/dev/null 2>&1; then
-	echo "curl is required" >&2
-	exit 1
-fi
-
 os=$(uname -s | tr '[:upper:]' '[:lower:]')
 arch=$(uname -m)
 case "$arch" in
@@ -67,15 +68,11 @@ darwin | linux) ;;
 esac
 
 asset="gxx-${os}-${arch}"
-base="https://github.com/${repo}/releases"
-if [ "$version" = "latest" ] || [ -z "$version" ]; then
-	download="${base}/latest/download"
-else
+if [ "$version" != "latest" ] && [ -n "$version" ]; then
 	case "$version" in
 	v*) ;;
 	*) version="v${version}" ;;
 	esac
-	download="${base}/download/${version}"
 fi
 
 workdir=$(mktemp -d)
@@ -84,9 +81,86 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM HUP
 
-echo "Downloading ${asset} from ${download}..."
-curl -fsSL "${download}/${asset}" -o "${workdir}/${asset}"
-curl -fsSL "${download}/checksums.txt" -o "${workdir}/checksums.txt"
+download_with_gh() {
+	if [ "$version" = "latest" ]; then
+		gh release download -R "$repo" -p "$asset" -p checksums.txt -D "$workdir"
+	else
+		gh release download "$version" -R "$repo" -p "$asset" -p checksums.txt -D "$workdir"
+	fi
+}
+
+download_with_api() {
+	if [ "$version" = "latest" ]; then
+		api="https://api.github.com/repos/${repo}/releases/latest"
+	else
+		api="https://api.github.com/repos/${repo}/releases/tags/${version}"
+	fi
+	json="${workdir}/release.json"
+	curl -fsSL \
+		-H "Authorization: Bearer ${token}" \
+		-H "Accept: application/vnd.github+json" \
+		-H "X-GitHub-Api-Version: 2022-11-28" \
+		"$api" >"$json"
+	python3 - "$json" "$workdir" "$asset" "$token" <<'PY'
+import json, os, sys, urllib.request
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    release = json.load(handle)
+workdir, want, token = sys.argv[2], sys.argv[3], sys.argv[4]
+need = {want, "checksums.txt"}
+found = set()
+for asset in release.get("assets", []):
+    name = asset.get("name")
+    if name not in need:
+        continue
+    request = urllib.request.Request(
+        asset["url"],
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/octet-stream",
+            "User-Agent": "gxx-install",
+            "X-GitHub-Api-Version": "2022-11-28",
+        },
+    )
+    dest = os.path.join(workdir, name)
+    with urllib.request.urlopen(request) as response, open(dest, "wb") as out:
+        out.write(response.read())
+    found.add(name)
+missing = need - found
+if missing:
+    raise SystemExit("release is missing: " + ", ".join(sorted(missing)))
+PY
+}
+
+download_public() {
+	if [ "$version" = "latest" ]; then
+		base="https://github.com/${repo}/releases/latest/download"
+	else
+		base="https://github.com/${repo}/releases/download/${version}"
+	fi
+	curl -fsSL "${base}/${asset}" -o "${workdir}/${asset}"
+	curl -fsSL "${base}/checksums.txt" -o "${workdir}/checksums.txt"
+}
+
+echo "Downloading ${asset} (${version})..."
+if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+	download_with_gh
+elif [ -n "$token" ]; then
+	if ! command -v curl >/dev/null 2>&1; then
+		echo "curl is required" >&2
+		exit 1
+	fi
+	if ! command -v python3 >/dev/null 2>&1; then
+		echo "python3 is required for token downloads" >&2
+		exit 1
+	fi
+	download_with_api
+elif command -v curl >/dev/null 2>&1; then
+	download_public
+else
+	echo "install gh (authenticated) or curl to download gxx" >&2
+	exit 1
+fi
 
 expected=$(awk -v name="$asset" '$2 == name { print $1; exit }' "${workdir}/checksums.txt")
 if [ -z "$expected" ]; then

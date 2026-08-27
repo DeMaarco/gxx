@@ -24,19 +24,29 @@ web tools, background terminals, and ChatGPT OAuth are not included.
 
 ## Install
 
+If the GitHub repository is public:
+
 ```sh
 curl -fsSL https://raw.githubusercontent.com/DeMaarco/gxx/main/install.sh | sh
 ```
 
-The script downloads a macOS or Linux binary from GitHub Releases into
-`~/.local/bin`. Pin a release or pick another directory:
+This repository is private, so GitHub hides release binaries from anonymous
+`curl`. With GitHub CLI signed in, use:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/DeMaarco/gxx/main/install.sh | sh -s -- --version v0.0.3
-curl -fsSL https://raw.githubusercontent.com/DeMaarco/gxx/main/install.sh | sh -s -- --dir /usr/local/bin
+gh api -H "Accept: application/vnd.github.raw" repos/DeMaarco/gxx/contents/install.sh | sh
 ```
 
-If `gxx` is not found after install, add `~/.local/bin` to `PATH`.
+The script installs a macOS or Linux binary into `~/.local/bin`. Pin a release
+or pick another directory:
+
+```sh
+gh api -H "Accept: application/vnd.github.raw" repos/DeMaarco/gxx/contents/install.sh | sh -s -- --version v0.0.3
+gh api -H "Accept: application/vnd.github.raw" repos/DeMaarco/gxx/contents/install.sh | sh -s -- --dir /usr/local/bin
+```
+
+If `gxx` is not found after install, add `~/.local/bin` to `PATH`. A public
+`curl | sh` one-liner starts working once the repository is public.
 
 ## Requirements
 
