@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"syscall"
@@ -132,15 +134,42 @@ func (r *Registry) parseCommandArgs(raw json.RawMessage) (runCommandArgs, time.D
 }
 
 func sanitizedEnvironment(environment []string) []string {
-	filtered := make([]string, 0, len(environment))
+	home := ""
+	present := make(map[string]bool, len(environment))
+	filtered := make([]string, 0, len(environment)+2)
 	for _, entry := range environment {
-		name, _, found := strings.Cut(entry, "=")
-		if found && isSensitiveEnvironmentName(name) {
+		name, value, found := strings.Cut(entry, "=")
+		if !found {
+			continue
+		}
+		if strings.EqualFold(name, "HOME") {
+			home = value
+		}
+		if isSensitiveEnvironmentName(name) {
 			continue
 		}
 		filtered = append(filtered, entry)
+		present[name] = true
+	}
+	if home != "" {
+		if !present["GOMODCACHE"] {
+			filtered = append(filtered, "GOMODCACHE="+filepath.Join(home, "go", "pkg", "mod"))
+		}
+		if !present["GOCACHE"] {
+			filtered = append(filtered, "GOCACHE="+defaultGoCache(home))
+		}
+	}
+	if !present["GIT_TERMINAL_PROMPT"] {
+		filtered = append(filtered, "GIT_TERMINAL_PROMPT=0")
 	}
 	return filtered
+}
+
+func defaultGoCache(home string) string {
+	if runtime.GOOS == "darwin" {
+		return filepath.Join(home, "Library", "Caches", "go-build")
+	}
+	return filepath.Join(home, ".cache", "go-build")
 }
 
 func isSensitiveEnvironmentName(name string) bool {
@@ -148,7 +177,7 @@ func isSensitiveEnvironmentName(name string) bool {
 	switch upper {
 	case "OPENAI_API_KEY", "OPENAI_ADMIN_KEY", "GH_TOKEN", "GITHUB_TOKEN",
 		"GOOGLE_APPLICATION_CREDENTIALS", "BASH_ENV", "CDPATH", "ENV", "SHELLOPTS",
-		"ZDOTDIR", "HOME", "USERPROFILE":
+		"ZDOTDIR":
 		return true
 	}
 	if strings.HasPrefix(upper, "AWS_") {

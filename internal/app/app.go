@@ -23,7 +23,7 @@ import (
 	"gxx/internal/workspace"
 )
 
-var Version = "0.0.2"
+var Version = "0.0.3"
 
 type runtime struct {
 	config    config.Config
@@ -33,6 +33,7 @@ type runtime struct {
 	workspace *workspace.Workspace
 	provider  *openaiProvider.Provider
 	policy    *approval.Policy
+	registry  *tools.Registry
 }
 
 type jsonResult struct {
@@ -347,7 +348,7 @@ func newRuntimeFromConfig(
 	model := openaiProvider.New(
 		settings.APIKey,
 		settings.Model,
-		agent.SystemPrompt(ws),
+		agent.SystemPrompt(ws, false),
 		settings.APITimeout,
 	)
 	model.SetEffort(settings.Effort)
@@ -366,6 +367,7 @@ func newRuntimeFromConfig(
 		workspace: ws,
 		provider:  model,
 		policy:    policy,
+		registry:  registry,
 	}, nil
 }
 
@@ -388,6 +390,13 @@ func replSettings(rt *runtime, stdin io.Reader, stdout io.Writer) ui.REPLSetting
 		},
 		FetchContext: func() agent.ContextUsage {
 			return rt.provider.ContextSnapshot()
+		},
+		SetPlan: func(plan bool) error {
+			rt.provider.SetInstructions(agent.SystemPrompt(rt.workspace, plan))
+			if rt.registry != nil {
+				rt.registry.SetPlan(plan)
+			}
+			return nil
 		},
 		SyncSession: func(session ui.REPLSettings) error {
 			if _, err := config.SaveSession(

@@ -60,6 +60,13 @@ func formatStatus(settings REPLSettings) string {
 	return strings.Join(parts, paint(settings.Color, dim, " · "))
 }
 
+func promptPrefix(settings REPLSettings) string {
+	if !settings.Plan {
+		return "> "
+	}
+	return "> " + paint(settings.Color, yellow, "plan") + " "
+}
+
 func writeHeader(writer io.Writer, settings REPLSettings) error {
 	_, err := fmt.Fprintln(writer, formatHeader(settings))
 	return err
@@ -68,13 +75,14 @@ func writeHeader(writer io.Writer, settings REPLSettings) error {
 func writeChrome(writer io.Writer, settings REPLSettings) error {
 	header := formatHeader(settings)
 	status := formatStatus(settings)
+	prefix := promptPrefix(settings)
 	if settings.Color {
-		if _, err := fmt.Fprintf(writer, "%s\n> \n%s%s\r> ", header, status, cursorUp); err != nil {
+		if _, err := fmt.Fprintf(writer, "%s\n%s\n%s%s\r%s", header, prefix, status, cursorUp, prefix); err != nil {
 			return err
 		}
 		return nil
 	}
-	_, err := fmt.Fprintf(writer, "%s\n>\n%s\n", header, status)
+	_, err := fmt.Fprintf(writer, "%s\n%s\n%s\n", header, strings.TrimRight(prefix, " "), status)
 	return err
 }
 

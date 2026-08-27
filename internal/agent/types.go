@@ -14,6 +14,7 @@ const (
 	EventToolStarted EventKind = "tool_started"
 	EventToolDone    EventKind = "tool_done"
 	EventNotice      EventKind = "notice"
+	EventUsage       EventKind = "usage"
 )
 
 // Event is a provider-agnostic progress update for terminal renderers.
@@ -22,6 +23,7 @@ type Event struct {
 	Text      string
 	ToolCall  *ToolCall
 	Result    *ToolResult
+	Usage     Usage
 	Step      int
 	Truncated bool
 }

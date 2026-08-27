@@ -128,6 +128,27 @@ func formatCount(n int64) string {
 	return sign + grouped.String()
 }
 
+func formatCompactTokens(n int64) string {
+	sign := ""
+	if n < 0 {
+		sign = "-"
+		n = -n
+	}
+	if n < 1000 {
+		return sign + strconv.FormatInt(n, 10)
+	}
+	unit := "k"
+	value := float64(n) / 1000
+	if n >= 1_000_000 {
+		unit = "M"
+		value = float64(n) / 1_000_000
+	}
+	if value == float64(int64(value)) {
+		return sign + strconv.FormatInt(int64(value), 10) + unit
+	}
+	return sign + fmt.Sprintf("%.1f%s", value, unit)
+}
+
 func printUsage(writer io.Writer, color bool, report agent.UsageReport) {
 	text := strings.TrimRight(FormatUsage(report, color), "\n")
 	_, _ = fmt.Fprintln(writer, text)

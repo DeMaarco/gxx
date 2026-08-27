@@ -450,11 +450,6 @@ func NormalizeContext(value string) (string, error) {
 	}
 }
 
-func ValidateContext(value string) error {
-	_, err := NormalizeContext(value)
-	return err
-}
-
 func ContextTokens(value string) int {
 	label, err := NormalizeContext(value)
 	if err != nil {

@@ -12,11 +12,11 @@ import (
 	"os"
 	pathpkg "path"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
 	"gxx/internal/agent"
-	"gxx/internal/approval"
 )
 
 const (
@@ -30,30 +30,11 @@ const (
 	maxWriteBytes    = 1024 * 1024
 )
 
-var ignoredDirectories = map[string]struct{}{
-	".git":         {},
-	".hg":          {},
-	".svn":         {},
-	".cache":       {},
-	".idea":        {},
-	".next":        {},
-	".venv":        {},
-	"__pycache__":  {},
-	"bin":          {},
-	"build":        {},
-	"coverage":     {},
-	"dist":         {},
-	"node_modules": {},
-	"target":       {},
-	"vendor":       {},
-	"venv":         {},
-}
-
 func (r *Registry) listFilesSpec() toolSpec {
 	return toolSpec{
 		definition: agent.ToolDefinition{
 			Name:        "list_files",
-			Description: "List files and directories under a workspace-relative path. Common dependency directories, .gitignore, and .gxxignore patterns are skipped.",
+			Description: "List files and directories under a workspace-relative path. Default dependency directories, .gitignore, and .gxxignore patterns are skipped.",
 			ReadOnly:    true,
 			Parameters: objectSchema(map[string]any{
 				"path": map[string]any{
@@ -74,22 +55,30 @@ func (r *Registry) searchFilesSpec() toolSpec {
 	return toolSpec{
 		definition: agent.ToolDefinition{
 			Name:        "search_files",
-			Description: "Search regular text files for a case-insensitive literal string and return matching lines. Common dependency directories, .gitignore, and .gxxignore patterns are skipped.",
+			Description: "Search regular text files and return matching lines as path:line:text. query is a RE2 regular expression; if it does not compile, it is searched as a literal string. Matching is case-insensitive unless case_sensitive is true. Optional glob limits files (gitignore style, for example *.go or **/*_test.go). Default dependency directories, .gitignore, and .gxxignore patterns are skipped.",
 			ReadOnly:    true,
 			Parameters: objectSchema(map[string]any{
 				"query": map[string]any{
 					"type":        "string",
-					"description": "Non-empty literal text to find.",
+					"description": "Non-empty RE2 regular expression, or literal text if the pattern does not compile.",
 				},
 				"path": map[string]any{
 					"type":        []string{"string", "null"},
 					"description": "Relative file or directory to search, or null for the workspace root.",
 				},
+				"glob": map[string]any{
+					"type":        []string{"string", "null"},
+					"description": "Optional gitignore-style file filter, or null to search all text files.",
+				},
 				"max_results": map[string]any{
 					"type":        []string{"integer", "null"},
 					"description": "Maximum matches to return, or null for the configured limit.",
 				},
-			}, "query", "path", "max_results"),
+				"case_sensitive": map[string]any{
+					"type":        []string{"boolean", "null"},
+					"description": "If true, match case-sensitively. Null or false is case-insensitive.",
+				},
+			}, "query", "path", "glob", "max_results", "case_sensitive"),
 		},
 		run: r.searchFiles,
 	}
@@ -117,52 +106,6 @@ func (r *Registry) readFileSpec() toolSpec {
 			}, "path", "offset_line", "limit_lines"),
 		},
 		run: r.readFile,
-	}
-}
-
-func (r *Registry) editFileSpec() toolSpec {
-	return toolSpec{
-		definition: agent.ToolDefinition{
-			Name:        "edit_file",
-			Description: "Replace exactly one occurrence of old_text in an existing workspace file. Prefer apply_patch for anything larger than a single exact replacement. Requires user approval.",
-			ReadOnly:    false,
-			Parameters: objectSchema(map[string]any{
-				"path": map[string]any{
-					"type":        "string",
-					"description": "Workspace-relative file path.",
-				},
-				"old_text": map[string]any{
-					"type":        "string",
-					"description": "Exact non-empty text that must occur once.",
-				},
-				"new_text": map[string]any{
-					"type":        "string",
-					"description": "Replacement text.",
-				},
-			}, "path", "old_text", "new_text"),
-		},
-		prepare: r.prepareEditFile,
-	}
-}
-
-func (r *Registry) writeFileSpec() toolSpec {
-	return toolSpec{
-		definition: agent.ToolDefinition{
-			Name:        "write_file",
-			Description: "Create a new workspace file, creating parent directories as needed. Fails if the path already exists; use apply_patch or edit_file to change existing files. Requires user approval.",
-			ReadOnly:    false,
-			Parameters: objectSchema(map[string]any{
-				"path": map[string]any{
-					"type":        "string",
-					"description": "Workspace-relative file path.",
-				},
-				"content": map[string]any{
-					"type":        "string",
-					"description": "Complete new file contents.",
-				},
-			}, "path", "content"),
-		},
-		prepare: r.prepareWriteFile,
 	}
 }
 
@@ -255,9 +198,11 @@ func (r *Registry) listFiles(ctx context.Context, raw json.RawMessage) (string, 
 }
 
 type searchFilesArgs struct {
-	Query      string  `json:"query"`
-	Path       *string `json:"path"`
-	MaxResults *int    `json:"max_results"`
+	Query         string  `json:"query"`
+	Path          *string `json:"path"`
+	Glob          *string `json:"glob"`
+	MaxResults    *int    `json:"max_results"`
+	CaseSensitive *bool   `json:"case_sensitive"`
 }
 
 func (r *Registry) searchFiles(ctx context.Context, raw json.RawMessage) (string, error) {
@@ -275,6 +220,11 @@ func (r *Registry) searchFiles(ctx context.Context, raw json.RawMessage) (string
 		return "", errors.New("max_results must be positive")
 	}
 	limit = min(limit, r.maxSearchResults)
+	glob, err := compilePathGlob(optionalString(args.Glob, ""))
+	if err != nil {
+		return "", fmt.Errorf("invalid glob: %w", err)
+	}
+	matchLine := compileSearchMatcher(query, optionalBool(args.CaseSensitive, false))
 
 	target, err := r.workspace.Clean(path)
 	if err != nil {
@@ -284,10 +234,10 @@ func (r *Registry) searchFiles(ctx context.Context, raw json.RawMessage) (string
 	matcher := r.ignoreForWalk(target)
 	var matches []string
 	searchOne := func(file string) error {
-		if isSensitivePath(file) || matcher.ignores(file, false) {
+		if isSensitivePath(file) || matcher.ignores(file, false) || !matchPathGlob(glob, file) {
 			return nil
 		}
-		found, err := r.searchTextFile(ctx, file, query, limit-len(matches))
+		found, err := r.searchTextFile(ctx, file, matchLine, limit-len(matches))
 		if err != nil {
 			return err
 		}
@@ -327,7 +277,7 @@ func (r *Registry) searchFiles(ctx context.Context, raw json.RawMessage) (string
 			if len(matches) >= limit {
 				return errStopWalk
 			}
-			if isSensitivePath(current) || matcher.ignores(current, false) {
+			if isSensitivePath(current) || matcher.ignores(current, false) || !matchPathGlob(glob, current) {
 				return nil
 			}
 			fileInfo, err := r.workspace.Stat(current)
@@ -421,149 +371,29 @@ func (r *Registry) readFile(ctx context.Context, raw json.RawMessage) (string, e
 	return strings.TrimSuffix(output.String(), "\n"), nil
 }
 
-type editFileArgs struct {
-	Path    string `json:"path"`
-	OldText string `json:"old_text"`
-	NewText string `json:"new_text"`
-}
-
-func (r *Registry) prepareEditFile(raw json.RawMessage) (approval.Action, toolRun, error) {
-	args, current, proposed, err := r.proposedEdit(raw)
-	if err != nil {
-		return approval.Action{}, nil, err
+func compileSearchMatcher(query string, caseSensitive bool) func(string) bool {
+	pattern := query
+	if !caseSensitive {
+		pattern = "(?i)" + query
 	}
-	action := approval.Action{
-		Title:   "Edit " + args.Path,
-		Preview: approval.CapPreview(compactDiff(args.Path, string(current), string(proposed))),
-		Kind:    approval.KindWrite,
+	if re, err := regexp.Compile(pattern); err == nil {
+		return re.MatchString
 	}
-	run := func(ctx context.Context) (string, error) {
-		if err := ctx.Err(); err != nil {
-			return "", err
+	if caseSensitive {
+		return func(line string) bool {
+			return strings.Contains(line, query)
 		}
-		latest, err := r.workspace.ReadRegularFile(args.Path, maxEditableFile)
-		if err != nil {
-			return "", err
-		}
-		if !bytes.Equal(latest, current) {
-			return "", errors.New("file changed after approval; edit was not applied")
-		}
-		if err := r.workspace.AtomicWrite(args.Path, proposed); err != nil {
-			return "", err
-		}
-		return fmt.Sprintf("Updated %s", args.Path), nil
 	}
-	return action, run, nil
-}
-
-func (r *Registry) proposedEdit(raw json.RawMessage) (editFileArgs, []byte, []byte, error) {
-	var args editFileArgs
-	if err := decodeArgs(raw, &args); err != nil {
-		return args, nil, nil, err
+	needle := strings.ToLower(query)
+	return func(line string) bool {
+		return strings.Contains(strings.ToLower(line), needle)
 	}
-	if strings.TrimSpace(args.Path) == "" {
-		return args, nil, nil, errors.New("path cannot be empty")
-	}
-	if isSensitivePath(args.Path) {
-		return args, nil, nil, fmt.Errorf("refusing to edit sensitive path: %s", args.Path)
-	}
-	if args.OldText == "" {
-		return args, nil, nil, errors.New("old_text cannot be empty")
-	}
-	if len(args.OldText)+len(args.NewText) > maxEditableFile {
-		return args, nil, nil, errors.New("edit payload is too large")
-	}
-	current, err := r.workspace.ReadRegularFile(args.Path, maxEditableFile)
-	if err != nil {
-		return args, nil, nil, err
-	}
-	count := bytes.Count(current, []byte(args.OldText))
-	if count != 1 {
-		return args, nil, nil, fmt.Errorf("old_text must occur exactly once; found %d occurrences", count)
-	}
-	proposed := bytes.Replace(current, []byte(args.OldText), []byte(args.NewText), 1)
-	return args, current, proposed, nil
-}
-
-type writeFileArgs struct {
-	Path    string `json:"path"`
-	Content string `json:"content"`
-}
-
-func (r *Registry) prepareWriteFile(raw json.RawMessage) (approval.Action, toolRun, error) {
-	var args writeFileArgs
-	if err := decodeArgs(raw, &args); err != nil {
-		return approval.Action{}, nil, err
-	}
-	if err := validateWriteArgs(args); err != nil {
-		return approval.Action{}, nil, err
-	}
-	if _, err := r.workspace.Clean(args.Path); err != nil {
-		return approval.Action{}, nil, err
-	}
-	current, existed, err := r.fileSnapshot(args.Path)
-	if err != nil {
-		return approval.Action{}, nil, err
-	}
-	if existed {
-		return approval.Action{}, nil, fmt.Errorf(
-			"write_file can only create new files; %s already exists (use apply_patch or edit_file)",
-			args.Path,
-		)
-	}
-	proposed := []byte(args.Content)
-	action := approval.Action{
-		Title:   "Write " + args.Path,
-		Preview: approval.CapPreview(compactDiff(args.Path, string(current), args.Content)),
-		Kind:    approval.KindWrite,
-	}
-	run := func(ctx context.Context) (string, error) {
-		if err := ctx.Err(); err != nil {
-			return "", err
-		}
-		latest, stillExists, err := r.fileSnapshot(args.Path)
-		if err != nil {
-			return "", err
-		}
-		if stillExists != existed || !bytes.Equal(latest, current) {
-			return "", errors.New("file changed after approval; write was not applied")
-		}
-		if err := r.workspace.AtomicWrite(args.Path, proposed); err != nil {
-			return "", err
-		}
-		return fmt.Sprintf("Wrote %s", args.Path), nil
-	}
-	return action, run, nil
-}
-
-func validateWriteArgs(args writeFileArgs) error {
-	if strings.TrimSpace(args.Path) == "" {
-		return errors.New("path cannot be empty")
-	}
-	if isSensitivePath(args.Path) {
-		return fmt.Errorf("refusing to write sensitive path: %s", args.Path)
-	}
-	if len(args.Content) > maxWriteBytes {
-		return fmt.Errorf("content exceeds %d bytes", maxWriteBytes)
-	}
-	return nil
-}
-
-func (r *Registry) fileSnapshot(path string) ([]byte, bool, error) {
-	current, err := r.workspace.ReadRegularFile(path, maxEditableFile)
-	if err == nil {
-		return current, true, nil
-	}
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, false, nil
-	}
-	return nil, false, err
 }
 
 func (r *Registry) searchTextFile(
 	ctx context.Context,
 	path string,
-	query string,
+	match func(string) bool,
 	limit int,
 ) ([]string, error) {
 	if limit <= 0 {
@@ -582,7 +412,6 @@ func (r *Registry) searchTextFile(
 		return nil, err
 	}
 
-	needle := strings.ToLower(query)
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
 	var matches []string
@@ -593,7 +422,7 @@ func (r *Registry) searchTextFile(
 		}
 		line++
 		text := scanner.Text()
-		if strings.Contains(strings.ToLower(text), needle) {
+		if match(text) {
 			text = truncateLine(text, 300)
 			matches = append(matches, fmt.Sprintf("%s:%d:%s", path, line, text))
 			if len(matches) >= limit {
@@ -618,11 +447,6 @@ func truncateLine(value string, limit int) string {
 		return value
 	}
 	return value[:limit] + "…"
-}
-
-func isIgnoredDirectory(name string) bool {
-	_, ignored := ignoredDirectories[name]
-	return ignored
 }
 
 func isSensitivePath(value string) bool {
@@ -679,6 +503,13 @@ func optionalString(value *string, fallback string) string {
 }
 
 func optionalInt(value *int, fallback int) int {
+	if value == nil {
+		return fallback
+	}
+	return *value
+}
+
+func optionalBool(value *bool, fallback bool) bool {
 	if value == nil {
 		return fallback
 	}

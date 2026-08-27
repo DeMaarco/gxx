@@ -52,6 +52,7 @@ func (l *Loop) Run(ctx context.Context, prompt string, emit EmitFunc) (Result, e
 		}
 		result.Steps = step
 		result.Usage.Add(response.Usage)
+		Emit(emit, Event{Kind: EventUsage, Usage: result.Usage, Step: step})
 
 		if len(response.ToolCalls) == 0 {
 			result.Answer = response.Text

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"gxx/internal/agent"
@@ -39,6 +40,7 @@ type Registry struct {
 	parallelReads    int
 	commandTimeout   time.Duration
 	specs            map[string]toolSpec
+	plan             atomic.Bool
 }
 
 func NewRegistry(ws *workspace.Workspace, approver approval.Approver, options Options) *Registry {
@@ -56,13 +58,15 @@ func NewRegistry(ws *workspace.Workspace, approver approval.Approver, options Op
 		r.searchFilesSpec(),
 		r.readFileSpec(),
 		r.applyPatchSpec(),
-		r.editFileSpec(),
-		r.writeFileSpec(),
 		r.runCommandSpec(),
 	} {
 		r.specs[spec.definition.Name] = spec
 	}
 	return r
+}
+
+func (r *Registry) SetPlan(plan bool) {
+	r.plan.Store(plan)
 }
 
 func (r *Registry) Definitions() []agent.ToolDefinition {
@@ -71,13 +75,16 @@ func (r *Registry) Definitions() []agent.ToolDefinition {
 		"search_files",
 		"read_file",
 		"apply_patch",
-		"edit_file",
-		"write_file",
 		"run_command",
 	}
+	plan := r.plan.Load()
 	definitions := make([]agent.ToolDefinition, 0, len(order))
 	for _, name := range order {
-		definitions = append(definitions, r.specs[name].definition)
+		spec := r.specs[name]
+		if plan && !spec.definition.ReadOnly {
+			continue
+		}
+		definitions = append(definitions, spec.definition)
 	}
 	return definitions
 }
@@ -149,6 +156,15 @@ func (r *Registry) executeOne(ctx context.Context, call agent.ToolCall, emit age
 	spec, exists := r.specs[call.Name]
 	if !exists {
 		result := errorResult(call, fmt.Errorf("unknown tool %q", call.Name), 0)
+		agent.Emit(emit, agent.Event{Kind: agent.EventToolDone, Result: &result})
+		return result
+	}
+	if r.plan.Load() && !spec.definition.ReadOnly {
+		result := errorResult(
+			call,
+			fmt.Errorf("plan mode: writes and commands are disabled; press Shift+Tab to return to agent mode"),
+			0,
+		)
 		agent.Emit(emit, agent.Event{Kind: agent.EventToolDone, Result: &result})
 		return result
 	}

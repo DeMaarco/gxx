@@ -14,35 +14,74 @@ import (
 	"gxx/internal/workspace"
 )
 
-const maxPatchResultBytes = 16 * 1024 * 1024
+const (
+	maxPatchResultBytes = 16 * 1024 * 1024
+	maxPatchChanges     = 50
+)
 
 type applyPatchArgs struct {
-	Patch string `json:"patch"`
+	Changes []patchChange `json:"changes"`
+}
+
+type patchChange struct {
+	Path    string  `json:"path"`
+	Action  string  `json:"action"`
+	Content *string `json:"content"`
+	OldText *string `json:"old_text"`
+	NewText *string `json:"new_text"`
+}
+
+type patchFileWork struct {
+	path   string
+	action string
+	before []byte
+	after  []byte
 }
 
 func (r *Registry) applyPatchSpec() toolSpec {
 	return toolSpec{
 		definition: agent.ToolDefinition{
 			Name: "apply_patch",
-			Description: `Preferred way to update existing files. Apply an approved multi-file patch as one transaction. Format:
-*** Begin Patch
-*** Add File: path
-+new line
-*** Update File: path
-@@
- context line
--old line
-+new line
-*** Delete File: path
-*** End Patch
-Prefix unchanged hunk lines with one space. Use "*** End of File" after the last content line only when the file has no final newline.`,
+			Description: `Create, update, or delete workspace files in one approved transaction.
+Pass changes as an array of objects:
+- action add: create a new file; content is the full file; fails if the path exists.
+- action update: replace old_text with new_text; old_text must occur exactly once. Multiple updates to the same path apply in order.
+- action delete: remove an existing file.
+Do not mix add, update, and delete on the same path. Prefer one apply_patch call for related files.`,
 			ReadOnly: false,
 			Parameters: objectSchema(map[string]any{
-				"patch": map[string]any{
-					"type":        "string",
-					"description": "Complete Begin Patch/End Patch document containing one or more file operations.",
+				"changes": map[string]any{
+					"type": "array",
+					"items": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"path": map[string]any{
+								"type":        "string",
+								"description": "Workspace-relative file path.",
+							},
+							"action": map[string]any{
+								"type":        "string",
+								"description": "add, update, or delete.",
+							},
+							"content": map[string]any{
+								"type":        "string",
+								"description": "Full file contents for add.",
+							},
+							"old_text": map[string]any{
+								"type":        "string",
+								"description": "Exact text to replace for update; must occur once.",
+							},
+							"new_text": map[string]any{
+								"type":        "string",
+								"description": "Replacement text for update.",
+							},
+						},
+						"required":             []string{"path", "action"},
+						"additionalProperties": false,
+					},
+					"description": "File operations to apply together.",
 				},
-			}, "patch"),
+			}, "changes"),
 		},
 		prepare: r.prepareApplyPatch,
 	}
@@ -51,101 +90,67 @@ Prefix unchanged hunk lines with one space. Use "*** End of File" after the last
 func (r *Registry) prepareApplyPatch(
 	raw json.RawMessage,
 ) (approval.Action, toolRun, error) {
+	if err := rejectLegacyPatchDocument(raw); err != nil {
+		return approval.Action{}, nil, err
+	}
 	var args applyPatchArgs
 	if err := decodeArgs(raw, &args); err != nil {
 		return approval.Action{}, nil, err
 	}
-	operations, err := parsePatch(args.Patch)
-	if err != nil {
-		return approval.Action{}, nil, err
+	if len(args.Changes) == 0 {
+		return approval.Action{}, nil, errors.New("changes cannot be empty")
+	}
+	if len(args.Changes) > maxPatchChanges {
+		return approval.Action{}, nil, fmt.Errorf("changes exceeds %d operations", maxPatchChanges)
 	}
 
-	changes := make([]workspace.FileChange, 0, len(operations))
-	paths := make([]string, 0, len(operations))
-	seen := make(map[string]struct{}, len(operations))
-	var preview strings.Builder
-	totalBytes := 0
-
-	for _, operation := range operations {
-		clean, err := r.workspace.Clean(operation.path)
+	works := make([]*patchFileWork, 0, len(args.Changes))
+	byPath := make(map[string]*patchFileWork, len(args.Changes))
+	var totalBytes int
+	for _, change := range args.Changes {
+		work, err := r.applyPatchChange(byPath, &works, change)
 		if err != nil {
-			return approval.Action{}, nil, fmt.Errorf("%s: %w", operation.path, err)
+			return approval.Action{}, nil, err
 		}
-		if clean != operation.path || strings.TrimSpace(operation.path) != operation.path {
-			return approval.Action{}, nil, fmt.Errorf(
-				"patch path must already be normalized: %q",
-				operation.path,
-			)
-		}
-		if isSensitivePath(clean) {
-			return approval.Action{}, nil, fmt.Errorf(
-				"refusing to patch sensitive path: %s",
-				clean,
-			)
-		}
-		if _, exists := seen[clean]; exists {
-			return approval.Action{}, nil, fmt.Errorf("duplicate patch path %q", clean)
-		}
-		seen[clean] = struct{}{}
-
-		change := workspace.FileChange{Path: clean}
-		var before, after []byte
-		switch operation.kind {
-		case patchAdd:
-			if _, err := r.workspace.Lstat(clean); err == nil {
-				return approval.Action{}, nil, fmt.Errorf("cannot add existing path %q", clean)
-			} else if !errors.Is(err, os.ErrNotExist) {
-				return approval.Action{}, nil, fmt.Errorf("inspect %s: %w", clean, err)
-			}
-			after = append([]byte(nil), operation.data...)
-			change.Data = after
-
-		case patchUpdate:
-			before, err = r.workspace.ReadRegularFile(clean, maxEditableFile)
-			if err != nil {
-				return approval.Action{}, nil, err
-			}
-			after, err = applyPatchHunks(before, operation)
-			if err != nil {
-				return approval.Action{}, nil, err
-			}
-			if bytes.Equal(before, after) {
-				return approval.Action{}, nil, fmt.Errorf("patch does not change %s", clean)
-			}
-			change.Data = after
-			change.Expected = before
-			change.ExpectedExists = true
-
-		case patchDelete:
-			before, err = r.workspace.ReadRegularFile(clean, maxEditableFile)
-			if err != nil {
-				return approval.Action{}, nil, err
-			}
-			change.Delete = true
-			change.Expected = before
-			change.ExpectedExists = true
-
-		default:
-			return approval.Action{}, nil, errors.New("unsupported patch operation")
-		}
-
-		totalBytes += len(before) + len(after)
+		totalBytes += len(work.before) + len(work.after)
 		if totalBytes > maxPatchResultBytes {
 			return approval.Action{}, nil, fmt.Errorf(
 				"patch transaction exceeds %d bytes",
 				maxPatchResultBytes,
 			)
 		}
+	}
+
+	fileChanges := make([]workspace.FileChange, 0, len(works))
+	paths := make([]string, 0, len(works))
+	var preview strings.Builder
+	for _, work := range works {
+		if work.action == "update" && bytes.Equal(work.before, work.after) {
+			return approval.Action{}, nil, fmt.Errorf("patch does not change %s", work.path)
+		}
+		change := workspace.FileChange{Path: work.path}
+		switch work.action {
+		case "add":
+			change.Data = work.after
+		case "update":
+			change.Data = work.after
+			change.Expected = work.before
+			change.ExpectedExists = true
+		case "delete":
+			change.Delete = true
+			change.Expected = work.before
+			change.ExpectedExists = true
+		}
 		if preview.Len() > 0 {
 			preview.WriteString("\n\n")
 		}
-		preview.WriteString(compactDiff(clean, string(before), string(after)))
-		changes = append(changes, change)
-		paths = append(paths, clean)
+		preview.WriteString(compactDiff(work.path, string(work.before), string(work.after)))
+		fileChanges = append(fileChanges, change)
+		paths = append(paths, work.path)
 	}
 
 	action := approval.Action{
-		Title:   fmt.Sprintf("Apply patch to %d file(s)", len(changes)),
+		Title:   fmt.Sprintf("Apply patch to %d file(s)", len(fileChanges)),
 		Preview: approval.CapPreview(preview.String()),
 		Kind:    approval.KindWrite,
 	}
@@ -153,7 +158,7 @@ func (r *Registry) prepareApplyPatch(
 		if err := ctx.Err(); err != nil {
 			return "", err
 		}
-		if err := r.workspace.ApplyTransaction(changes); err != nil {
+		if err := r.workspace.ApplyTransaction(fileChanges); err != nil {
 			return "", err
 		}
 		return fmt.Sprintf(
@@ -163,4 +168,108 @@ func (r *Registry) prepareApplyPatch(
 		), nil
 	}
 	return action, run, nil
+}
+
+func rejectLegacyPatchDocument(raw json.RawMessage) error {
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		return nil
+	}
+	if _, ok := obj["patch"]; ok {
+		return errors.New("apply_patch no longer accepts a patch document; pass changes as [{path, action, ...}]")
+	}
+	return nil
+}
+
+func (r *Registry) applyPatchChange(
+	byPath map[string]*patchFileWork,
+	works *[]*patchFileWork,
+	change patchChange,
+) (*patchFileWork, error) {
+	action := strings.TrimSpace(change.Action)
+	if action != "add" && action != "update" && action != "delete" {
+		return nil, fmt.Errorf("unsupported action %q", change.Action)
+	}
+	if strings.TrimSpace(change.Path) == "" {
+		return nil, errors.New("path cannot be empty")
+	}
+	clean, err := r.workspace.Clean(change.Path)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", change.Path, err)
+	}
+	if clean != change.Path || strings.TrimSpace(change.Path) != change.Path {
+		return nil, fmt.Errorf("patch path must already be normalized: %q", change.Path)
+	}
+	if isSensitivePath(clean) {
+		return nil, fmt.Errorf("refusing to patch sensitive path: %s", clean)
+	}
+
+	work, seen := byPath[clean]
+	if seen && work.action != action {
+		return nil, fmt.Errorf("cannot mix %s and %s on %s", work.action, action, clean)
+	}
+
+	switch action {
+	case "add":
+		if seen {
+			return nil, fmt.Errorf("duplicate add for %s", clean)
+		}
+		if change.Content == nil {
+			return nil, fmt.Errorf("add requires content for %s", clean)
+		}
+		if len(*change.Content) > maxWriteBytes {
+			return nil, fmt.Errorf("content exceeds %d bytes", maxWriteBytes)
+		}
+		if _, err := r.workspace.Lstat(clean); err == nil {
+			return nil, fmt.Errorf("cannot add existing path %q", clean)
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("inspect %s: %w", clean, err)
+		}
+		work = &patchFileWork{path: clean, action: "add", after: []byte(*change.Content)}
+		byPath[clean] = work
+		*works = append(*works, work)
+
+	case "update":
+		oldText := ""
+		if change.OldText != nil {
+			oldText = *change.OldText
+		}
+		newText := ""
+		if change.NewText != nil {
+			newText = *change.NewText
+		}
+		if oldText == "" {
+			return nil, fmt.Errorf("update requires old_text for %s", clean)
+		}
+		if len(oldText)+len(newText) > maxEditableFile {
+			return nil, errors.New("edit payload is too large")
+		}
+		if !seen {
+			before, err := r.workspace.ReadRegularFile(clean, maxEditableFile)
+			if err != nil {
+				return nil, err
+			}
+			work = &patchFileWork{path: clean, action: "update", before: before, after: append([]byte(nil), before...)}
+			byPath[clean] = work
+			*works = append(*works, work)
+		}
+		count := bytes.Count(work.after, []byte(oldText))
+		if count != 1 {
+			return nil, fmt.Errorf("old_text must occur exactly once in %s; found %d occurrences", clean, count)
+		}
+		work.after = bytes.Replace(work.after, []byte(oldText), []byte(newText), 1)
+
+	case "delete":
+		if seen {
+			return nil, fmt.Errorf("duplicate delete for %s", clean)
+		}
+		before, err := r.workspace.ReadRegularFile(clean, maxEditableFile)
+		if err != nil {
+			return nil, err
+		}
+		work = &patchFileWork{path: clean, action: "delete", before: before}
+		byPath[clean] = work
+		*works = append(*works, work)
+	}
+	return work, nil
 }

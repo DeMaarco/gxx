@@ -141,25 +141,6 @@ func (w *Workspace) ReadRegularFile(path string, maxBytes int64) ([]byte, error)
 	return data, nil
 }
 
-// ResolveExisting returns a real path for an object that must already exist.
-func (w *Workspace) ResolveExisting(path string) (string, error) {
-	return w.resolve(path, false)
-}
-
-// ResolveForWrite validates a potentially missing path and resolves its nearest
-// existing parent, preventing writes through symlinks that leave the workspace.
-func (w *Workspace) ResolveForWrite(path string) (string, error) {
-	return w.resolve(path, true)
-}
-
-func (w *Workspace) Relative(path string) string {
-	relative, err := filepath.Rel(w.root, path)
-	if err != nil {
-		return path
-	}
-	return filepath.ToSlash(relative)
-}
-
 func (w *Workspace) AtomicWrite(path string, data []byte) error {
 	target, err := w.Clean(path)
 	if err != nil {
@@ -262,77 +243,4 @@ func (w *Workspace) createTemp(parent string, mode os.FileMode) (string, *os.Fil
 		}
 	}
 	return "", nil, errors.New("could not allocate temporary file")
-}
-
-func (w *Workspace) resolve(path string, allowMissing bool) (string, error) {
-	if strings.TrimSpace(path) == "" {
-		return "", errors.New("path cannot be empty")
-	}
-	if filepath.IsAbs(path) {
-		return "", errors.New("absolute paths are not allowed")
-	}
-
-	clean := filepath.Clean(filepath.FromSlash(path))
-	if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
-		return "", errors.New("path leaves the workspace")
-	}
-
-	candidate := filepath.Join(w.root, clean)
-	if !within(w.root, candidate) {
-		return "", errors.New("path leaves the workspace")
-	}
-
-	resolved, err := filepath.EvalSymlinks(candidate)
-	if err == nil {
-		if !within(w.root, resolved) {
-			return "", errors.New("path resolves outside the workspace")
-		}
-		return filepath.Clean(resolved), nil
-	}
-	if !allowMissing || !errors.Is(err, os.ErrNotExist) {
-		return "", fmt.Errorf("resolve path: %w", err)
-	}
-
-	current := candidate
-	var suffix []string
-	for {
-		_, statErr := os.Lstat(current)
-		if statErr == nil {
-			break
-		}
-		if !errors.Is(statErr, os.ErrNotExist) {
-			return "", fmt.Errorf("inspect path: %w", statErr)
-		}
-		parent := filepath.Dir(current)
-		if parent == current {
-			return "", errors.New("no existing parent inside workspace")
-		}
-		suffix = append([]string{filepath.Base(current)}, suffix...)
-		current = parent
-	}
-
-	realParent, err := filepath.EvalSymlinks(current)
-	if err != nil {
-		return "", fmt.Errorf("resolve parent: %w", err)
-	}
-	if !within(w.root, realParent) {
-		return "", errors.New("path parent resolves outside the workspace")
-	}
-
-	parts := append([]string{realParent}, suffix...)
-	resolved = filepath.Join(parts...)
-	if !within(w.root, resolved) {
-		return "", errors.New("path resolves outside the workspace")
-	}
-	return filepath.Clean(resolved), nil
-}
-
-func within(root, path string) bool {
-	relative, err := filepath.Rel(root, path)
-	if err != nil {
-		return false
-	}
-	return relative != ".." &&
-		!strings.HasPrefix(relative, ".."+string(filepath.Separator)) &&
-		!filepath.IsAbs(relative)
 }

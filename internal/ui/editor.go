@@ -27,6 +27,7 @@ const (
 	keyRune
 	keyEnter
 	keyTab
+	keyShiftTab
 	keyBackspace
 	keyDelete
 	keyUp
@@ -68,6 +69,7 @@ type inputState struct {
 	sessionFast       bool
 	sessionPermission string
 	modeIndex         int
+	exitArmed         bool
 }
 
 func (s *inputState) text() string {
@@ -143,6 +145,7 @@ func (s *inputState) insert(char rune) {
 	if char < 32 && char != '\t' {
 		return
 	}
+	s.exitArmed = false
 	s.buffer = append(s.buffer[:s.cursor], append([]rune{char}, s.buffer[s.cursor:]...)...)
 	s.cursor++
 	s.afterEdit()
@@ -556,6 +559,9 @@ func (s *inputState) remember(line string) {
 }
 
 func (s *inputState) apply(event keyEvent) (submitted string, eof bool, handled bool) {
+	if event.kind != keyCtrlC {
+		s.exitArmed = false
+	}
 	switch event.kind {
 	case keyRune:
 		s.insert(event.char)
@@ -606,9 +612,17 @@ func (s *inputState) apply(event keyEvent) (submitted string, eof bool, handled 
 	case keyCtrlW:
 		s.deleteWord()
 	case keyCtrlC:
-		s.picker = pickerClosed
-		s.setText("")
-		s.afterEdit()
+		if s.picker != pickerClosed || len(s.buffer) > 0 {
+			s.exitArmed = false
+			s.picker = pickerClosed
+			s.setText("")
+			s.afterEdit()
+			break
+		}
+		if s.exitArmed {
+			return "", true, true
+		}
+		s.exitArmed = true
 	case keyCtrlD:
 		if len(s.buffer) == 0 {
 			return "", true, true
@@ -638,7 +652,10 @@ func lineEditorEnabled(stdin *os.File, stdout io.Writer) bool {
 	return term.IsTerminal(int(file.Fd()))
 }
 
-func (e *lineEditor) Read(ctx context.Context, settings REPLSettings) (string, error) {
+func (e *lineEditor) Read(ctx context.Context, settings *REPLSettings) (string, error) {
+	if settings == nil {
+		return "", fmt.Errorf("repl settings are required")
+	}
 	fd := int(e.in.Fd())
 	state, err := term.MakeRaw(fd)
 	if err != nil {
@@ -657,8 +674,9 @@ func (e *lineEditor) Read(ctx context.Context, settings REPLSettings) (string, e
 	e.state.sessionFast = settings.Fast
 	e.state.sessionPermission = settings.PermissionMode
 	e.state.picker = pickerClosed
+	e.state.exitArmed = false
 	e.color = settings.Color
-	if err := e.render(settings); err != nil {
+	if err := e.render(*settings); err != nil {
 		return "", err
 	}
 
@@ -668,7 +686,7 @@ func (e *lineEditor) Read(ctx context.Context, settings REPLSettings) (string, e
 	}
 	for {
 		if err := ctx.Err(); err != nil {
-			e.finish("")
+			e.finish(*settings, "")
 			return "", err
 		}
 		read := make(chan result, 1)
@@ -685,36 +703,46 @@ func (e *lineEditor) Read(ctx context.Context, settings REPLSettings) (string, e
 			case <-time.After(200 * time.Millisecond):
 			}
 			_ = e.in.SetReadDeadline(time.Time{})
-			e.finish("")
+			e.finish(*settings, "")
 			return "", ctx.Err()
 		case value := <-read:
 			if value.err != nil {
 				if errors.Is(value.err, io.EOF) {
-					e.finish("")
+					e.finish(*settings, "")
 					return "", io.EOF
 				}
 				return "", value.err
 			}
 			event = value.event
 		}
+		if event.kind == keyShiftTab {
+			e.state.exitArmed = false
+			if e.state.picker == pickerClosed {
+				togglePlan(settings)
+			}
+			if err := e.render(*settings); err != nil {
+				return "", err
+			}
+			continue
+		}
 		line, eof, submitted := e.state.apply(event)
 		if eof {
-			e.finish("")
+			e.finish(*settings, "")
 			return "", io.EOF
 		}
 		if submitted {
 			line = strings.TrimSpace(line)
 			if line == "" {
-				if err := e.render(settings); err != nil {
+				if err := e.render(*settings); err != nil {
 					return "", err
 				}
 				continue
 			}
 			e.state.remember(line)
-			e.finish(line)
+			e.finish(*settings, line)
 			return line, nil
 		}
-		if err := e.render(settings); err != nil {
+		if err := e.render(*settings); err != nil {
 			return "", err
 		}
 	}
@@ -729,7 +757,8 @@ func (e *lineEditor) render(settings REPLSettings) error {
 		e.state.suggest = max(len(matches)-1, 0)
 	}
 	var line string
-	line += "\r" + eraseLine + "> " + string(e.state.buffer)
+	prefix := promptPrefix(settings)
+	line += "\r" + eraseLine + prefix + string(e.state.buffer)
 	if ghost := e.state.ghost(); ghost != "" {
 		line += paint(e.color, dim, ghost)
 	}
@@ -744,9 +773,9 @@ func (e *lineEditor) render(settings REPLSettings) error {
 		}
 		line += marker + name + "  " + help + "\r\n"
 	}
-	line += formatStatus(settings)
+	line += e.statusLine(settings)
 	up := 1 + len(matches)
-	line += fmt.Sprintf("\x1b[%dA\x1b[%dG", up, 3+e.state.cursor)
+	line += fmt.Sprintf("\x1b[%dA\x1b[%dG", up, visibleWidth(prefix)+1+e.state.cursor)
 	_, err := io.WriteString(e.out, line)
 	return err
 }
@@ -806,10 +835,11 @@ func (e *lineEditor) renderPicker(settings REPLSettings) error {
 		body.WriteString(paint(e.color, dim, "tab options · enter apply · esc cancel") + "\r\n")
 	}
 	rows := strings.Count(body.String(), "\r\n")
-	output := "\r" + eraseLine + "> " + string(e.state.buffer) + eraseDown + "\r\n"
+	prefix := promptPrefix(settings)
+	output := "\r" + eraseLine + prefix + string(e.state.buffer) + eraseDown + "\r\n"
 	output += body.String()
-	output += formatStatus(settings)
-	output += fmt.Sprintf("\x1b[%dA\x1b[%dG", 1+rows, 3+e.state.cursor)
+	output += e.statusLine(settings)
+	output += fmt.Sprintf("\x1b[%dA\x1b[%dG", 1+rows, visibleWidth(prefix)+1+e.state.cursor)
 	_, err := io.WriteString(e.out, output)
 	return err
 }
@@ -838,10 +868,11 @@ func (e *lineEditor) renderModePicker(settings REPLSettings) error {
 	}
 	body.WriteString(paint(e.color, dim, "enter apply · esc cancel") + "\r\n")
 	rows := strings.Count(body.String(), "\r\n")
-	output := "\r" + eraseLine + "> " + string(e.state.buffer) + eraseDown + "\r\n"
+	prefix := promptPrefix(settings)
+	output := "\r" + eraseLine + prefix + string(e.state.buffer) + eraseDown + "\r\n"
 	output += body.String()
-	output += formatStatus(settings)
-	output += fmt.Sprintf("\x1b[%dA\x1b[%dG", 1+rows, 3+e.state.cursor)
+	output += e.statusLine(settings)
+	output += fmt.Sprintf("\x1b[%dA\x1b[%dG", 1+rows, visibleWidth(prefix)+1+e.state.cursor)
 	_, err := io.WriteString(e.out, output)
 	return err
 }
@@ -854,16 +885,24 @@ func (e *lineEditor) renderContextPicker(settings REPLSettings) error {
 	}
 	body.WriteString(paint(e.color, dim, "enter / esc close") + "\r\n")
 	rows := strings.Count(body.String(), "\r\n")
-	output := "\r" + eraseLine + "> " + string(e.state.buffer) + eraseDown + "\r\n"
+	prefix := promptPrefix(settings)
+	output := "\r" + eraseLine + prefix + string(e.state.buffer) + eraseDown + "\r\n"
 	output += body.String()
-	output += formatStatus(settings)
-	output += fmt.Sprintf("\x1b[%dA\x1b[%dG", 1+rows, 3+e.state.cursor)
+	output += e.statusLine(settings)
+	output += fmt.Sprintf("\x1b[%dA\x1b[%dG", 1+rows, visibleWidth(prefix)+1+e.state.cursor)
 	_, err := io.WriteString(e.out, output)
 	return err
 }
 
-func (e *lineEditor) finish(line string) {
-	_, _ = io.WriteString(e.out, "\r"+eraseLine+"> "+line+eraseDown+"\r\n")
+func (e *lineEditor) finish(settings REPLSettings, line string) {
+	_, _ = io.WriteString(e.out, "\r"+eraseLine+promptPrefix(settings)+line+eraseDown+"\r\n")
+}
+
+func (e *lineEditor) statusLine(settings REPLSettings) string {
+	if e.state.exitArmed {
+		return paint(e.color, yellow, "Ctrl+C again to exit")
+	}
+	return formatStatus(settings)
 }
 
 const (
@@ -924,27 +963,54 @@ func readEscape(reader io.Reader) (keyEvent, error) {
 	if err != nil {
 		return keyEvent{kind: keyEsc}, nil
 	}
-	switch code {
-	case 'A':
+	seq, err := readCSI(reader, code)
+	if err != nil {
+		return keyEvent{kind: keyEsc}, nil
+	}
+	switch seq {
+	case "A":
 		return keyEvent{kind: keyUp}, nil
-	case 'B':
+	case "B":
 		return keyEvent{kind: keyDown}, nil
-	case 'C':
+	case "C":
 		return keyEvent{kind: keyRight}, nil
-	case 'D':
+	case "D":
 		return keyEvent{kind: keyLeft}, nil
-	case 'H':
+	case "H":
 		return keyEvent{kind: keyHome}, nil
-	case 'F':
+	case "F":
 		return keyEvent{kind: keyEnd}, nil
-	case '3':
-		if tilde, err := readByteTimeout(reader, escapeWait); err == nil && tilde == '~' {
-			return keyEvent{kind: keyDelete}, nil
-		}
-		return keyEvent{kind: keyNone}, nil
+	case "Z", "1;2Z":
+		return keyEvent{kind: keyShiftTab}, nil
+	case "3~":
+		return keyEvent{kind: keyDelete}, nil
+	case "27;2;9~":
+		return keyEvent{kind: keyShiftTab}, nil
 	default:
 		return keyEvent{kind: keyNone}, nil
 	}
+}
+
+func readCSI(reader io.Reader, first byte) (string, error) {
+	seq := []byte{first}
+	if isCSIFinal(first) {
+		return string(seq), nil
+	}
+	for len(seq) < 24 {
+		next, err := readByteTimeout(reader, escapeWait)
+		if err != nil {
+			return string(seq), nil
+		}
+		seq = append(seq, next)
+		if isCSIFinal(next) {
+			return string(seq), nil
+		}
+	}
+	return string(seq), nil
+}
+
+func isCSIFinal(value byte) bool {
+	return value >= 0x40 && value <= 0x7e
 }
 
 func readRuneEvent(reader io.Reader, first byte) (keyEvent, error) {

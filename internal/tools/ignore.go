@@ -6,7 +6,19 @@ import (
 	"strings"
 )
 
-const maxIgnoreFileBytes = 256 * 1024
+const (
+	maxIgnoreFileBytes = 256 * 1024
+
+	defaultIgnorePatterns = `.git/
+node_modules/
+.venv/
+venv/
+__pycache__/
+.idea/
+.cache/
+.next/
+`
+)
 
 type ignoreRule struct {
 	dir      string
@@ -23,6 +35,7 @@ type ignoreMatcher struct {
 
 func (r *Registry) ignoreForWalk(start string) *ignoreMatcher {
 	matcher := &ignoreMatcher{}
+	matcher.addFile(".", defaultIgnorePatterns)
 	matcher.addFile(".", r.readIgnoreFile(".gitignore"))
 	matcher.addFile(".", r.readIgnoreFile(".gxxignore"))
 	if start != "" && start != "." {
@@ -124,6 +137,25 @@ func compileIgnorePattern(pattern string) (*regexp.Regexp, error) {
 	return regexp.Compile(b.String())
 }
 
+func compilePathGlob(glob string) (*regexp.Regexp, error) {
+	glob = strings.TrimSpace(glob)
+	if glob == "" {
+		return nil, nil
+	}
+	return compileIgnorePattern(glob)
+}
+
+func matchPathGlob(pattern *regexp.Regexp, path string) bool {
+	if pattern == nil {
+		return true
+	}
+	path = strings.Trim(strings.ReplaceAll(path, "\\", "/"), "/")
+	if path == "" {
+		return false
+	}
+	return matchIgnore(ignoreRule{pattern: pattern}, path)
+}
+
 func hardcodedIgnored(path string, isDir bool) bool {
 	parts := strings.Split(path, "/")
 	for i, component := range parts {
@@ -131,7 +163,7 @@ func hardcodedIgnored(path string, isDir bool) bool {
 		if last && !isDir {
 			continue
 		}
-		if isIgnoredDirectory(component) {
+		if component == ".git" {
 			return true
 		}
 	}

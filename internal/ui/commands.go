@@ -18,7 +18,7 @@ var slashCommands = []slashCommand{
 	{name: "/context", help: "Show context window occupancy"},
 	{name: "/usage", help: "Show token usage and remaining API quota"},
 	{name: "/clear", help: "Clear in-memory conversation"},
-	{name: "/exit", help: "Exit gxx"},
+	{name: "/exit", help: "Exit gxx (Ctrl+C twice)"},
 }
 
 var slashCommandsWithArgs = map[string]struct{}{

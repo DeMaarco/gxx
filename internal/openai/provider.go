@@ -99,6 +99,13 @@ func (p *Provider) SetFast(fast bool) {
 	p.fast = fast
 }
 
+func (p *Provider) SetInstructions(instructions string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.instructions = instructions
+	p.refreshContextLocked()
+}
+
 func (p *Provider) Respond(
 	ctx context.Context,
 	input agent.ModelInput,

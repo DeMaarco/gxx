@@ -26,6 +26,7 @@ type REPLSettings struct {
 	Effort           string
 	Context          string
 	Fast             bool
+	Plan             bool
 	Workspace        string
 	Color            bool
 	Stdin            *os.File
@@ -35,6 +36,7 @@ type REPLSettings struct {
 	FetchUsage       func(context.Context) (agent.UsageReport, error)
 	FetchContext     func() agent.ContextUsage
 	SyncSession      func(REPLSettings) error
+	SetPlan          func(bool) error
 }
 
 type Renderer struct {
@@ -43,6 +45,7 @@ type Renderer struct {
 	live      bool
 	spinEvery time.Duration
 	now       func() time.Time
+	columns   int
 
 	mu         sync.Mutex
 	sawText    bool
@@ -53,6 +56,9 @@ type Renderer struct {
 	thinkStart time.Time
 	frame      int
 	running    []runningTool
+	pending    pendingDoneGroup
+	heldText   string
+	usage      agent.Usage
 
 	animMu   sync.Mutex
 	animStop chan struct{}
@@ -78,7 +84,10 @@ func (r *Renderer) StartTurn() {
 	r.sawText = false
 	r.textOpen = false
 	r.running = nil
+	r.pending = pendingDoneGroup{}
+	r.heldText = ""
 	r.frame = 0
+	r.usage = agent.Usage{}
 	r.thinking = r.live
 	r.thinkStart = r.timestamp()
 	spin := r.shouldSpinLocked()
@@ -108,16 +117,23 @@ func (r *Renderer) handleEventLocked(event agent.Event) bool {
 	switch event.Kind {
 	case agent.EventTextDelta:
 		r.clearLiveLocked()
-		r.thinking = false
-		text := safeTerminalText(event.Text)
-		_, _ = io.WriteString(r.writer, text)
-		r.sawText = true
-		r.textOpen = !strings.HasSuffix(text, "\n")
+		r.flushPendingDoneLocked()
+		r.queueTextLocked(event.Text)
 	case agent.EventToolCall:
 		r.clearLiveLocked()
+		r.dropHeldTextLocked()
+		r.flushPendingDoneLocked()
 		r.thinking = false
 	case agent.EventToolStarted:
 		r.clearLiveLocked()
+		r.dropHeldTextLocked()
+		name := ""
+		if event.ToolCall != nil {
+			name = strings.TrimSpace(event.ToolCall.Name)
+		}
+		if r.pending.count > 0 && r.pending.name != name {
+			r.flushPendingDoneLocked()
+		}
 		r.endTextLine()
 		r.thinking = false
 		if event.ToolCall != nil {
@@ -134,18 +150,21 @@ func (r *Renderer) handleEventLocked(event agent.Event) bool {
 	case agent.EventToolDone:
 		r.clearLiveLocked()
 		r.endTextLine()
-		r.removeRunning(event.Result)
-		r.writeToolDoneLocked(event.Result)
+		hint := r.takeRunning(event.Result).hint
+		r.noteToolDoneLocked(event.Result, hint)
 		if r.live && len(r.running) == 0 {
 			r.thinking = true
 			r.thinkStart = r.timestamp()
 		}
 	case agent.EventNotice:
 		r.clearLiveLocked()
+		r.flushPendingDoneLocked()
 		r.endTextLine()
 		if event.Text != "" {
 			_, _ = fmt.Fprintf(r.writer, "%s\n", paint(r.color, dim, safeTerminalText(event.Text)))
 		}
+	case agent.EventUsage:
+		r.usage = event.Usage
 	}
 	if r.shouldSpinLocked() {
 		r.drawLiveLocked()
@@ -154,33 +173,104 @@ func (r *Renderer) handleEventLocked(event agent.Event) bool {
 	return false
 }
 
-func (r *Renderer) writeToolDoneLocked(result *agent.ToolResult) {
+func (r *Renderer) noteToolDoneLocked(result *agent.ToolResult, hint string) {
 	if result == nil {
 		return
 	}
-	name := safeTerminalText(result.Name)
 	if result.IsError {
+		r.flushPendingDoneLocked()
+		r.writeToolDoneLocked(doneLine{
+			name:      result.Name,
+			hints:     compactHints([]string{hint}),
+			count:     1,
+			duration:  result.DurationMS,
+			truncated: result.Truncated,
+			failed:    true,
+			detail:    firstLine(result.Output),
+		})
+		return
+	}
+	if r.pending.count > 0 && r.pending.name != result.Name {
+		r.flushPendingDoneLocked()
+	}
+	r.pending.add(result.Name, hint, result.DurationMS, result.Truncated)
+}
+
+func (r *Renderer) flushPendingDoneLocked() {
+	if r.pending.count == 0 {
+		return
+	}
+	r.writeToolDoneLocked(doneLine{
+		name:      r.pending.name,
+		hints:     compactHints(r.pending.hints),
+		count:     r.pending.count,
+		duration:  r.pending.duration,
+		truncated: r.pending.truncated,
+	})
+	r.pending = pendingDoneGroup{}
+}
+
+func (r *Renderer) writeToolDoneLocked(line doneLine) {
+	name := paint(r.color, green, safeTerminalText(line.name))
+	mark := paint(r.color, green, "✓")
+	if line.failed {
+		name = paint(r.color, red, safeTerminalText(line.name))
+		mark = paint(r.color, red, "✗")
+	}
+	if line.count > 1 {
+		name += paint(r.color, dim, fmt.Sprintf(" ×%d", line.count))
+	}
+	if line.hints != "" {
+		name += "  " + safeTerminalText(line.hints)
+	}
+	detail := formatToolDuration(line.duration)
+	if line.truncated {
+		detail += ", truncated"
+	}
+	if line.failed {
 		_, _ = fmt.Fprintf(
 			r.writer,
-			"%s %s (%dms): %s\n",
-			paint(r.color, red, "✗"),
-			paint(r.color, red, name),
-			result.DurationMS,
-			paint(r.color, dim, firstLine(result.Output)),
+			"%s %s  %s: %s\n",
+			mark,
+			name,
+			paint(r.color, dim, "("+detail+")"),
+			safeTerminalText(line.detail),
 		)
 		return
 	}
-	suffix := ""
-	if result.Truncated {
-		suffix = ", truncated"
-	}
 	_, _ = fmt.Fprintf(
 		r.writer,
-		"%s %s %s\n",
-		paint(r.color, green, "✓"),
-		paint(r.color, green, name),
-		paint(r.color, dim, fmt.Sprintf("(%dms%s)", result.DurationMS, suffix)),
+		"%s %s  %s\n",
+		mark,
+		name,
+		paint(r.color, dim, "("+detail+")"),
 	)
+}
+
+func (r *Renderer) queueTextLocked(text string) {
+	r.thinking = false
+	r.heldText += text
+	if holdModelText(r.heldText) {
+		return
+	}
+	r.writeTextLocked(r.heldText)
+	r.heldText = ""
+}
+
+func (r *Renderer) writeTextLocked(text string) {
+	text = safeTerminalText(text)
+	if text == "" {
+		return
+	}
+	_, _ = io.WriteString(r.writer, text)
+	r.sawText = true
+	r.textOpen = !strings.HasSuffix(text, "\n")
+}
+
+func (r *Renderer) dropHeldTextLocked() {
+	if holdModelText(r.heldText) {
+		r.heldText = ""
+	}
 }
 
 func (r *Renderer) Finish(answer string) {
@@ -188,15 +278,23 @@ func (r *Renderer) Finish(answer string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.clearLiveLocked()
+	r.flushPendingDoneLocked()
 	r.showCursorLocked()
 	r.thinking = false
 	r.running = nil
-	if !r.sawText && strings.TrimSpace(answer) != "" {
-		answer = safeTerminalText(answer)
-		_, _ = io.WriteString(r.writer, answer)
-		r.textOpen = !strings.HasSuffix(answer, "\n")
+	if holdModelText(r.heldText) {
+		r.heldText = ""
+	} else if r.heldText != "" {
+		r.writeTextLocked(r.heldText)
+		r.heldText = ""
+	}
+	if !r.sawText && strings.TrimSpace(answer) != "" && !holdModelText(answer) {
+		r.writeTextLocked(answer)
 	}
 	r.endTextLine()
+	if line := formatTurnUsage(r.color, r.usage); line != "" {
+		_, _ = fmt.Fprintln(r.writer, line)
+	}
 }
 
 func (r *Renderer) endTextLine() {
@@ -242,7 +340,7 @@ func RunREPL(
 			if err := writeHeader(writer, settings); err != nil {
 				return err
 			}
-			line, err = editor.Read(sessionCtx, settings)
+			line, err = editor.Read(sessionCtx, &settings)
 		} else {
 			if err := writeChrome(writer, settings); err != nil {
 				return err
@@ -406,6 +504,25 @@ func printREPLHelp(writer io.Writer, settings REPLSettings) {
 			paint(settings.Color, dim, command.help),
 		)
 	}
+	fmt.Fprintf(
+		writer,
+		"%s  %s\n",
+		paint(settings.Color, cyan, "Shift+Tab"),
+		paint(settings.Color, dim, "Toggle plan mode (read-only design) and agent mode"),
+	)
+}
+
+func togglePlan(settings *REPLSettings) {
+	if settings == nil {
+		return
+	}
+	next := !settings.Plan
+	if settings.SetPlan != nil {
+		if err := settings.SetPlan(next); err != nil {
+			return
+		}
+	}
+	settings.Plan = next
 }
 
 func showUsage(ctx context.Context, writer io.Writer, settings REPLSettings) error {
