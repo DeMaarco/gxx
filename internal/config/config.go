@@ -1,0 +1,371 @@
+package config
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"syscall"
+	"time"
+)
+
+const (
+	DefaultModel              = "gpt-5.6-sol"
+	DefaultEffort             = "medium"
+	DefaultContext            = "272k"
+	DefaultPermissionMode     = "ask"
+	DefaultMaxSteps           = 12
+	DefaultMaxToolResultBytes = 64 * 1024
+	DefaultMaxSearchResults   = 100
+	DefaultParallelReads      = 4
+	maxConfigBytes            = 64 * 1024
+)
+
+var (
+	DefaultCommandTimeout = 2 * time.Minute
+	DefaultAPITimeout     = 10 * time.Minute
+)
+
+// Config contains the runtime settings shared by the CLI, model, and tools.
+type Config struct {
+	APIKey             string
+	Model              string
+	Effort             string
+	Context            string
+	Fast               bool
+	PermissionMode     string
+	Workspace          string
+	MaxSteps           int
+	MaxToolResultBytes int
+	MaxSearchResults   int
+	ParallelReads      int
+	CommandTimeout     time.Duration
+	APITimeout         time.Duration
+}
+
+// Load reads environment configuration and applies conservative defaults.
+func Load(workspace string) Config {
+	apiKey := strings.TrimSpace(os.Getenv("OPENAI_API_KEY"))
+	if apiKey == "" {
+		apiKey, _ = LoadAPIKey()
+	}
+	return Config{
+		APIKey:             apiKey,
+		Model:              envString("GXX_MODEL", DefaultModel),
+		Effort:             envString("GXX_EFFORT", DefaultEffort),
+		Context:            envString("GXX_CONTEXT", DefaultContext),
+		Fast:               envBool("GXX_FAST", false),
+		PermissionMode:     DefaultPermissionMode,
+		Workspace:          workspace,
+		MaxSteps:           envInt("GXX_MAX_STEPS", DefaultMaxSteps),
+		MaxToolResultBytes: envInt("GXX_MAX_TOOL_RESULT_BYTES", DefaultMaxToolResultBytes),
+		MaxSearchResults:   envInt("GXX_MAX_SEARCH_RESULTS", DefaultMaxSearchResults),
+		ParallelReads:      envInt("GXX_PARALLEL_READS", DefaultParallelReads),
+		CommandTimeout:     envDuration("GXX_COMMAND_TIMEOUT", DefaultCommandTimeout),
+		APITimeout:         envDuration("GXX_API_TIMEOUT", DefaultAPITimeout),
+	}
+}
+
+// Validate normalizes the workspace and rejects unusable settings.
+func (c *Config) Validate() error {
+	return c.validate(true)
+}
+
+// ValidateInteractive permits an empty API key so the REPL can open /config.
+func (c *Config) ValidateInteractive() error {
+	return c.validate(false)
+}
+
+func (c *Config) validate(requireAPIKey bool) error {
+	if requireAPIKey && strings.TrimSpace(c.APIKey) == "" {
+		return errors.New("OPENAI_API_KEY is not set")
+	}
+	if strings.TrimSpace(c.Model) == "" {
+		return errors.New("model cannot be empty")
+	}
+	c.Model = CanonicalModel(c.Model)
+	if err := ValidateEffort(c.Effort); err != nil {
+		return err
+	}
+	normalized, err := NormalizeContext(c.Context)
+	if err != nil {
+		return err
+	}
+	c.Context = normalized
+	if c.PermissionMode == "" {
+		c.PermissionMode = DefaultPermissionMode
+	}
+	if c.PermissionMode != DefaultPermissionMode {
+		return fmt.Errorf("unsupported permission mode %q", c.PermissionMode)
+	}
+	if c.MaxSteps < 1 {
+		return errors.New("max steps must be at least 1")
+	}
+	if c.MaxToolResultBytes < 1024 {
+		return errors.New("max tool result bytes must be at least 1024")
+	}
+	if c.MaxSearchResults < 1 {
+		return errors.New("max search results must be at least 1")
+	}
+	if c.ParallelReads < 1 {
+		return errors.New("parallel reads must be at least 1")
+	}
+	if c.CommandTimeout <= 0 {
+		return errors.New("command timeout must be positive")
+	}
+	if c.APITimeout <= 0 {
+		return errors.New("API timeout must be positive")
+	}
+
+	root, err := filepath.Abs(c.Workspace)
+	if err != nil {
+		return fmt.Errorf("resolve workspace: %w", err)
+	}
+	info, err := os.Stat(root)
+	if err != nil {
+		return fmt.Errorf("open workspace: %w", err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("workspace is not a directory: %s", root)
+	}
+	c.Workspace = filepath.Clean(root)
+	return nil
+}
+
+type persistentConfig struct {
+	OpenAIAPIKey string `json:"openai_api_key"`
+}
+
+// Path returns the cross-platform gxx config path requested by the MVP.
+func Path() (string, error) {
+	base := strings.TrimSpace(os.Getenv("XDG_CONFIG_HOME"))
+	if base != "" {
+		if !filepath.IsAbs(base) {
+			return "", errors.New("XDG_CONFIG_HOME must be an absolute path")
+		}
+	} else {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("find home directory: %w", err)
+		}
+		base = filepath.Join(home, ".config")
+	}
+	return filepath.Join(base, "gxx", "config.json"), nil
+}
+
+// LoadAPIKey reads a private API key from the persistent config, if present.
+func LoadAPIKey() (string, error) {
+	path, err := Path()
+	if err != nil {
+		return "", err
+	}
+	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK|syscall.O_NOFOLLOW, 0)
+	if errors.Is(err, os.ErrNotExist) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("open config: %w", err)
+	}
+	defer file.Close()
+
+	info, err := file.Stat()
+	if err != nil {
+		return "", fmt.Errorf("stat config: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return "", errors.New("config is not a regular file")
+	}
+	if info.Mode().Perm()&0o077 != 0 {
+		return "", fmt.Errorf("config permissions are %04o; expected 0600", info.Mode().Perm())
+	}
+
+	data, err := io.ReadAll(io.LimitReader(file, maxConfigBytes+1))
+	if err != nil {
+		return "", fmt.Errorf("read config: %w", err)
+	}
+	if len(data) > maxConfigBytes {
+		return "", fmt.Errorf("config exceeds %d bytes", maxConfigBytes)
+	}
+	var stored persistentConfig
+	if err := json.Unmarshal(data, &stored); err != nil {
+		return "", fmt.Errorf("decode config: %w", err)
+	}
+	return strings.TrimSpace(stored.OpenAIAPIKey), nil
+}
+
+// SaveAPIKey atomically stores the API key in a user-private config file.
+func SaveAPIKey(apiKey string) (string, error) {
+	apiKey = strings.TrimSpace(apiKey)
+	if apiKey == "" {
+		return "", errors.New("API key cannot be empty")
+	}
+	path, err := Path()
+	if err != nil {
+		return "", err
+	}
+	directory := filepath.Dir(path)
+	if err := os.MkdirAll(directory, 0o700); err != nil {
+		return "", fmt.Errorf("create config directory: %w", err)
+	}
+	if err := os.Chmod(directory, 0o700); err != nil {
+		return "", fmt.Errorf("secure config directory: %w", err)
+	}
+	if info, err := os.Lstat(path); err == nil {
+		if info.Mode()&os.ModeSymlink != 0 {
+			return "", errors.New("refusing to replace symlinked config")
+		}
+		if !info.Mode().IsRegular() {
+			return "", errors.New("config path is not a regular file")
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", fmt.Errorf("inspect config: %w", err)
+	}
+
+	temp, err := os.CreateTemp(directory, ".config-*")
+	if err != nil {
+		return "", fmt.Errorf("create temporary config: %w", err)
+	}
+	tempPath := temp.Name()
+	cleanup := func() {
+		_ = temp.Close()
+		_ = os.Remove(tempPath)
+	}
+	if err := temp.Chmod(0o600); err != nil {
+		cleanup()
+		return "", fmt.Errorf("secure temporary config: %w", err)
+	}
+	encoder := json.NewEncoder(temp)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(persistentConfig{OpenAIAPIKey: apiKey}); err != nil {
+		cleanup()
+		return "", fmt.Errorf("write config: %w", err)
+	}
+	if err := temp.Close(); err != nil {
+		cleanup()
+		return "", fmt.Errorf("close config: %w", err)
+	}
+	if err := os.Rename(tempPath, path); err != nil {
+		cleanup()
+		return "", fmt.Errorf("replace config: %w", err)
+	}
+	if err := os.Chmod(path, 0o600); err != nil {
+		return "", fmt.Errorf("secure config: %w", err)
+	}
+	return path, nil
+}
+
+func envString(name, fallback string) string {
+	if value := strings.TrimSpace(os.Getenv(name)); value != "" {
+		return value
+	}
+	return fallback
+}
+
+func envInt(name string, fallback int) int {
+	value := strings.TrimSpace(os.Getenv(name))
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return fallback
+	}
+	return parsed
+}
+
+func envDuration(name string, fallback time.Duration) time.Duration {
+	value := strings.TrimSpace(os.Getenv(name))
+	if value == "" {
+		return fallback
+	}
+	parsed, err := time.ParseDuration(value)
+	if err != nil {
+		return fallback
+	}
+	return parsed
+}
+
+func envBool(name string, fallback bool) bool {
+	value := strings.TrimSpace(os.Getenv(name))
+	if value == "" {
+		return fallback
+	}
+	switch strings.ToLower(value) {
+	case "1", "true", "on", "yes":
+		return true
+	case "0", "false", "off", "no":
+		return false
+	default:
+		return fallback
+	}
+}
+
+func ValidateEffort(value string) error {
+	switch strings.TrimSpace(value) {
+	case "none", "minimal", "low", "medium", "high", "xhigh", "max":
+		return nil
+	case "":
+		return errors.New("effort cannot be empty")
+	default:
+		return fmt.Errorf(
+			"effort must be one of none, minimal, low, medium, high, xhigh, max",
+		)
+	}
+}
+
+var ContextSizes = []string{"32k", "128k", "272k", "1m"}
+
+var contextTokens = map[string]int{
+	"32k":  32_000,
+	"128k": 128_000,
+	"272k": 272_000,
+	"1m":   1_050_000,
+}
+
+// CanonicalModel maps GPT-5.6 aliases onto sol, terra, or luna.
+func CanonicalModel(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "sol", "gpt-5.6-sol", "gpt-5.6":
+		return "gpt-5.6-sol"
+	case "terra", "gpt-5.6-terra":
+		return "gpt-5.6-terra"
+	case "luna", "gpt-5.6-luna":
+		return "gpt-5.6-luna"
+	default:
+		return strings.TrimSpace(value)
+	}
+}
+
+func NormalizeContext(value string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "32k", "32000":
+		return "32k", nil
+	case "128k", "128000":
+		return "128k", nil
+	case "272k", "272000":
+		return "272k", nil
+	case "1m", "1050k", "1.05m", "1050000":
+		return "1m", nil
+	case "":
+		return "", errors.New("context cannot be empty")
+	default:
+		return "", fmt.Errorf("context must be one of %s", strings.Join(ContextSizes, ", "))
+	}
+}
+
+func ValidateContext(value string) error {
+	_, err := NormalizeContext(value)
+	return err
+}
+
+func ContextTokens(value string) int {
+	label, err := NormalizeContext(value)
+	if err != nil {
+		return contextTokens[DefaultContext]
+	}
+	return contextTokens[label]
+}
