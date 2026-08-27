@@ -65,12 +65,14 @@ type Renderer struct {
 	sawText    bool
 	textOpen   bool
 	liveOpen   bool
+	liveHeight int
 	cursorHide bool
 	thinking   bool
 	thinkStart time.Time
 	frame      int
 	running    []runningTool
 	pending    pendingDoneGroup
+	reveal     []activityLine
 	heldText   string
 	usage      agent.Usage
 
@@ -99,8 +101,11 @@ func (r *Renderer) StartTurn() {
 	r.textOpen = false
 	r.running = nil
 	r.pending = pendingDoneGroup{}
+	r.reveal = nil
 	r.heldText = ""
 	r.frame = 0
+	r.liveHeight = 0
+	r.liveOpen = false
 	r.usage = agent.Usage{}
 	r.thinking = r.live
 	r.thinkStart = r.timestamp()
@@ -115,6 +120,15 @@ func (r *Renderer) StartTurn() {
 }
 
 func (r *Renderer) Event(event agent.Event) {
+	if event.Kind == agent.EventToolProgress {
+		r.mu.Lock()
+		r.handleProgressLocked(event)
+		if r.live {
+			r.drawLiveLocked()
+		}
+		r.mu.Unlock()
+		return
+	}
 	r.stopAnim()
 	r.mu.Lock()
 	spin := r.handleEventLocked(event)
@@ -131,15 +145,18 @@ func (r *Renderer) handleEventLocked(event agent.Event) bool {
 	switch event.Kind {
 	case agent.EventTextDelta:
 		r.clearLiveLocked()
+		r.flushRevealLocked()
 		r.flushPendingDoneLocked()
 		r.queueTextLocked(event.Text)
 	case agent.EventToolCall:
 		r.clearLiveLocked()
+		r.flushRevealLocked()
 		r.dropHeldTextLocked()
 		r.flushPendingDoneLocked()
 		r.thinking = false
 	case agent.EventToolStarted:
 		r.clearLiveLocked()
+		r.flushRevealLocked()
 		r.dropHeldTextLocked()
 		name := ""
 		if event.ToolCall != nil {
@@ -164,14 +181,15 @@ func (r *Renderer) handleEventLocked(event agent.Event) bool {
 	case agent.EventToolDone:
 		r.clearLiveLocked()
 		r.endTextLine()
-		hint := r.takeRunning(event.Result).hint
-		r.noteToolDoneLocked(event.Result, hint)
-		if r.live && len(r.running) == 0 {
+		tool := r.takeRunning(event.Result)
+		r.noteToolDoneLocked(event.Result, tool)
+		if r.live && len(r.running) == 0 && len(r.reveal) == 0 {
 			r.thinking = true
 			r.thinkStart = r.timestamp()
 		}
 	case agent.EventNotice:
 		r.clearLiveLocked()
+		r.flushRevealLocked()
 		r.flushPendingDoneLocked()
 		r.endTextLine()
 		if event.Text != "" {
@@ -187,15 +205,46 @@ func (r *Renderer) handleEventLocked(event agent.Event) bool {
 	return false
 }
 
-func (r *Renderer) noteToolDoneLocked(result *agent.ToolResult, hint string) {
+func (r *Renderer) handleProgressLocked(event agent.Event) {
+	detail := strings.TrimSpace(event.Text)
+	if detail == "" {
+		return
+	}
+	id := ""
+	name := ""
+	if event.ToolCall != nil {
+		id = event.ToolCall.ID
+		name = strings.TrimSpace(event.ToolCall.Name)
+	}
+	for i := range r.running {
+		if id != "" && r.running[i].id == id {
+			r.running[i].detail = safeTerminalText(detail)
+			return
+		}
+	}
+	if id != "" {
+		return
+	}
+	for i := range r.running {
+		if name == "" || r.running[i].name == name {
+			r.running[i].detail = safeTerminalText(detail)
+			return
+		}
+	}
+}
+
+func (r *Renderer) noteToolDoneLocked(result *agent.ToolResult, tool runningTool) {
 	if result == nil {
 		return
 	}
+	extra := doneExtraLines(result, tool)
+	stats := formatLineCounts(r.color, "", tool.added, tool.deleted, tool.removed)
 	if result.IsError {
 		r.flushPendingDoneLocked()
+		r.flushRevealLocked()
 		r.writeToolDoneLocked(doneLine{
 			name:      result.Name,
-			hints:     compactHints([]string{hint}),
+			hints:     compactHints([]string{tool.hint}),
 			count:     1,
 			duration:  result.DurationMS,
 			truncated: result.Truncated,
@@ -204,10 +253,50 @@ func (r *Renderer) noteToolDoneLocked(result *agent.ToolResult, hint string) {
 		})
 		return
 	}
+	if len(extra) > 0 || stats != "" {
+		r.flushPendingDoneLocked()
+		r.writeToolDoneLocked(doneLine{
+			name:      result.Name,
+			hints:     compactHints([]string{tool.hint}),
+			stats:     stats,
+			count:     1,
+			duration:  result.DurationMS,
+			truncated: result.Truncated,
+		})
+		r.queueRevealLocked(extra)
+		return
+	}
 	if r.pending.count > 0 && r.pending.name != result.Name {
 		r.flushPendingDoneLocked()
 	}
-	r.pending.add(result.Name, hint, result.DurationMS, result.Truncated)
+	r.pending.add(result.Name, tool.hint, result.DurationMS, result.Truncated)
+}
+
+func (r *Renderer) queueRevealLocked(lines []activityLine) {
+	if len(lines) == 0 {
+		return
+	}
+	if !r.live || r.spinEvery <= 0 {
+		for _, line := range lines {
+			r.writeActivityLineLocked(line)
+		}
+		return
+	}
+	r.reveal = append(r.reveal, lines...)
+}
+
+func (r *Renderer) flushRevealLocked() {
+	if len(r.reveal) == 0 {
+		return
+	}
+	for _, line := range r.reveal {
+		r.writeActivityLineLocked(line)
+	}
+	r.reveal = nil
+}
+
+func (r *Renderer) writeActivityLineLocked(line activityLine) {
+	_, _ = fmt.Fprintln(r.writer, formatActivityLine(r.color, line))
 }
 
 func (r *Renderer) flushPendingDoneLocked() {
@@ -236,6 +325,9 @@ func (r *Renderer) writeToolDoneLocked(line doneLine) {
 	}
 	if line.hints != "" {
 		name += "  " + safeTerminalText(line.hints)
+	}
+	if line.stats != "" {
+		name += "  " + line.stats
 	}
 	detail := formatToolDuration(line.duration)
 	if line.truncated {
@@ -292,10 +384,12 @@ func (r *Renderer) Finish(answer string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.clearLiveLocked()
+	r.flushRevealLocked()
 	r.flushPendingDoneLocked()
 	r.showCursorLocked()
 	r.thinking = false
 	r.running = nil
+	r.reveal = nil
 	if holdModelText(r.heldText) {
 		r.heldText = ""
 	} else if r.heldText != "" {

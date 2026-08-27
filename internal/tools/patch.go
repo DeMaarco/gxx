@@ -167,6 +167,9 @@ func (r *Registry) prepareApplyPatch(
 		if err := ctx.Err(); err != nil {
 			return "", err
 		}
+		for _, path := range paths {
+			reportProgress(ctx, path)
+		}
 		if err := r.workspace.ApplyTransaction(fileChanges); err != nil {
 			return "", err
 		}

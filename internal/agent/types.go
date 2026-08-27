@@ -23,12 +23,13 @@ import (
 type EventKind string
 
 const (
-	EventTextDelta   EventKind = "text_delta"
-	EventToolCall    EventKind = "tool_call"
-	EventToolStarted EventKind = "tool_started"
-	EventToolDone    EventKind = "tool_done"
-	EventNotice      EventKind = "notice"
-	EventUsage       EventKind = "usage"
+	EventTextDelta    EventKind = "text_delta"
+	EventToolCall     EventKind = "tool_call"
+	EventToolStarted  EventKind = "tool_started"
+	EventToolProgress EventKind = "tool_progress"
+	EventToolDone     EventKind = "tool_done"
+	EventNotice       EventKind = "notice"
+	EventUsage        EventKind = "usage"
 )
 
 // Event is a provider-agnostic progress update for terminal renderers.

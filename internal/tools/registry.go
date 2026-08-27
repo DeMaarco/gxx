@@ -220,7 +220,7 @@ func (r *Registry) executeOne(ctx context.Context, call agent.ToolCall, emit age
 	started := time.Now()
 	agent.Emit(emit, agent.Event{Kind: agent.EventToolStarted, ToolCall: &call})
 
-	output, err := runner(ctx)
+	output, err := runner(withToolContext(ctx, emit, call))
 	duration := time.Since(started)
 	if err != nil {
 		if strings.TrimSpace(output) != "" {

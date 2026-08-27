@@ -36,10 +36,16 @@ const (
 var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 
 type runningTool struct {
-	id    string
-	name  string
-	hint  string
-	start time.Time
+	id       string
+	name     string
+	hint     string
+	start    time.Time
+	detail   string
+	added    int
+	deleted  int
+	removed  bool
+	lines    []activityLine
+	revealed int
 }
 
 func liveOutput(writer io.Writer) bool {
@@ -61,7 +67,7 @@ func (r *Renderer) timestamp() time.Time {
 }
 
 func (r *Renderer) shouldSpinLocked() bool {
-	return r.live && !r.textOpen && (r.thinking || len(r.running) > 0)
+	return r.live && !r.textOpen && (r.thinking || len(r.running) > 0 || len(r.reveal) > 0)
 }
 
 func (r *Renderer) startAnim() {
@@ -92,6 +98,7 @@ func (r *Renderer) startAnim() {
 				r.mu.Lock()
 				if r.shouldSpinLocked() {
 					r.frame++
+					r.advanceActivityLocked()
 					r.drawLiveLocked()
 				}
 				r.mu.Unlock()
@@ -118,23 +125,123 @@ func (r *Renderer) drawLiveLocked() {
 	if !r.live {
 		return
 	}
-	_, _ = io.WriteString(r.writer, liveLine(
+	r.paintLiveLinesLocked(r.composeLiveLocked())
+}
+
+func (r *Renderer) composeLiveLocked() []string {
+	if len(r.running) == 0 && len(r.reveal) > 0 {
+		return nil
+	}
+	width := r.termWidth()
+	status := formatLiveStatus(
 		r.color,
 		r.frame,
+		r.liveGlyphColorLocked(),
 		r.liveLabelLocked(),
 		r.liveElapsedLocked(),
 		r.usage,
-		r.termWidth(),
-	))
+		width,
+	)
+	lines := []string{status}
+	for _, detail := range r.liveDetailLinesLocked() {
+		lines = append(lines, detail)
+		if len(lines) >= maxLiveDetails+1 {
+			break
+		}
+	}
+	return lines
+}
+
+func (r *Renderer) liveDetailLinesLocked() []string {
+	var lines []string
+	for _, tool := range r.running {
+		if tool.detail != "" {
+			lines = append(lines, "  "+paint(r.color, dim, tool.detail))
+		}
+	}
+	return lines
+}
+
+func (r *Renderer) liveGlyphColorLocked() string {
+	if len(r.running) == 1 {
+		return verbColor(r.running[0].name)
+	}
+	return cyan
+}
+
+func (r *Renderer) paintLiveLinesLocked(lines []string) {
+	if len(lines) == 0 {
+		r.clearLiveLocked()
+		return
+	}
+	width := r.termWidth()
+	if width < 20 {
+		width = 20
+	}
+	width--
+	if r.liveHeight > 0 {
+		_, _ = io.WriteString(r.writer, "\r")
+		if r.liveHeight > 1 {
+			_, _ = io.WriteString(r.writer, cursorUpN(r.liveHeight-1))
+		}
+	}
+	for i, line := range lines {
+		_, _ = io.WriteString(r.writer, clearLine)
+		_, _ = io.WriteString(r.writer, truncateVisible(line, width))
+		if i < len(lines)-1 {
+			_, _ = io.WriteString(r.writer, "\n")
+		}
+	}
+	_, _ = io.WriteString(r.writer, eraseDown)
+	r.liveHeight = len(lines)
 	r.liveOpen = true
 }
 
 func (r *Renderer) clearLiveLocked() {
-	if !r.liveOpen {
+	if !r.liveOpen && r.liveHeight == 0 {
 		return
 	}
+	height := r.liveHeight
+	if height < 1 {
+		height = 1
+	}
+	_, _ = io.WriteString(r.writer, "\r")
+	if height > 1 {
+		_, _ = io.WriteString(r.writer, cursorUpN(height-1))
+	}
 	_, _ = io.WriteString(r.writer, clearLine)
+	_, _ = io.WriteString(r.writer, eraseDown)
+	r.liveHeight = 0
 	r.liveOpen = false
+}
+
+func (r *Renderer) advanceActivityLocked() {
+	if n := min(revealPerTick, len(r.reveal)); n > 0 {
+		r.clearLiveLocked()
+		for i := 0; i < n; i++ {
+			r.writeActivityLineLocked(r.reveal[i])
+		}
+		r.reveal = r.reveal[n:]
+		if len(r.reveal) == 0 && len(r.running) == 0 && r.live {
+			r.thinking = true
+			r.thinkStart = r.timestamp()
+		}
+	}
+	for i := range r.running {
+		remaining := len(r.running[i].lines) - r.running[i].revealed
+		if remaining <= 0 {
+			continue
+		}
+		step := min(revealPerTick, remaining)
+		r.running[i].revealed += step
+	}
+}
+
+func cursorUpN(n int) string {
+	if n <= 1 {
+		return cursorUp
+	}
+	return fmt.Sprintf("\x1b[%dA", n)
 }
 
 func (r *Renderer) hideCursorLocked() {
@@ -154,7 +261,16 @@ func (r *Renderer) showCursorLocked() {
 }
 
 func (r *Renderer) liveLabelLocked() string {
-	return compactRunningLabel(r.color, r.running)
+	label := compactRunningLabel(r.color, r.running)
+	if len(r.running) != 1 {
+		return label
+	}
+	tool := r.running[0]
+	stats := formatLineCounts(r.color, "", tool.added, tool.deleted, tool.removed)
+	if stats == "" {
+		return label
+	}
+	return label + "  " + stats
 }
 
 func (r *Renderer) termWidth() int {
@@ -215,16 +331,21 @@ func (r *Renderer) takeRunning(result *agent.ToolResult) runningTool {
 }
 
 func newRunningTool(call *agent.ToolCall, started time.Time) runningTool {
-	return runningTool{
+	name := strings.TrimSpace(call.Name)
+	tool := runningTool{
 		id:    call.ID,
-		name:  strings.TrimSpace(call.Name),
+		name:  name,
 		hint:  toolHint(call.Arguments),
 		start: started,
 	}
+	if name == "apply_patch" {
+		tool.added, tool.deleted, tool.removed, tool.lines = patchActivity(call.Arguments)
+	}
+	return tool
 }
 
 func runningToolLabel(color bool, tool runningTool) string {
-	name := paint(color, cyan, safeTerminalText(tool.name))
+	name := paint(color, verbColor(tool.name), safeTerminalText(toolVerb(tool.name)))
 	if tool.hint == "" {
 		return name
 	}
@@ -256,7 +377,7 @@ func compactRunningLabel(color bool, tools []runningTool) string {
 	}
 	parts := make([]string, 0, len(groups))
 	for _, group := range groups {
-		label := paint(color, cyan, safeTerminalText(group.name))
+		label := paint(color, verbColor(group.name), safeTerminalText(toolVerb(group.name)))
 		if group.count > 1 {
 			label += paint(color, dim, fmt.Sprintf(" ×%d", group.count))
 		}
@@ -269,6 +390,10 @@ func compactRunningLabel(color bool, tools []runningTool) string {
 }
 
 func liveLine(color bool, frame int, label string, elapsed time.Duration, usage agent.Usage, width int) string {
+	return clearLine + formatLiveStatus(color, frame, cyan, label, elapsed, usage, width)
+}
+
+func formatLiveStatus(color bool, frame int, glyphColor, label string, elapsed time.Duration, usage agent.Usage, width int) string {
 	if frame < 0 {
 		frame = 0
 	}
@@ -278,14 +403,17 @@ func liveLine(color bool, frame int, label string, elapsed time.Duration, usage 
 	// Leave the last column empty. Writing into it wraps on most terminals,
 	// and \r then only clears the leftover row.
 	width--
+	if glyphColor == "" {
+		glyphColor = cyan
+	}
 	glyph := spinnerFrames[frame%len(spinnerFrames)]
-	prefix := paint(color, cyan, glyph) + " "
+	prefix := paint(color, glyphColor, glyph) + " "
 	suffix := liveMeta(color, elapsed, usage)
 	budget := width - visibleWidth(prefix) - visibleWidth(suffix)
 	if budget < 4 {
 		budget = 4
 	}
-	return clearLine + prefix + truncateVisible(label, budget) + suffix
+	return prefix + truncateVisible(label, budget) + suffix
 }
 
 func liveMeta(color bool, elapsed time.Duration, usage agent.Usage) string {
@@ -430,16 +558,35 @@ func toolHint(raw json.RawMessage) string {
 		return safeTerminalText(value)
 	}
 	if rawChanges, ok := arguments["changes"].([]any); ok && len(rawChanges) > 0 {
-		if first, ok := rawChanges[0].(map[string]any); ok {
-			value, _ := first["path"].(string)
-			value = strings.Join(strings.Fields(value), " ")
-			if value != "" {
-				if len(value) > 48 {
-					value = value[:48] + "…"
-				}
-				return safeTerminalText(value)
+		seen := map[string]struct{}{}
+		var paths []string
+		for _, raw := range rawChanges {
+			change, ok := raw.(map[string]any)
+			if !ok {
+				continue
 			}
+			value, _ := change["path"].(string)
+			value = strings.Join(strings.Fields(value), " ")
+			if value == "" {
+				continue
+			}
+			if _, ok := seen[value]; ok {
+				continue
+			}
+			seen[value] = struct{}{}
+			paths = append(paths, value)
 		}
+		if len(paths) == 0 {
+			return ""
+		}
+		value := paths[0]
+		if len(paths) > 1 {
+			value = fmt.Sprintf("%s · %d files", value, len(paths))
+		}
+		if len(value) > 48 {
+			value = value[:48] + "…"
+		}
+		return safeTerminalText(value)
 	}
 	return ""
 }
@@ -456,6 +603,7 @@ type pendingDoneGroup struct {
 type doneLine struct {
 	name      string
 	hints     string
+	stats     string
 	count     int
 	duration  int64
 	truncated bool

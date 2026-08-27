@@ -827,6 +827,55 @@ func TestApplyPatchRejectsMixedActionsOnSamePath(t *testing.T) {
 	assertToolFileContents(t, filepath.Join(root, "file.txt"), "before\n")
 }
 
+func TestListAndSearchEmitProgress(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, root, "src/a.go", "package a\n")
+	writeTestFile(t, root, "src/b.go", "package b\n")
+	registry := newTestRegistry(t, root, &staticApprover{}, tools.Options{
+		MaxResultBytes:  4096,
+		MaxSearchResult: 10,
+		ParallelReads:   1,
+		CommandTimeout:  time.Second,
+	})
+	var mu sync.Mutex
+	var events []agent.Event
+	results := registry.Execute(context.Background(), []agent.ToolCall{
+		toolCall("list", "list_files", map[string]any{"path": nil, "max_depth": 4}),
+		toolCall("search", "search_files", map[string]any{"query": "package", "path": nil, "max_results": nil}),
+	}, func(event agent.Event) {
+		mu.Lock()
+		events = append(events, event)
+		mu.Unlock()
+	})
+	for _, result := range results {
+		if result.IsError {
+			t.Fatalf("%s failed: %s", result.Name, result.Output)
+		}
+	}
+	progress := 0
+	sawList := false
+	sawSearch := false
+	for _, event := range events {
+		if event.Kind != agent.EventToolProgress {
+			continue
+		}
+		progress++
+		name := ""
+		if event.ToolCall != nil {
+			name = event.ToolCall.Name
+		}
+		if name == "list_files" || strings.Contains(event.Text, "src/") {
+			sawList = true
+		}
+		if name == "search_files" || strings.HasSuffix(event.Text, ".go") {
+			sawSearch = true
+		}
+	}
+	if progress == 0 || !sawList || !sawSearch {
+		t.Fatalf("progress events = %#v, want list and search updates", events)
+	}
+}
+
 func TestListFilesDoesNotSkipVendorByDefault(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "vendor/pkg.go", "package pkg\n")

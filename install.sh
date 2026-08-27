@@ -27,7 +27,7 @@ Install gxx from GitHub Releases.
 
 Usage:
   curl -fsSL https://raw.githubusercontent.com/DeMaarco/gxx/main/install.sh | sh
-  sh install.sh --version v0.0.4
+  sh install.sh --version v0.0.5
   sh install.sh --dir /usr/local/bin
 
 Environment:

@@ -152,6 +152,7 @@ func (r *Registry) listFiles(ctx context.Context, raw json.RawMessage) (string, 
 	}
 
 	matcher := r.ignoreForWalk(root)
+	reportProgressNow(ctx, root)
 	var entries []string
 	err = iofs.WalkDir(r.workspace.FS(), root, func(current string, entry iofs.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -193,6 +194,7 @@ func (r *Registry) listFiles(ctx context.Context, raw json.RawMessage) (string, 
 		if entry.IsDir() {
 			display += "/"
 		}
+		reportProgress(ctx, display)
 		entries = append(entries, display)
 		if len(entries) >= maxListEntries {
 			return errStopWalk
@@ -246,11 +248,13 @@ func (r *Registry) searchFiles(ctx context.Context, raw json.RawMessage) (string
 	}
 
 	matcher := r.ignoreForWalk(target)
+	reportProgressNow(ctx, target)
 	var matches []string
 	searchOne := func(file string) error {
 		if isSensitivePath(file) || matcher.ignores(file, false) || !matchPathGlob(glob, file) {
 			return nil
 		}
+		reportProgress(ctx, file)
 		found, err := r.searchTextFile(ctx, file, matchLine, limit-len(matches))
 		if err != nil {
 			return err
