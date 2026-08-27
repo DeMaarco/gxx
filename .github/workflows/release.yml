@@ -1,0 +1,50 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build binaries
+        run: |
+          set -eux
+          version=${GITHUB_REF_NAME#v}
+          mkdir -p dist
+          for os in darwin linux; do
+            for arch in amd64 arm64; do
+              CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go build \
+                -trimpath \
+                -ldflags "-s -w -X gxx/internal/app.Version=${version}" \
+                -o "dist/gxx-${os}-${arch}" \
+                ./cmd/gxx
+            done
+          done
+          (cd dist && sha256sum gxx-darwin-amd64 gxx-darwin-arm64 gxx-linux-amd64 gxx-linux-arm64 > checksums.txt)
+
+      - name: Publish GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            dist/gxx-darwin-amd64 \
+            dist/gxx-darwin-arm64 \
+            dist/gxx-linux-amd64 \
+            dist/gxx-linux-arm64 \
+            dist/checksums.txt \
+            --generate-notes \
+            --verify-tag

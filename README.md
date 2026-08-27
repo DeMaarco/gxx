@@ -22,10 +22,26 @@ local tools.
 The MVP supports macOS and Linux. Sessions, Windows, MCP, skills, subagents,
 web tools, background terminals, and ChatGPT OAuth are not included.
 
+## Install
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/DeMaarco/gxx/main/install.sh | sh
+```
+
+The script downloads a macOS or Linux binary from GitHub Releases into
+`~/.local/bin`. Pin a release or pick another directory:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/DeMaarco/gxx/main/install.sh | sh -s -- --version v0.0.3
+curl -fsSL https://raw.githubusercontent.com/DeMaarco/gxx/main/install.sh | sh -s -- --dir /usr/local/bin
+```
+
+If `gxx` is not found after install, add `~/.local/bin` to `PATH`.
+
 ## Requirements
 
-- Go 1.27 or newer.
 - An OpenAI API key with access to the selected model.
+- Go 1.27 or newer only if you build from source.
 
 ```sh
 export OPENAI_API_KEY="..."
@@ -45,15 +61,10 @@ commands launched by the agent. `HOME` is kept so tools such as git and npm can
 use the user configuration and caches. `GIT_TERMINAL_PROMPT=0` is set so git
 does not hang waiting for credentials.
 
-## Build
+## Build from source
 
 ```sh
 go build -o gxx ./cmd/gxx
-```
-
-You can also install it into your Go bin directory:
-
-```sh
 go install ./cmd/gxx
 ```
 
