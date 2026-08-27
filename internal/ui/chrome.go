@@ -7,9 +7,8 @@ import (
 )
 
 const (
-	PermissionAsk = "ask"
-	cursorUp      = "\x1b[1A"
-	clearLine     = "\r\x1b[2K"
+	cursorUp  = "\x1b[1A"
+	clearLine = "\r\x1b[2K"
 )
 
 func formatHeader(settings REPLSettings) string {
@@ -28,19 +27,20 @@ func formatStatus(settings REPLSettings) string {
 	if model == "" {
 		model = "model"
 	}
-	permission := strings.TrimSpace(settings.PermissionMode)
-	if permission == "" {
-		permission = PermissionAsk
-	}
 	effort := strings.TrimSpace(settings.Effort)
 	if effort == "" {
 		effort = "medium"
 	}
-	line := model + " · " + permission + " · " + effort + " · " + orDefault(settings.Context, "272k")
-	if settings.Fast {
-		line += " · fast"
+	parts := []string{
+		paint(settings.Color, dim, model),
+		paintPermission(settings.Color, settings.PermissionMode),
+		paint(settings.Color, dim, effort),
+		paint(settings.Color, dim, orDefault(settings.Context, "272k")),
 	}
-	return paint(settings.Color, dim, line)
+	if settings.Fast {
+		parts = append(parts, paint(settings.Color, dim, "fast"))
+	}
+	return strings.Join(parts, paint(settings.Color, dim, " · "))
 }
 
 func writeHeader(writer io.Writer, settings REPLSettings) error {

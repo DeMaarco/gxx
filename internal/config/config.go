@@ -17,13 +17,18 @@ const (
 	DefaultModel              = "gpt-5.6-sol"
 	DefaultEffort             = "medium"
 	DefaultContext            = "272k"
-	DefaultPermissionMode     = "ask"
+	PermissionAsk             = "ask"
+	PermissionAutoWrites      = "auto-writes"
+	PermissionAuto            = "auto"
+	DefaultPermissionMode     = PermissionAsk
 	DefaultMaxSteps           = 12
 	DefaultMaxToolResultBytes = 64 * 1024
 	DefaultMaxSearchResults   = 100
 	DefaultParallelReads      = 4
 	maxConfigBytes            = 64 * 1024
 )
+
+var PermissionModes = []string{PermissionAsk, PermissionAutoWrites, PermissionAuto}
 
 var (
 	DefaultCommandTimeout = 2 * time.Minute
@@ -59,7 +64,7 @@ func Load(workspace string) Config {
 		Effort:             envString("GXX_EFFORT", DefaultEffort),
 		Context:            envString("GXX_CONTEXT", DefaultContext),
 		Fast:               envBool("GXX_FAST", false),
-		PermissionMode:     DefaultPermissionMode,
+		PermissionMode:     envString("GXX_PERMISSION", DefaultPermissionMode),
 		Workspace:          workspace,
 		MaxSteps:           envInt("GXX_MAX_STEPS", DefaultMaxSteps),
 		MaxToolResultBytes: envInt("GXX_MAX_TOOL_RESULT_BYTES", DefaultMaxToolResultBytes),
@@ -96,12 +101,11 @@ func (c *Config) validate(requireAPIKey bool) error {
 		return err
 	}
 	c.Context = normalized
-	if c.PermissionMode == "" {
-		c.PermissionMode = DefaultPermissionMode
+	permission, err := CanonicalPermission(c.PermissionMode)
+	if err != nil {
+		return err
 	}
-	if c.PermissionMode != DefaultPermissionMode {
-		return fmt.Errorf("unsupported permission mode %q", c.PermissionMode)
-	}
+	c.PermissionMode = permission
 	if c.MaxSteps < 1 {
 		return errors.New("max steps must be at least 1")
 	}
@@ -301,6 +305,24 @@ func envBool(name string, fallback bool) bool {
 		return false
 	default:
 		return fallback
+	}
+}
+
+func CanonicalPermission(value string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case PermissionAsk:
+		return PermissionAsk, nil
+	case PermissionAutoWrites, "auto-write", "autowrites":
+		return PermissionAutoWrites, nil
+	case PermissionAuto, "yolo":
+		return PermissionAuto, nil
+	case "":
+		return "", errors.New("permission mode cannot be empty")
+	default:
+		return "", fmt.Errorf(
+			"permission mode must be one of %s",
+			strings.Join(PermissionModes, ", "),
+		)
 	}
 }
 

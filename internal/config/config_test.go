@@ -132,6 +132,55 @@ func TestValidateRejectsUnknownContext(t *testing.T) {
 	}
 }
 
+func TestCanonicalPermissionAliases(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{input: "ask", want: PermissionAsk},
+		{input: "auto-writes", want: PermissionAutoWrites},
+		{input: "auto-write", want: PermissionAutoWrites},
+		{input: "auto", want: PermissionAuto},
+		{input: "YOLO", want: PermissionAuto},
+	}
+	for _, test := range tests {
+		got, err := CanonicalPermission(test.input)
+		if err != nil {
+			t.Fatalf("CanonicalPermission(%q) error = %v", test.input, err)
+		}
+		if got != test.want {
+			t.Fatalf("CanonicalPermission(%q) = %q, want %q", test.input, got, test.want)
+		}
+	}
+	if _, err := CanonicalPermission("trust-me"); err == nil {
+		t.Fatal("CanonicalPermission(trust-me) succeeded")
+	}
+}
+
+func TestLoadReadsPermissionFromEnvironment(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("OPENAI_API_KEY", "test-key")
+	t.Setenv("GXX_PERMISSION", "yolo")
+	settings := Load(t.TempDir())
+	if err := settings.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+	if settings.PermissionMode != PermissionAuto {
+		t.Fatalf("PermissionMode = %q, want auto", settings.PermissionMode)
+	}
+}
+
+func TestValidateRejectsUnknownPermission(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("OPENAI_API_KEY", "test-key")
+	settings := Load(t.TempDir())
+	settings.PermissionMode = "trust-me"
+	err := settings.Validate()
+	if err == nil || !strings.Contains(err.Error(), "permission mode") {
+		t.Fatalf("Validate() error = %v, want permission mode error", err)
+	}
+}
+
 func TestValidateInteractiveAllowsMissingAPIKey(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	settings := Load(t.TempDir())

@@ -21,6 +21,7 @@ const (
 	pickerClosed pickerMode = iota
 	pickerModels
 	pickerOptions
+	pickerModes
 )
 
 const (

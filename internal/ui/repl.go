@@ -9,9 +9,11 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 	"unicode"
 
 	"gxx/internal/agent"
+	"gxx/internal/config"
 )
 
 const maxPromptBytes = 1024 * 1024
@@ -33,11 +35,25 @@ type REPLSettings struct {
 }
 
 type Renderer struct {
-	writer   io.Writer
-	color    bool
-	mu       sync.Mutex
-	sawText  bool
-	textOpen bool
+	writer    io.Writer
+	color     bool
+	live      bool
+	spinEvery time.Duration
+	now       func() time.Time
+
+	mu         sync.Mutex
+	sawText    bool
+	textOpen   bool
+	liveOpen   bool
+	cursorHide bool
+	thinking   bool
+	thinkStart time.Time
+	frame      int
+	running    []runningTool
+
+	animMu   sync.Mutex
+	animStop chan struct{}
+	animDone chan struct{}
 }
 
 func NewRenderer(writer io.Writer) *Renderer {
@@ -45,70 +61,133 @@ func NewRenderer(writer io.Writer) *Renderer {
 }
 
 func NewRendererWithColor(writer io.Writer, color bool) *Renderer {
-	return &Renderer{writer: writer, color: color}
+	return &Renderer{
+		writer:    writer,
+		color:     color,
+		live:      liveOutput(writer),
+		spinEvery: 80 * time.Millisecond,
+	}
 }
 
 func (r *Renderer) StartTurn() {
+	r.stopAnim()
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	r.sawText = false
 	r.textOpen = false
+	r.running = nil
+	r.frame = 0
+	r.thinking = r.live
+	r.thinkStart = r.timestamp()
+	spin := r.shouldSpinLocked()
+	if spin {
+		r.drawLiveLocked()
+	}
+	r.mu.Unlock()
+	if spin {
+		r.startAnim()
+	}
 }
 
 func (r *Renderer) Event(event agent.Event) {
+	r.stopAnim()
 	r.mu.Lock()
-	defer r.mu.Unlock()
+	spin := r.handleEventLocked(event)
+	if !spin {
+		r.showCursorLocked()
+	}
+	r.mu.Unlock()
+	if spin {
+		r.startAnim()
+	}
+}
 
+func (r *Renderer) handleEventLocked(event agent.Event) bool {
 	switch event.Kind {
 	case agent.EventTextDelta:
+		r.clearLiveLocked()
+		r.thinking = false
 		text := safeTerminalText(event.Text)
 		_, _ = io.WriteString(r.writer, text)
 		r.sawText = true
 		r.textOpen = !strings.HasSuffix(text, "\n")
+	case agent.EventToolCall:
+		r.clearLiveLocked()
+		r.thinking = false
 	case agent.EventToolStarted:
+		r.clearLiveLocked()
 		r.endTextLine()
+		r.thinking = false
 		if event.ToolCall != nil {
-			name := safeTerminalText(event.ToolCall.Name)
-			_, _ = fmt.Fprintf(r.writer, "%s %s\n", paint(r.color, dim, "→"), paint(r.color, cyan, name))
+			r.running = append(r.running, newRunningTool(event.ToolCall, r.timestamp()))
+			if !r.live {
+				_, _ = fmt.Fprintf(
+					r.writer,
+					"%s %s\n",
+					paint(r.color, dim, "→"),
+					runningToolLabel(r.color, r.running[len(r.running)-1]),
+				)
+			}
 		}
 	case agent.EventToolDone:
+		r.clearLiveLocked()
 		r.endTextLine()
-		if event.Result == nil {
-			return
+		r.removeRunning(event.Result)
+		r.writeToolDoneLocked(event.Result)
+		if r.live && len(r.running) == 0 {
+			r.thinking = true
+			r.thinkStart = r.timestamp()
 		}
-		if event.Result.IsError {
-			_, _ = fmt.Fprintf(
-				r.writer,
-				"%s %s (%dms): %s\n",
-				paint(r.color, red, "✗"),
-				paint(r.color, red, safeTerminalText(event.Result.Name)),
-				event.Result.DurationMS,
-				paint(r.color, dim, firstLine(event.Result.Output)),
-			)
-			return
-		}
-		suffix := ""
-		if event.Result.Truncated {
-			suffix = ", truncated"
-		}
-		_, _ = fmt.Fprintf(
-			r.writer,
-			"%s %s %s\n",
-			paint(r.color, green, "✓"),
-			paint(r.color, green, safeTerminalText(event.Result.Name)),
-			paint(r.color, dim, fmt.Sprintf("(%dms%s)", event.Result.DurationMS, suffix)),
-		)
 	case agent.EventNotice:
+		r.clearLiveLocked()
 		r.endTextLine()
 		if event.Text != "" {
 			_, _ = fmt.Fprintf(r.writer, "%s\n", paint(r.color, dim, safeTerminalText(event.Text)))
 		}
 	}
+	if r.shouldSpinLocked() {
+		r.drawLiveLocked()
+		return true
+	}
+	return false
+}
+
+func (r *Renderer) writeToolDoneLocked(result *agent.ToolResult) {
+	if result == nil {
+		return
+	}
+	name := safeTerminalText(result.Name)
+	if result.IsError {
+		_, _ = fmt.Fprintf(
+			r.writer,
+			"%s %s (%dms): %s\n",
+			paint(r.color, red, "✗"),
+			paint(r.color, red, name),
+			result.DurationMS,
+			paint(r.color, dim, firstLine(result.Output)),
+		)
+		return
+	}
+	suffix := ""
+	if result.Truncated {
+		suffix = ", truncated"
+	}
+	_, _ = fmt.Fprintf(
+		r.writer,
+		"%s %s %s\n",
+		paint(r.color, green, "✓"),
+		paint(r.color, green, name),
+		paint(r.color, dim, fmt.Sprintf("(%dms%s)", result.DurationMS, suffix)),
+	)
 }
 
 func (r *Renderer) Finish(answer string) {
+	r.stopAnim()
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.clearLiveLocked()
+	r.showCursorLocked()
+	r.thinking = false
+	r.running = nil
 	if !r.sawText && strings.TrimSpace(answer) != "" {
 		answer = safeTerminalText(answer)
 		_, _ = io.WriteString(r.writer, answer)
@@ -209,6 +288,12 @@ func RunREPL(
 			}
 			fmt.Fprintln(writer)
 			continue
+		case strings.HasPrefix(prompt, "/mode"):
+			if err := applyModeCommand(writer, &settings, prompt); err != nil {
+				fmt.Fprintf(writer, "%s\n", paint(settings.Color, red, "error: "+err.Error()))
+			}
+			fmt.Fprintln(writer)
+			continue
 		}
 
 		renderer.StartTurn()
@@ -290,6 +375,47 @@ func applyModelCommand(writer io.Writer, settings *REPLSettings, line string) (b
 		)),
 	)
 	return command.Model != "" && command.Model != previousModel, nil
+}
+
+func applyModeCommand(writer io.Writer, settings *REPLSettings, line string) error {
+	command, err := parseModeCommand(line)
+	if err != nil {
+		return err
+	}
+	if command.Show {
+		current := orDefault(settings.PermissionMode, config.PermissionAsk)
+		fmt.Fprintln(writer, paintModeStatus(settings.Color, current))
+		for _, mode := range config.PermissionModes {
+			marker := "  "
+			label := paintPermission(settings.Color, mode)
+			if mode == current {
+				marker = "* "
+			}
+			fmt.Fprintln(writer, marker+label+paint(settings.Color, dim, "  "+permissionHelp(mode)))
+		}
+		fmt.Fprintln(writer, paint(settings.Color, dim, "Usage: /mode [ask|auto-writes|auto]"))
+		fmt.Fprintln(writer, paint(settings.Color, dim, "In a terminal, Tab opens the mode picker."))
+		return nil
+	}
+
+	previous := settings.PermissionMode
+	settings.PermissionMode = command.Mode
+	if settings.SyncSession != nil {
+		if err := settings.SyncSession(*settings); err != nil {
+			settings.PermissionMode = previous
+			return err
+		}
+	}
+	fmt.Fprintln(writer, paintModeStatus(settings.Color, settings.PermissionMode))
+	return nil
+}
+
+func paintModeStatus(color bool, mode string) string {
+	status := formatModeStatus(mode)
+	if mode == config.PermissionAuto {
+		return paint(color, bold+red, status)
+	}
+	return paint(color, dim, status)
 }
 
 func orDefault(value, fallback string) string {

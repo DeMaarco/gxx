@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"gxx/internal/agent"
+	"gxx/internal/config"
 )
 
 type replModel struct {
@@ -59,7 +60,7 @@ func TestRunREPLHandlesCommandsAndInjectedIO(t *testing.T) {
 		REPLSettings{
 			Version:          "0.0.1",
 			Model:            "test-model",
-			PermissionMode:   PermissionAsk,
+			PermissionMode:   config.PermissionAsk,
 			Effort:           "medium",
 			Workspace:        "/workspace",
 			APIKeyConfigured: true,
@@ -102,7 +103,7 @@ func TestRunREPLConfiguresAPIKeyWithoutEchoingIt(t *testing.T) {
 		REPLSettings{
 			Version:          "0.0.1",
 			Model:            "test-model",
-			PermissionMode:   PermissionAsk,
+			PermissionMode:   config.PermissionAsk,
 			Effort:           "medium",
 			Workspace:        "/workspace",
 			APIKeyConfigured: false,
@@ -203,7 +204,7 @@ func TestRunREPLAppliesModelCommand(t *testing.T) {
 		REPLSettings{
 			Version:          "0.0.1",
 			Model:            "gpt-5.6-sol",
-			PermissionMode:   PermissionAsk,
+			PermissionMode:   config.PermissionAsk,
 			Effort:           "medium",
 			Context:          "272k",
 			Workspace:        "/workspace",
@@ -237,6 +238,63 @@ func TestRunREPLAppliesModelCommand(t *testing.T) {
 		t.Fatalf("synced %d times, want 2", len(synced))
 	}
 	if synced[0].Model != "gpt-5.6-terra" || synced[1].Effort != "high" || !synced[1].Fast {
+		t.Fatalf("synced = %+v", synced)
+	}
+}
+
+func TestRunREPLAppliesModeCommand(t *testing.T) {
+	model := &replModel{}
+	loop := &agent.Loop{Model: model, Executor: emptyExecutor{}, MaxSteps: 2}
+	input := bufio.NewReader(strings.NewReader(
+		"/mode\n/mode auto-writes\n/mode yolo\n/exit\n",
+	))
+	var output bytes.Buffer
+	var synced []REPLSettings
+
+	err := RunREPL(
+		context.Background(),
+		loop,
+		input,
+		NewRenderer(&output),
+		&output,
+		REPLSettings{
+			Version:          "0.0.1",
+			Model:            "gpt-5.6-sol",
+			PermissionMode:   config.PermissionAsk,
+			Effort:           "medium",
+			Context:          "272k",
+			Workspace:        "/workspace",
+			APIKeyConfigured: true,
+			SyncSession: func(session REPLSettings) error {
+				synced = append(synced, session)
+				return nil
+			},
+		},
+	)
+	if err != nil {
+		t.Fatalf("RunREPL() error = %v", err)
+	}
+	text := output.String()
+	for _, expected := range []string{
+		"permission ask · confirm every file change and command",
+		"* ask",
+		"auto-writes",
+		"permission auto-writes · file changes run without confirmation; commands still ask",
+		"permission auto · file changes and commands run without confirmation",
+		"gpt-5.6-sol · auto · medium · 272k",
+	} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("output = %q, want %q", text, expected)
+		}
+	}
+	if model.resetCount != 0 {
+		t.Fatalf("reset count = %d, want 0 after mode change", model.resetCount)
+	}
+	if len(synced) != 2 {
+		t.Fatalf("synced %d times, want 2", len(synced))
+	}
+	if synced[0].PermissionMode != config.PermissionAutoWrites ||
+		synced[1].PermissionMode != config.PermissionAuto {
 		t.Fatalf("synced = %+v", synced)
 	}
 }

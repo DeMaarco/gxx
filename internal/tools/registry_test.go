@@ -12,6 +12,7 @@ import (
 
 	"gxx/internal/agent"
 	"gxx/internal/approval"
+	"gxx/internal/config"
 	"gxx/internal/workspace"
 )
 
@@ -103,7 +104,9 @@ func TestMutationRequiresApproval(t *testing.T) {
 	if string(data) != "before\n" {
 		t.Fatalf("file changed without approval: %q", data)
 	}
-	if len(approver.actions) != 1 || !strings.Contains(approver.actions[0].Preview, "-before") {
+	if len(approver.actions) != 1 ||
+		approver.actions[0].Kind != approval.KindWrite ||
+		!strings.Contains(approver.actions[0].Preview, "-before") {
 		t.Fatalf("approval actions = %#v", approver.actions)
 	}
 }
@@ -312,6 +315,9 @@ func TestApplyPatchUpdatesMultipleFilesTransactionally(t *testing.T) {
 	if len(approver.actions) != 1 {
 		t.Fatalf("approval count = %d, want 1", len(approver.actions))
 	}
+	if approver.actions[0].Kind != approval.KindWrite {
+		t.Fatalf("patch kind = %q, want write", approver.actions[0].Kind)
+	}
 	for _, expected := range []string{
 		"--- existing.txt",
 		"-before",
@@ -428,6 +434,55 @@ func TestApplyPatchAbortsAllFilesChangedAfterApprovalPreview(t *testing.T) {
 	}
 	assertToolFileContents(t, first, "external\n")
 	assertToolFileContents(t, filepath.Join(root, "second.txt"), "two\n")
+}
+
+func TestAutoWritesAppliesFileChangesWithoutPrompt(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, root, "file.txt", "before\n")
+	inner := &staticApprover{approved: false}
+	registry := newTestRegistry(t, root, approval.NewPolicy(config.PermissionAutoWrites, inner), Options{
+		MaxResultBytes:  4096,
+		MaxSearchResult: 10,
+		ParallelReads:   1,
+		CommandTimeout:  time.Second,
+	})
+
+	result := registry.Execute(context.Background(), []agent.ToolCall{
+		toolCall("edit", "edit_file", map[string]any{
+			"path": "file.txt", "old_text": "before", "new_text": "after",
+		}),
+	}, nil)[0]
+	if result.IsError {
+		t.Fatalf("edit failed: %s", result.Output)
+	}
+	assertToolFileContents(t, filepath.Join(root, "file.txt"), "after\n")
+	if len(inner.actions) != 0 {
+		t.Fatalf("auto-writes prompted for a file change: %#v", inner.actions)
+	}
+}
+
+func TestAutoAppliesFileChangesWhenInnerWouldDeny(t *testing.T) {
+	root := t.TempDir()
+	inner := &staticApprover{approved: false}
+	registry := newTestRegistry(t, root, approval.NewPolicy(config.PermissionAuto, inner), Options{
+		MaxResultBytes:  4096,
+		MaxSearchResult: 10,
+		ParallelReads:   1,
+		CommandTimeout:  time.Second,
+	})
+
+	result := registry.Execute(context.Background(), []agent.ToolCall{
+		toolCall("write", "write_file", map[string]any{
+			"path": "created.txt", "content": "ok\n",
+		}),
+	}, nil)[0]
+	if result.IsError {
+		t.Fatalf("write failed: %s", result.Output)
+	}
+	assertToolFileContents(t, filepath.Join(root, "created.txt"), "ok\n")
+	if len(inner.actions) != 0 {
+		t.Fatalf("auto prompted for a write: %#v", inner.actions)
+	}
 }
 
 func assertToolFileContents(t *testing.T, path, expected string) {

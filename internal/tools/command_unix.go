@@ -53,6 +53,7 @@ func (r *Registry) previewRunCommand(raw json.RawMessage) (approval.Action, erro
 	return approval.Action{
 		Title:   "Run command in " + r.workspace.Root(),
 		Preview: "$ " + args.Command,
+		Kind:    approval.KindCommand,
 	}, nil
 }
 

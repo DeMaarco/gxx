@@ -20,6 +20,9 @@ func TestRunHelpDoesNotRequireConfiguration(t *testing.T) {
 	if !strings.Contains(stdout.String(), "gxx ask") {
 		t.Fatalf("stdout = %q, want usage", stdout.String())
 	}
+	if !strings.Contains(stdout.String(), "--permission") {
+		t.Fatalf("stdout = %q, want permission flag", stdout.String())
+	}
 }
 
 func TestRunVersionPrintsRelease(t *testing.T) {
@@ -105,5 +108,27 @@ func TestInteractiveModeStartsWithoutAPIKeyForConfigCommand(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "Run /config") {
 		t.Fatalf("stdout = %q, want missing-key guidance", stdout.String())
+	}
+}
+
+func TestAskRejectsUnknownPermissionMode(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("OPENAI_API_KEY", "test-key")
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	code := Run(
+		context.Background(),
+		[]string{"ask", "--permission", "trust-me", "--json", "inspect"},
+		strings.NewReader(""),
+		&stdout,
+		&stderr,
+		false,
+	)
+	if code != 2 {
+		t.Fatalf("Run() code = %d, want 2", code)
+	}
+	if !strings.Contains(stdout.String(), "permission mode") {
+		t.Fatalf("stdout = %q, want permission mode error", stdout.String())
 	}
 }

@@ -14,9 +14,17 @@ import (
 
 const maxPreviewBytes = 16 * 1024
 
+type Kind string
+
+const (
+	KindWrite   Kind = "write"
+	KindCommand Kind = "command"
+)
+
 type Action struct {
 	Title   string
 	Preview string
+	Kind    Kind
 }
 
 type Approver interface {

@@ -146,12 +146,9 @@ func (r *Registry) executeReadBatch(
 }
 
 func (r *Registry) executeOne(ctx context.Context, call agent.ToolCall, emit agent.EmitFunc) agent.ToolResult {
-	started := time.Now()
-	agent.Emit(emit, agent.Event{Kind: agent.EventToolStarted, ToolCall: &call})
-
 	spec, exists := r.specs[call.Name]
 	if !exists {
-		result := errorResult(call, fmt.Errorf("unknown tool %q", call.Name), time.Since(started))
+		result := errorResult(call, fmt.Errorf("unknown tool %q", call.Name), 0)
 		agent.Emit(emit, agent.Event{Kind: agent.EventToolDone, Result: &result})
 		return result
 	}
@@ -161,7 +158,7 @@ func (r *Registry) executeOne(ctx context.Context, call agent.ToolCall, emit age
 	}
 	if !spec.definition.ReadOnly {
 		if r.approver == nil {
-			result := errorResult(call, fmt.Errorf("permission denied: no interactive approver"), time.Since(started))
+			result := errorResult(call, fmt.Errorf("permission denied: no interactive approver"), 0)
 			agent.Emit(emit, agent.Event{Kind: agent.EventToolDone, Result: &result})
 			return result
 		}
@@ -173,22 +170,25 @@ func (r *Registry) executeOne(ctx context.Context, call agent.ToolCall, emit age
 			action, err = spec.preview(call.Arguments)
 		}
 		if err != nil {
-			result := errorResult(call, err, time.Since(started))
+			result := errorResult(call, err, 0)
 			agent.Emit(emit, agent.Event{Kind: agent.EventToolDone, Result: &result})
 			return result
 		}
 		approved, err := r.approver.Approve(ctx, action)
 		if err != nil {
-			result := errorResult(call, fmt.Errorf("approval failed: %w", err), time.Since(started))
+			result := errorResult(call, fmt.Errorf("approval failed: %w", err), 0)
 			agent.Emit(emit, agent.Event{Kind: agent.EventToolDone, Result: &result})
 			return result
 		}
 		if !approved {
-			result := errorResult(call, fmt.Errorf("permission denied by user"), time.Since(started))
+			result := errorResult(call, fmt.Errorf("permission denied by user"), 0)
 			agent.Emit(emit, agent.Event{Kind: agent.EventToolDone, Result: &result})
 			return result
 		}
 	}
+
+	started := time.Now()
+	agent.Emit(emit, agent.Event{Kind: agent.EventToolStarted, ToolCall: &call})
 
 	output, err := runner(ctx)
 	duration := time.Since(started)

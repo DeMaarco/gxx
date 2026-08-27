@@ -10,6 +10,7 @@ type slashCommand struct {
 var slashCommands = []slashCommand{
 	{name: "/help", help: "Show this help"},
 	{name: "/model", help: "Select model, context size, effort, and fast"},
+	{name: "/mode", help: "Select permission mode: ask, auto-writes, or auto"},
 	{name: "/config", help: "Set and persist the OpenAI API key"},
 	{name: "/clear", help: "Clear in-memory conversation"},
 	{name: "/exit", help: "Exit gxx"},

@@ -49,23 +49,25 @@ type keyEvent struct {
 }
 
 type inputState struct {
-	buffer         []rune
-	cursor         int
-	suggest        int
-	history        []string
-	histPos        int
-	draft          []rune
-	picker         pickerMode
-	models         []string
-	modelIndex     int
-	optionIndex    int
-	pickContext    string
-	pickEffort     string
-	pickFast       bool
-	sessionModel   string
-	sessionContext string
-	sessionEffort  string
-	sessionFast    bool
+	buffer            []rune
+	cursor            int
+	suggest           int
+	history           []string
+	histPos           int
+	draft             []rune
+	picker            pickerMode
+	models            []string
+	modelIndex        int
+	optionIndex       int
+	pickContext       string
+	pickEffort        string
+	pickFast          bool
+	sessionModel      string
+	sessionContext    string
+	sessionEffort     string
+	sessionFast       bool
+	sessionPermission string
+	modeIndex         int
 }
 
 func (s *inputState) text() string {
@@ -102,11 +104,19 @@ func (s *inputState) ghost() string {
 
 func (s *inputState) afterEdit() {
 	s.histPos = len(s.history)
-	if s.picker != pickerClosed && !strings.HasPrefix(s.text(), "/model") {
+	if s.picker == pickerModels || s.picker == pickerOptions {
+		if !strings.HasPrefix(s.text(), "/model") {
+			s.picker = pickerClosed
+		}
+	}
+	if s.picker == pickerModes && !isModePickerText(s.text()) {
 		s.picker = pickerClosed
 	}
 	if s.picker == pickerModels {
 		s.clampModelIndex()
+	}
+	if s.picker == pickerModes {
+		s.clampModeIndex()
 	}
 	matches := s.matches()
 	if len(matches) == 0 {
@@ -187,6 +197,9 @@ func (s *inputState) complete() {
 		s.picker = pickerModels
 		return
 	}
+	if s.picker == pickerModes {
+		return
+	}
 	matches := s.matches()
 	if len(matches) == 0 {
 		return
@@ -194,6 +207,11 @@ func (s *inputState) complete() {
 	if matches[s.suggest].name == "/model" {
 		s.setText("/model")
 		s.startPicker()
+		return
+	}
+	if matches[s.suggest].name == "/mode" {
+		s.setText("/mode")
+		s.startModePicker()
 		return
 	}
 	s.setText(matches[s.suggest].name)
@@ -271,6 +289,65 @@ func (s *inputState) modelCommand() string {
 	return encodeModelCommand(model, s.pickContext, s.pickEffort, s.pickFast)
 }
 
+func (s *inputState) startModePicker() {
+	s.picker = pickerModes
+	s.modeIndex = 0
+	for index, mode := range config.PermissionModes {
+		if mode == s.sessionPermission {
+			s.modeIndex = index
+			break
+		}
+	}
+	s.clampModeIndex()
+}
+
+func (s *inputState) modeQuery() string {
+	return strings.TrimSpace(strings.TrimPrefix(s.text(), "/mode"))
+}
+
+func (s *inputState) visibleModes() []string {
+	query := strings.ToLower(s.modeQuery())
+	if query == "" {
+		return append([]string(nil), config.PermissionModes...)
+	}
+	visible := make([]string, 0, len(config.PermissionModes))
+	for _, mode := range config.PermissionModes {
+		if strings.Contains(mode, query) {
+			visible = append(visible, mode)
+		}
+	}
+	return visible
+}
+
+func (s *inputState) clampModeIndex() {
+	visible := s.visibleModes()
+	if len(visible) == 0 {
+		s.modeIndex = 0
+		return
+	}
+	if s.modeIndex >= len(visible) {
+		s.modeIndex = len(visible) - 1
+	}
+	if s.modeIndex < 0 {
+		s.modeIndex = 0
+	}
+}
+
+func (s *inputState) selectedPermission() string {
+	visible := s.visibleModes()
+	if len(visible) == 0 {
+		return ""
+	}
+	return visible[s.modeIndex]
+}
+
+func (s *inputState) modeCommand() string {
+	if mode := s.selectedPermission(); mode != "" {
+		return encodeModeCommand(mode)
+	}
+	return strings.TrimSpace(s.text())
+}
+
 func (s *inputState) cycleOption(delta int) {
 	switch s.optionIndex {
 	case optionContext:
@@ -283,10 +360,16 @@ func (s *inputState) cycleOption(delta int) {
 }
 
 func (s *inputState) submit() string {
-	if s.picker != pickerClosed {
+	if s.picker == pickerModels || s.picker == pickerOptions {
 		return s.modelCommand()
 	}
+	if s.picker == pickerModes {
+		return s.modeCommand()
+	}
 	if s.openModelPicker() {
+		return ""
+	}
+	if s.openModePicker() {
 		return ""
 	}
 	matches := s.matches()
@@ -297,6 +380,11 @@ func (s *inputState) submit() string {
 			if selected == "/model" {
 				s.setText("/model")
 				s.startPicker()
+				return ""
+			}
+			if selected == "/mode" {
+				s.setText("/mode")
+				s.startModePicker()
 				return ""
 			}
 			return selected
@@ -316,6 +404,17 @@ func (s *inputState) openModelPicker() bool {
 	return true
 }
 
+func (s *inputState) openModePicker() bool {
+	if s.picker != pickerClosed {
+		return false
+	}
+	if strings.TrimSpace(s.text()) != "/mode" {
+		return false
+	}
+	s.startModePicker()
+	return true
+}
+
 func (s *inputState) up() {
 	if s.picker == pickerModels {
 		if s.modelIndex > 0 {
@@ -326,6 +425,12 @@ func (s *inputState) up() {
 	if s.picker == pickerOptions {
 		if s.optionIndex > 0 {
 			s.optionIndex--
+		}
+		return
+	}
+	if s.picker == pickerModes {
+		if s.modeIndex > 0 {
+			s.modeIndex--
 		}
 		return
 	}
@@ -355,6 +460,12 @@ func (s *inputState) down() {
 	if s.picker == pickerOptions {
 		if s.optionIndex < optionCount-1 {
 			s.optionIndex++
+		}
+		return
+	}
+	if s.picker == pickerModes {
+		if s.modeIndex < len(s.visibleModes())-1 {
+			s.modeIndex++
 		}
 		return
 	}
@@ -427,7 +538,7 @@ func (s *inputState) apply(event keyEvent) (submitted string, eof bool, handled 
 	case keyEsc:
 		if s.picker == pickerOptions {
 			s.picker = pickerModels
-		} else if s.picker == pickerModels {
+		} else if s.picker == pickerModels || s.picker == pickerModes {
 			s.picker = pickerClosed
 			s.setText("")
 			s.afterEdit()
@@ -490,6 +601,7 @@ func (e *lineEditor) Read(ctx context.Context, settings REPLSettings) (string, e
 	e.state.sessionContext = settings.Context
 	e.state.sessionEffort = settings.Effort
 	e.state.sessionFast = settings.Fast
+	e.state.sessionPermission = settings.PermissionMode
 	e.state.picker = pickerClosed
 	e.color = settings.Color
 	if err := e.render(settings); err != nil {
@@ -580,6 +692,9 @@ func (e *lineEditor) render(settings REPLSettings) error {
 }
 
 func (e *lineEditor) renderPicker(settings REPLSettings) error {
+	if e.state.picker == pickerModes {
+		return e.renderModePicker(settings)
+	}
 	e.state.clampModelIndex()
 	var body strings.Builder
 	if e.state.picker == pickerOptions {
@@ -627,6 +742,38 @@ func (e *lineEditor) renderPicker(settings REPLSettings) error {
 		}
 		body.WriteString(paint(e.color, dim, "tab options · enter apply · esc cancel") + "\r\n")
 	}
+	rows := strings.Count(body.String(), "\r\n")
+	output := "\r" + eraseLine + "> " + string(e.state.buffer) + eraseDown + "\r\n"
+	output += body.String()
+	output += formatStatus(settings)
+	output += fmt.Sprintf("\x1b[%dA\x1b[%dG", 1+rows, 3+e.state.cursor)
+	_, err := io.WriteString(e.out, output)
+	return err
+}
+
+func (e *lineEditor) renderModePicker(settings REPLSettings) error {
+	e.state.clampModeIndex()
+	var body strings.Builder
+	visible := e.state.visibleModes()
+	if len(visible) == 0 {
+		body.WriteString(paint(e.color, dim, "  no matching modes") + "\r\n")
+	}
+	for index, mode := range visible {
+		marker := "  "
+		label := paintPermission(e.color, mode)
+		note := paint(e.color, dim, "  "+permissionHelp(mode))
+		if mode == e.state.sessionPermission {
+			note += paint(e.color, dim, "  in use")
+		}
+		if index == e.state.modeIndex {
+			marker = paint(e.color, cyan, "▸ ")
+			if mode != config.PermissionAuto {
+				label = paint(e.color, bold+cyan, mode)
+			}
+		}
+		body.WriteString(marker + label + note + "\r\n")
+	}
+	body.WriteString(paint(e.color, dim, "enter apply · esc cancel") + "\r\n")
 	rows := strings.Count(body.String(), "\r\n")
 	output := "\r" + eraseLine + "> " + string(e.state.buffer) + eraseDown + "\r\n"
 	output += body.String()

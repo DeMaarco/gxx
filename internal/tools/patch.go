@@ -147,6 +147,7 @@ func (r *Registry) prepareApplyPatch(
 	action := approval.Action{
 		Title:   fmt.Sprintf("Apply patch to %d file(s)", len(changes)),
 		Preview: preview.String(),
+		Kind:    approval.KindWrite,
 	}
 	run := func(ctx context.Context) (string, error) {
 		if err := ctx.Err(); err != nil {

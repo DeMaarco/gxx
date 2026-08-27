@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+
+	"gxx/internal/config"
 )
 
 func TestMatchingCommandsFiltersByPrefix(t *testing.T) {
@@ -126,5 +128,42 @@ func TestInputStateTabOnModelCommandOpensPicker(t *testing.T) {
 	state.apply(keyEvent{kind: keyTab})
 	if state.text() != "/model" || state.picker != pickerModels {
 		t.Fatalf("tab /m = %q picker=%d, want /model picker", state.text(), state.picker)
+	}
+}
+
+func TestInputStateModePickerTabAndEnter(t *testing.T) {
+	state := inputState{sessionPermission: config.PermissionAsk}
+	state.setText("/mode")
+	line, _, submitted := state.apply(keyEvent{kind: keyEnter})
+	if !submitted || line != "" || state.picker != pickerModes {
+		t.Fatalf("enter on /mode = %q picker=%d submitted=%v, want open picker", line, state.picker, submitted)
+	}
+	if state.selectedPermission() != config.PermissionAsk {
+		t.Fatalf("selected mode = %q, want ask", state.selectedPermission())
+	}
+
+	state.apply(keyEvent{kind: keyDown})
+	if state.selectedPermission() != config.PermissionAutoWrites {
+		t.Fatalf("selected mode = %q, want auto-writes", state.selectedPermission())
+	}
+	state.apply(keyEvent{kind: keyDown})
+	if state.selectedPermission() != config.PermissionAuto {
+		t.Fatalf("selected mode = %q, want auto", state.selectedPermission())
+	}
+
+	line, _, submitted = state.apply(keyEvent{kind: keyEnter})
+	if !submitted || line != "/mode auto" {
+		t.Fatalf("apply = %q submitted=%v, want /mode auto", line, submitted)
+	}
+}
+
+func TestInputStateTabOnModeCommandOpensPicker(t *testing.T) {
+	state := inputState{sessionPermission: config.PermissionAsk}
+	for _, char := range "/mode" {
+		state.insert(char)
+	}
+	state.apply(keyEvent{kind: keyTab})
+	if state.text() != "/mode" || state.picker != pickerModes {
+		t.Fatalf("tab /mode = %q picker=%d, want mode picker", state.text(), state.picker)
 	}
 }

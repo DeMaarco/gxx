@@ -424,6 +424,7 @@ func (r *Registry) prepareEditFile(raw json.RawMessage) (approval.Action, toolRu
 	action := approval.Action{
 		Title:   "Edit " + args.Path,
 		Preview: compactDiff(args.Path, string(current), string(proposed)),
+		Kind:    approval.KindWrite,
 	}
 	run := func(ctx context.Context) (string, error) {
 		if err := ctx.Err(); err != nil {
@@ -497,6 +498,7 @@ func (r *Registry) prepareWriteFile(raw json.RawMessage) (approval.Action, toolR
 	action := approval.Action{
 		Title:   "Write " + args.Path,
 		Preview: compactDiff(args.Path, string(current), args.Content),
+		Kind:    approval.KindWrite,
 	}
 	run := func(ctx context.Context) (string, error) {
 		if err := ctx.Err(); err != nil {

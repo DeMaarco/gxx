@@ -31,6 +31,7 @@ type runtime struct {
 	renderer  *ui.Renderer
 	workspace *workspace.Workspace
 	provider  *openaiProvider.Provider
+	policy    *approval.Policy
 }
 
 type jsonResult struct {
@@ -239,6 +240,7 @@ func parseFlags(
 	)
 	flags.StringVar(&parsed.config.Effort, "effort", parsed.config.Effort, "reasoning effort")
 	flags.StringVar(&parsed.config.Context, "context", parsed.config.Context, "context window size")
+	flags.StringVar(&parsed.config.PermissionMode, "permission", parsed.config.PermissionMode, "permission mode")
 	flags.BoolVar(&parsed.config.Fast, "fast", parsed.config.Fast, "use OpenAI fast service tier")
 	if allowJSON {
 		flags.BoolVar(&parsed.json, "json", false, "emit one JSON result")
@@ -282,8 +284,8 @@ func newRuntimeFromConfig(
 	settings.Workspace = ws.Root()
 
 	reader := bufio.NewReader(stdin)
-	approver := approval.NewPrompt(reader, stderr, interactive)
-	registry := tools.NewRegistry(ws, approver, tools.Options{
+	policy := approval.NewPolicy(settings.PermissionMode, approval.NewPrompt(reader, stderr, interactive))
+	registry := tools.NewRegistry(ws, policy, tools.Options{
 		MaxResultBytes:  settings.MaxToolResultBytes,
 		MaxSearchResult: settings.MaxSearchResults,
 		ParallelReads:   settings.ParallelReads,
@@ -310,6 +312,7 @@ func newRuntimeFromConfig(
 		renderer:  ui.NewRendererWithColor(stdout, ui.ColorEnabled(stdout)),
 		workspace: ws,
 		provider:  model,
+		policy:    policy,
 	}, nil
 }
 
@@ -332,6 +335,12 @@ func replSettings(rt *runtime, stdin io.Reader, stdout io.Writer) ui.REPLSetting
 			rt.provider.SetEffort(session.Effort)
 			rt.provider.SetContext(session.Context)
 			rt.provider.SetFast(session.Fast)
+			if rt.policy != nil && strings.TrimSpace(session.PermissionMode) != "" {
+				if err := rt.policy.SetMode(session.PermissionMode); err != nil {
+					return err
+				}
+				rt.config.PermissionMode = rt.policy.Mode()
+			}
 			rt.config.Model = session.Model
 			rt.config.Effort = session.Effort
 			rt.config.Context = session.Context
@@ -441,6 +450,7 @@ func printCommonFlags(writer io.Writer) {
 	fmt.Fprintln(writer, "  --model string          OpenAI model (default: GXX_MODEL or gpt-5.6-sol)")
 	fmt.Fprintln(writer, "  --effort string         Reasoning effort (default: GXX_EFFORT or medium)")
 	fmt.Fprintln(writer, "  --context string        Context window size (default: GXX_CONTEXT or 272k)")
+	fmt.Fprintln(writer, "  --permission string     Permission mode (default: GXX_PERMISSION or ask)")
 	fmt.Fprintln(writer, "  --fast                  Use OpenAI fast service tier")
 	fmt.Fprintln(writer, "  --max-steps int         Maximum model steps (default: 12)")
 	fmt.Fprintln(writer, "  --command-timeout dur   Maximum command duration (default: 2m)")

@@ -14,8 +14,8 @@ local tools.
   the current process.
 - Workspace-local tools to list, search, and read files.
 - Transactional `apply_patch` changes across added, updated, and deleted files.
-- Exact text edits, complete file writes, and shell commands after an explicit
-  per-action confirmation challenge.
+- Exact text edits, complete file writes, and shell commands, gated by permission
+  mode (`ask`, `auto-writes`, or `auto`).
 - Bounded parallel execution for independent read-only tools.
 - No runtime dependency on `rg`, `git`, or a TUI framework.
 
@@ -69,16 +69,17 @@ gpt-5.6-sol · ask · medium · 272k
 ```
 
 The first line is the product badge and version. The second line is the prompt.
-The third line shows the selected model, permission mode (`ask`: confirm every
-mutation and command), reasoning effort, and context window size. `fast` also
-appears there when the fast service tier is on.
+The third line shows the selected model, permission mode, reasoning effort, and
+context window size. `fast` also appears there when the fast service tier is on.
+Permission mode `auto` is shown in red.
 
 Type `/` to open slash-command autocomplete; Tab accepts the highlighted
 command, and the up/down arrows move through suggestions. With a normal prompt,
 the same arrows walk previous lines from the current session. `/model` opens a
 picker for GPT-5.6 Sol, Terra, and Luna; Tab switches to a submenu for context
 window size, effort, and the fast service tier. Left/right cycle those options,
-and Enter applies them.
+and Enter applies them. `/mode` opens a picker for `ask`, `auto-writes`, and
+`auto`.
 
 Run one request:
 
@@ -105,6 +106,9 @@ REPL commands:
   for context window size (`32k`, `128k`, `272k`, `1m`), effort, and fast
   on/off. You can also set them directly:
   `/model terra context=1m effort=high fast=on`.
+- `/mode` selects the permission mode: `ask`, `auto-writes`, or `auto`. In a
+  terminal, Tab opens a picker. You can also set it directly: `/mode auto-writes`.
+  `yolo` is accepted as an alias for `auto`.
 - `/config` securely prompts for and persists the OpenAI API key.
 - `/clear` discards the in-memory conversation.
 - `/exit` exits.
@@ -115,6 +119,7 @@ Common flags:
 --model string          OpenAI model (default: GXX_MODEL or gpt-5.6-sol)
 --effort string         Reasoning effort (default: GXX_EFFORT or medium)
 --context string        Context window size (default: GXX_CONTEXT or 272k)
+--permission string     Permission mode (default: GXX_PERMISSION or ask)
 --fast                  Use OpenAI fast service tier
 --max-steps int         Maximum model steps (default: 12)
 --command-timeout dur   Maximum command duration (default: 2m)
@@ -126,6 +131,7 @@ Additional environment settings are available for automation:
 - `GXX_MODEL`
 - `GXX_EFFORT` (`none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`)
 - `GXX_CONTEXT` (`32k`, `128k`, `272k`, `1m`)
+- `GXX_PERMISSION` (`ask`, `auto-writes`, `auto`)
 - `GXX_FAST` (`on` / `off`)
 - `GXX_MAX_STEPS`
 - `GXX_COMMAND_TIMEOUT`
@@ -136,11 +142,21 @@ Additional environment settings are available for automation:
 
 ## Permissions and workspace safety
 
-Read-only tools run automatically. Every file mutation and shell command shows
-a preview and requires typing the displayed one-time `y-xxxx` challenge. This
-prevents input entered before the preview from approving an unseen action. If
-stdin is not interactive, mutable tools are denied, so piped `gxx ask` runs
-safely without an implicit approval mode.
+Read-only tools run automatically. File mutations and shell commands follow the
+current permission mode:
+
+- `ask` (default): every file change and command shows a preview and requires
+  typing the displayed one-time `y-xxxx` challenge. This prevents input entered
+  before the preview from approving an unseen action.
+- `auto-writes`: file changes (`apply_patch`, `edit_file`, `write_file`) run
+  without confirmation; shell commands still use the `y-xxxx` challenge.
+- `auto`: every file change and command runs without confirmation. The status
+  line shows this mode in red.
+
+If stdin is not interactive, `ask` still denies mutable tools, so piped
+`gxx ask` stays safe by default. `--permission auto-writes` and `--permission auto`
+apply those modes even without a TTY, so unattended `gxx ask` can mutate the
+workspace.
 
 Tool paths must be relative to the startup directory. Path traversal and
 symlinks are rejected for file contents, and filesystem operations use Go's
@@ -157,7 +173,8 @@ also cancelled if their source changes between preview and write.
 
 Shell commands run in the workspace with a finite timeout and sanitized
 environment through a fixed non-login `/bin/sh`, but they are **not** placed in
-an operating-system sandbox. Review each proposed command before approving it.
+an operating-system sandbox. In `ask` and `auto-writes`, review each proposed
+command before approving it.
 
 ## Privacy
 

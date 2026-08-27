@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"gxx/internal/agent"
+	"gxx/internal/approval"
+	"gxx/internal/config"
 )
 
 func TestRunCommandScrubsProviderCredential(t *testing.T) {
@@ -120,4 +122,73 @@ func TestRunCommandKillsBackgroundProcessGroup(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatalf("background process %d survived command completion", pid)
+}
+
+func TestRunCommandReportsCommandKind(t *testing.T) {
+	root := t.TempDir()
+	approver := &staticApprover{approved: true}
+	registry := newTestRegistry(t, root, approver, Options{
+		MaxResultBytes:  4096,
+		MaxSearchResult: 10,
+		ParallelReads:   1,
+		CommandTimeout:  time.Second,
+	})
+	result := registry.Execute(context.Background(), []agent.ToolCall{
+		toolCall("command", "run_command", map[string]any{
+			"command": "true", "timeout_seconds": nil,
+		}),
+	}, nil)[0]
+	if result.IsError {
+		t.Fatalf("run command failed: %s", result.Output)
+	}
+	if len(approver.actions) != 1 || approver.actions[0].Kind != approval.KindCommand {
+		t.Fatalf("approval actions = %#v", approver.actions)
+	}
+}
+
+func TestAutoWritesStillAsksForCommands(t *testing.T) {
+	root := t.TempDir()
+	inner := &staticApprover{approved: false}
+	registry := newTestRegistry(t, root, approval.NewPolicy(config.PermissionAutoWrites, inner), Options{
+		MaxResultBytes:  4096,
+		MaxSearchResult: 10,
+		ParallelReads:   1,
+		CommandTimeout:  time.Second,
+	})
+	result := registry.Execute(context.Background(), []agent.ToolCall{
+		toolCall("command", "run_command", map[string]any{
+			"command": "true", "timeout_seconds": nil,
+		}),
+	}, nil)[0]
+	if !result.IsError || !strings.Contains(result.Output, "permission denied") {
+		t.Fatalf("result = %+v, want command prompt denial", result)
+	}
+	if len(inner.actions) != 1 || inner.actions[0].Kind != approval.KindCommand {
+		t.Fatalf("inner actions = %#v", inner.actions)
+	}
+}
+
+func TestAutoRunsCommandsWithoutPrompt(t *testing.T) {
+	root := t.TempDir()
+	inner := &staticApprover{approved: false}
+	registry := newTestRegistry(t, root, approval.NewPolicy(config.PermissionAuto, inner), Options{
+		MaxResultBytes:  4096,
+		MaxSearchResult: 10,
+		ParallelReads:   1,
+		CommandTimeout:  time.Second,
+	})
+	result := registry.Execute(context.Background(), []agent.ToolCall{
+		toolCall("command", "run_command", map[string]any{
+			"command": "printf ran", "timeout_seconds": nil,
+		}),
+	}, nil)[0]
+	if result.IsError {
+		t.Fatalf("run command failed: %s", result.Output)
+	}
+	if result.Output != "ran" {
+		t.Fatalf("output = %q, want ran", result.Output)
+	}
+	if len(inner.actions) != 0 {
+		t.Fatalf("auto prompted for a command: %#v", inner.actions)
+	}
 }
