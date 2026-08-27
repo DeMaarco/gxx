@@ -125,3 +125,9 @@ cd gxx
 go install ./cmd/gxx
 go test ./test/...
 ```
+
+## License
+
+Copyright 2026 DeMarco
+
+Licensed under the [Apache License, Version 2.0](LICENSE).
