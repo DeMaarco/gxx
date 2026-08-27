@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -891,17 +892,14 @@ func (e *lineEditor) paintFrame(settings REPLSettings, body string, bodyRows int
 	if ghost {
 		ghostText = e.state.ghost()
 	}
-	prefixW := visibleWidth(prefix)
-	textW := visibleWidth(text) + visibleWidth(ghostText)
-	cursorW := visibleWidth(string(e.state.buffer[:e.state.cursor]))
-	cells := prefixW + textW
-	promptRows := promptRowCount(cells, width)
-	cursorRow, cursorCol := promptCursorPos(prefixW+cursorW, width)
-
 	display := prefix + text
 	if ghostText != "" {
 		display += paint(e.color, dim, ghostText)
 	}
+	cells := visibleWidth(display)
+	cursorCells := visibleWidth(prefix) + visibleWidth(string(e.state.buffer[:e.state.cursor]))
+	promptRows := promptRowCount(cells, width)
+	cursorRow, cursorCol := promptCursorPos(cursorCells, width)
 
 	var out strings.Builder
 	out.WriteString(promptHome(e.cursorRow))
@@ -912,7 +910,7 @@ func (e *lineEditor) paintFrame(settings REPLSettings, body string, bodyRows int
 			out.WriteString("\r\n")
 		}
 	}
-	if width > 0 && cells > 0 && cells%width == 0 {
+	if width > 1 && cells > 0 && cells%width == 0 {
 		out.WriteString("\r\n")
 	}
 	out.WriteString("\r\n")
@@ -922,7 +920,11 @@ func (e *lineEditor) paintFrame(settings REPLSettings, body string, bodyRows int
 	if up > 0 {
 		fmt.Fprintf(&out, "\x1b[%dA", up)
 	}
-	fmt.Fprintf(&out, "\x1b[%dG", cursorCol+1)
+	col := cursorCol + 1
+	if width > 1 && col > width {
+		col = width
+	}
+	fmt.Fprintf(&out, "\x1b[%dG", col)
 	e.cursorRow = cursorRow
 	_, err := io.WriteString(e.out, out.String())
 	return err
@@ -932,8 +934,15 @@ func (e *lineEditor) finish(settings REPLSettings, line string) {
 	var out strings.Builder
 	out.WriteString(promptHome(e.cursorRow))
 	out.WriteString(wrapOn)
-	out.WriteString(promptPrefix(settings))
-	out.WriteString(line)
+	prefix := promptPrefix(settings)
+	display := prefix + line
+	lines := wrapVisible(display, e.termWidth())
+	for index, wrapped := range lines {
+		out.WriteString(wrapped)
+		if index < len(lines)-1 {
+			out.WriteString("\r\n")
+		}
+	}
 	out.WriteString(eraseDown)
 	out.WriteByte('\n')
 	e.cursorRow = 0
@@ -951,15 +960,18 @@ func (e *lineEditor) termWidth() int {
 	if e.columns > 0 {
 		return e.columns
 	}
+	if e.in != nil {
+		if width, _, err := term.GetSize(int(e.in.Fd())); err == nil && width > 1 {
+			return width
+		}
+	}
 	if file, ok := e.out.(*os.File); ok {
 		if width, _, err := term.GetSize(int(file.Fd())); err == nil && width > 1 {
 			return width
 		}
 	}
-	if e.in != nil {
-		if width, _, err := term.GetSize(int(e.in.Fd())); err == nil && width > 1 {
-			return width
-		}
+	if cols, err := strconv.Atoi(strings.TrimSpace(os.Getenv("COLUMNS"))); err == nil && cols > 1 {
+		return cols
 	}
 	return 80
 }
@@ -1031,7 +1043,7 @@ func wrapVisible(value string, width int) []string {
 	return append(lines, current.String())
 }
 
-func renderPromptFrame(out io.Writer, settings REPLSettings, text string, width int, prevCursorRow int) (int, error) {
+func renderPromptFrame(out io.Writer, settings REPLSettings, text string, width, prevCursorRow int) (int, error) {
 	e := &lineEditor{out: out, columns: width, cursorRow: prevCursorRow, color: settings.Color}
 	e.state.setText(text)
 	if err := e.render(settings); err != nil {

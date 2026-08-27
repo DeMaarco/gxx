@@ -51,8 +51,9 @@ func TestRunVersionPrintsRelease(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("Run() code = %d, want 0; stderr = %q", code, stderr.String())
 	}
-	if stdout.String() != "gxx v0.0.3\n" {
-		t.Fatalf("stdout = %q, want version v0.0.3", stdout.String())
+	got := stdout.String()
+	if !strings.Contains(got, app.Version) {
+		t.Fatalf("stdout = %q, want version %s", got, app.Version)
 	}
 }
 

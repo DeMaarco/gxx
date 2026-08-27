@@ -29,7 +29,7 @@ Inspired by [`fx`](https://github.com/vercel-labs/fx), but narrower on purpose:
 **one provider** (OpenAI), **one workspace**, **no TUI**. Just a prompt.
 
 ```text
-◆ gxx  v0.0.3
+◆ gxx  v0.0.4
 >
 gpt-5.6-sol · ask · medium · 272k · 0%
 ```
@@ -65,7 +65,7 @@ gxx version
 Pin a release or another directory:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/DeMaarco/gxx/main/install.sh | sh -s -- --version v0.0.3
+curl -fsSL https://raw.githubusercontent.com/DeMaarco/gxx/main/install.sh | sh -s -- --version v0.0.4
 curl -fsSL https://raw.githubusercontent.com/DeMaarco/gxx/main/install.sh | sh -s -- --dir /usr/local/bin
 ```
 
@@ -93,7 +93,7 @@ Drop an `AGENTS.md` in the project root if you want extra instructions loaded in
 ## REPL
 
 ```text
-◆ gxx  v0.0.3     badge and version
+◆ gxx  v0.0.4     badge and version
 >                 type here  ·  becomes  > plan  in plan mode
 gpt-5.6-sol · ask · medium · 272k · 0%
 ```

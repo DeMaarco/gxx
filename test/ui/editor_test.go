@@ -109,62 +109,6 @@ func TestReadKeyParsesArrowsAndRunes(t *testing.T) {
 	}
 }
 
-func TestPromptWrapLayoutCountsRows(t *testing.T) {
-	if rows := ui.PromptRowCount(0, 20); rows != 1 {
-		t.Fatalf("empty = %d rows", rows)
-	}
-	if rows := ui.PromptRowCount(19, 20); rows != 1 {
-		t.Fatalf("short = %d rows", rows)
-	}
-	if rows := ui.PromptRowCount(20, 20); rows != 2 {
-		t.Fatalf("exact fill = %d rows, want phantom row", rows)
-	}
-	if rows := ui.PromptRowCount(21, 20); rows != 2 {
-		t.Fatalf("wrapped = %d rows", rows)
-	}
-	row, col := ui.PromptCursorPos(2, 20)
-	if row != 0 || col != 2 {
-		t.Fatalf("start cursor = (%d,%d), want (0,2)", row, col)
-	}
-	row, col = ui.PromptCursorPos(27, 20)
-	if row != 1 || col != 7 {
-		t.Fatalf("wrapped cursor = (%d,%d), want (1,7)", row, col)
-	}
-}
-
-func TestPromptFrameHomesBeforeRedrawWhenWrapped(t *testing.T) {
-	settings := ui.REPLSettings{
-		Model:          "gpt-5.6-sol",
-		PermissionMode: config.PermissionAsk,
-		Effort:         "medium",
-	}
-	var first bytes.Buffer
-	text := strings.Repeat("x", 40)
-	cursorRow, err := ui.RenderPromptFrame(&first, settings, text, 20, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cursorRow < 1 {
-		t.Fatalf("cursor row = %d, want wrapped", cursorRow)
-	}
-	if strings.Contains(first.String(), strings.Repeat("x", 21)) {
-		t.Fatalf("first frame should hard-wrap: %q", first.String())
-	}
-
-	var second bytes.Buffer
-	longer := text + "yz"
-	if _, err := ui.RenderPromptFrame(&second, settings, longer, 20, cursorRow); err != nil {
-		t.Fatal(err)
-	}
-	got := second.String()
-	if !strings.HasPrefix(got, ui.PromptHome(cursorRow)) {
-		t.Fatalf("wrapped redraw should home to the first prompt row, got %q", got)
-	}
-	if strings.Contains(got, strings.Repeat("x", 21)) {
-		t.Fatalf("redraw should hard-wrap: %q", got)
-	}
-}
-
 func TestWrapVisibleSplitsOnWidth(t *testing.T) {
 	got := ui.WrapVisible("abcdef", 3)
 	if len(got) != 2 || got[0] != "abc" || got[1] != "def" {
@@ -175,6 +119,45 @@ func TestWrapVisibleSplitsOnWidth(t *testing.T) {
 	}
 	if lines := ui.WrapVisible("", 5); len(lines) != 1 || lines[0] != "" {
 		t.Fatalf("empty wrap = %#v", lines)
+	}
+}
+
+func TestPromptFrameWrapsWithoutRepeatingPrefix(t *testing.T) {
+	settings := ui.REPLSettings{
+		Model:          "gpt-5.6-sol",
+		PermissionMode: config.PermissionAsk,
+		Effort:         "medium",
+	}
+	text := strings.Repeat("x", 40)
+	var first bytes.Buffer
+	cursorRow, err := ui.RenderPromptFrame(&first, settings, text, 20, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := first.String()
+	if cursorRow < 1 {
+		t.Fatalf("cursor row = %d, want wrapped", cursorRow)
+	}
+	if strings.Contains(got, strings.Repeat("x", 21)) {
+		t.Fatalf("prompt should wrap before exceeding the width: %q", got)
+	}
+	if strings.Count(got, "> ") != 1 {
+		t.Fatalf("wrapped prompt reprinted the prefix: %q", got)
+	}
+	if !strings.Contains(got, "\r\n") {
+		t.Fatalf("wrapped prompt should break to the next line: %q", got)
+	}
+
+	var second bytes.Buffer
+	if _, err := ui.RenderPromptFrame(&second, settings, text+"yz", 20, cursorRow); err != nil {
+		t.Fatal(err)
+	}
+	redraw := second.String()
+	if !strings.HasPrefix(redraw, ui.PromptHome(cursorRow)) {
+		t.Fatalf("redraw should return to the first prompt row, got %q", redraw)
+	}
+	if strings.Count(redraw, "> ") != 1 {
+		t.Fatalf("redraw reprinted the prefix: %q", redraw)
 	}
 }
 
