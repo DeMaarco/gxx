@@ -27,17 +27,13 @@ Install gxx from GitHub Releases.
 
 Usage:
   curl -fsSL https://raw.githubusercontent.com/DeMaarco/gxx/main/install.sh | sh
-  gh api -H "Accept: application/vnd.github.raw" repos/DeMaarco/gxx/contents/install.sh | sh
   sh install.sh --version v0.0.3
   sh install.sh --dir /usr/local/bin
-
-The GitHub repo is private until made public. Anonymous curl only works for
-public repositories. Private installs need GitHub CLI (`gh`) or GITHUB_TOKEN.
 
 Environment:
   GXX_VERSION       Release tag or "latest" (default: latest)
   GXX_INSTALL_DIR   Install directory (default: ~/.local/bin)
-  GITHUB_TOKEN      Optional token for private release downloads
+  GITHUB_TOKEN      Optional token for authenticated downloads
 EOF
 }
 

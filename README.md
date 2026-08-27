@@ -1,4 +1,33 @@
+<div align="center">
+
+```
+            ◆
+          ◆   ◆
+        ◆  gxx  ◆
+          ◆   ◆
+            ◆
+```
+
 # gxx
+
+**A small coding agent for the terminal.**
+
+Open a repo, type what you want, and it lists, searches, reads,
+patches, and runs commands — in that folder only.
+
+[Install](#install) · [Quick start](#quick-start) · [REPL](#repl) · [Permissions](#permissions)
+
+[![Release](https://img.shields.io/github/v/release/DeMaarco/gxx?style=flat-square&color=a855f7)](https://github.com/DeMaarco/gxx/releases)
+[![License](https://img.shields.io/badge/license-Apache%202.0-0ea5e9?style=flat-square)](LICENSE)
+[![Go](https://img.shields.io/badge/go-1.27+-00ADD8?style=flat-square&logo=go&logoColor=white)](https://go.dev)
+[![Platform](https://img.shields.io/badge/macOS%20%7C%20Linux-111827?style=flat-square)](#install)
+
+</div>
+
+---
+
+Inspired by [`fx`](https://github.com/vercel-labs/fx), but narrower on purpose:
+**one provider** (OpenAI), **one workspace**, **no TUI**. Just a prompt.
 
 ```text
 ◆ gxx  v0.0.3
@@ -6,44 +35,47 @@
 gpt-5.6-sol · ask · medium · 272k · 0%
 ```
 
-A small coding agent for the terminal. Open a repo, type what you want,
-and it lists, searches, reads, patches, and runs commands in that folder.
+The status line is model · permission mode · effort · context size · window fill.
+`auto` paints red. Context turns yellow at 70% and red at 90%.
 
-Inspired by [`fx`](https://github.com/vercel-labs/fx). Narrower on purpose:
-one provider (OpenAI), one workspace, no TUI.
+## Features
 
-macOS and Linux.
+| | What you get |
+| --- | --- |
+| **Workspace-bound** | The directory you start in is the whole world. No traversal, no outside symlinks. |
+| **Ask before it writes** | Default `ask` mode previews file edits and shell commands until you approve. |
+| **Plan mode** | `Shift+Tab` for a read-only pass: inspect and design, no writes and no shell. |
+| **One-shot CLI** | `gxx ask` for scripts and pipes. `--json` when you want a machine-readable result. |
+| **Secret-aware** | `.env`, keys, and credential paths stay blocked. Requests go out with `store:false`. |
 
 ## Install
 
-The repository is private, so GitHub CLI has to fetch the script:
+macOS and Linux, amd64 and arm64:
 
 ```sh
-gh api -H "Accept: application/vnd.github.raw" repos/DeMaarco/gxx/contents/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/DeMaarco/gxx/main/install.sh | sh
 ```
 
-That drops `gxx` in `~/.local/bin`. If the shell cannot find it:
+That puts `gxx` in `~/.local/bin`. If the shell cannot find it:
 
 ```sh
 export PATH="$HOME/.local/bin:$PATH"
 gxx version
 ```
 
-When the repo is public, this is enough:
+Pin a release or another directory:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/DeMaarco/gxx/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/DeMaarco/gxx/main/install.sh | sh -s -- --version v0.0.3
+curl -fsSL https://raw.githubusercontent.com/DeMaarco/gxx/main/install.sh | sh -s -- --dir /usr/local/bin
 ```
 
-Pin a release or another directory with `--version v0.0.3` and `--dir /usr/local/bin`
-after `sh -s --`.
+## Quick start
 
-## Run
-
-You need an OpenAI API key. Either export it, or start `gxx` and run `/config`.
+You need an [OpenAI API key](https://platform.openai.com/api-keys). Export it, or start `gxx` and run `/config`.
 
 ```sh
-export OPENAI_API_KEY="..."
+export OPENAI_API_KEY="sk-..."
 cd your-project
 gxx
 ```
@@ -53,10 +85,13 @@ One-shot, without the REPL:
 ```sh
 gxx ask "explain this repository"
 gxx ask --json "inspect the project"
+echo "what does main.go do?" | gxx ask
 gxx usage
 ```
 
-## Prompt
+Drop an `AGENTS.md` in the project root if you want extra instructions loaded into the session.
+
+## REPL
 
 ```text
 ◆ gxx  v0.0.3     badge and version
@@ -64,21 +99,17 @@ gxx usage
 gpt-5.6-sol · ask · medium · 272k · 0%
 ```
 
-The status line is model, permission mode, effort, context size, and how full
-the window is. `auto` paints red. Context turns yellow at 70% and red at 90%.
-
 | Key | Action |
 | --- | --- |
 | `/` | Slash commands |
-| Tab | Complete, or open pickers |
-| Shift+Tab | Plan mode on/off |
-| Ctrl+C | Clear, cancel, or confirm exit |
-| Ctrl+D | Exit |
+| `Tab` | Complete, or open pickers |
+| `Shift+Tab` | Plan mode on / off |
+| `Ctrl+C` | Clear, cancel, or confirm exit |
+| `Ctrl+D` | Exit |
 
-Plan mode is read-only: look and design, no writes and no shell. It is not saved
-to config.
+Plan mode is session-only. It is not saved to config.
 
-## Commands
+### Commands
 
 | Command | What it does |
 | --- | --- |
@@ -91,8 +122,14 @@ to config.
 | `/clear` | Forget this conversation |
 | `/exit` | Quit |
 
-`/model terra context=1m effort=high fast=on` and `/mode auto-writes` also work
-as one line. `yolo` is an alias for `auto`.
+Inline forms work too:
+
+```text
+/model terra context=1m effort=high fast=on
+/mode auto-writes
+```
+
+`yolo` is an alias for `auto`.
 
 ## Permissions
 
@@ -104,18 +141,17 @@ Reads always run. Writes and shell commands follow the mode, unless plan is on.
 | `auto-writes` | Apply | Preview + `y-xxxx` |
 | `auto` | Apply | Apply |
 
-Piped `gxx ask` stays on `ask` and denies mutations unless you pass
-`--permission`. Commands are not OS-sandboxed; review them in `ask`.
-
-The workspace is the directory you started in. Traversal, outside symlinks,
-and secret paths (`.env`, keys, credentials) are blocked.
+Piped `gxx ask` stays on `ask` and denies mutations unless you pass `--permission`.
+Commands are not OS-sandboxed — review them in `ask`.
 
 ## Privacy
 
-Requests use `store:false`. Only files the tools actually open go to OpenAI.
-Do not point it at code you cannot send to that account.
+- Requests use `store:false`.
+- Only files the tools actually open go to OpenAI.
+- Secret paths (`.env`, keys, credentials) are blocked.
+- Do not point it at code you cannot send to that account.
 
-## Source
+## Build from source
 
 Go 1.27+.
 
