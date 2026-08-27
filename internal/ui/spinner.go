@@ -21,6 +21,7 @@ import (
 	"os"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"golang.org/x/term"
@@ -36,16 +37,15 @@ const (
 var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 
 type runningTool struct {
-	id       string
-	name     string
-	hint     string
-	start    time.Time
-	detail   string
-	added    int
-	deleted  int
-	removed  bool
-	lines    []activityLine
-	revealed int
+	id      string
+	name    string
+	hint    string
+	start   time.Time
+	detail  string
+	added   int
+	deleted int
+	removed bool
+	lines   []activityLine
 }
 
 func liveOutput(writer io.Writer) bool {
@@ -67,7 +67,7 @@ func (r *Renderer) timestamp() time.Time {
 }
 
 func (r *Renderer) shouldSpinLocked() bool {
-	return r.live && !r.textOpen && (r.thinking || len(r.running) > 0 || len(r.reveal) > 0)
+	return r.live && !r.textOpen && (r.thinking || len(r.running) > 0)
 }
 
 func (r *Renderer) startAnim() {
@@ -98,7 +98,6 @@ func (r *Renderer) startAnim() {
 				r.mu.Lock()
 				if r.shouldSpinLocked() {
 					r.frame++
-					r.advanceActivityLocked()
 					r.drawLiveLocked()
 				}
 				r.mu.Unlock()
@@ -129,9 +128,6 @@ func (r *Renderer) drawLiveLocked() {
 }
 
 func (r *Renderer) composeLiveLocked() []string {
-	if len(r.running) == 0 && len(r.reveal) > 0 {
-		return nil
-	}
 	width := r.termWidth()
 	status := formatLiveStatus(
 		r.color,
@@ -213,28 +209,6 @@ func (r *Renderer) clearLiveLocked() {
 	_, _ = io.WriteString(r.writer, eraseDown)
 	r.liveHeight = 0
 	r.liveOpen = false
-}
-
-func (r *Renderer) advanceActivityLocked() {
-	if n := min(revealPerTick, len(r.reveal)); n > 0 {
-		r.clearLiveLocked()
-		for i := 0; i < n; i++ {
-			r.writeActivityLineLocked(r.reveal[i])
-		}
-		r.reveal = r.reveal[n:]
-		if len(r.reveal) == 0 && len(r.running) == 0 && r.live {
-			r.thinking = true
-			r.thinkStart = r.timestamp()
-		}
-	}
-	for i := range r.running {
-		remaining := len(r.running[i].lines) - r.running[i].revealed
-		if remaining <= 0 {
-			continue
-		}
-		step := min(revealPerTick, remaining)
-		r.running[i].revealed += step
-	}
 }
 
 func cursorUpN(n int) string {
@@ -644,32 +618,194 @@ func compactHints(hints []string) string {
 }
 
 func holdModelText(value string) bool {
-	value = strings.TrimSpace(value)
-	if value == "" || !strings.HasPrefix(value, "{") {
-		return false
+	emit, hold := splitHeld(value)
+	if hold != "" {
+		return true
 	}
+	return strings.TrimSpace(value) != "" && strings.TrimSpace(emit) == ""
+}
+
+func splitHeld(value string) (emit, hold string) {
+	var output strings.Builder
 	rest := value
 	for rest != "" {
+		if i := incompleteLeakAt(rest); i >= 0 && leakStart(rest[i:]) < 0 {
+			output.WriteString(rest[:i])
+			return output.String(), rest[i:]
+		}
+		cut := leakStart(rest)
+		if j := jsonToolIndex(rest); j >= 0 && (cut < 0 || j < cut) {
+			cut = j
+		}
+		if cut < 0 {
+			output.WriteString(rest)
+			return output.String(), ""
+		}
+		output.WriteString(rest[:cut])
+		next, done := skipLeakBlock(rest[cut:])
+		if !done {
+			return strings.TrimRight(output.String(), " \t"), rest[cut:]
+		}
+		if output.Len() > 0 && looksLikeProse(next) && !strings.HasSuffix(output.String(), "\n") {
+			output.WriteByte('\n')
+		}
+		rest = next
+	}
+	return output.String(), ""
+}
+
+func leakStart(value string) int {
+	idx := -1
+	for _, marker := range []string{"to=functions", "to=multi_tool_use"} {
+		if i := strings.Index(value, marker); i >= 0 && (idx < 0 || i < idx) {
+			idx = i
+		}
+	}
+	return idx
+}
+
+func incompleteLeakAt(value string) int {
+	i := strings.LastIndex(value, "to=")
+	if i < 0 {
+		return -1
+	}
+	suffix := value[i:]
+	for _, marker := range []string{"to=functions", "to=multi_tool_use"} {
+		if strings.HasPrefix(marker, suffix) {
+			return i
+		}
+	}
+	return -1
+}
+
+func jsonToolIndex(value string) int {
+	i := 0
+	for i < len(value) && (value[i] == ' ' || value[i] == '\t' || value[i] == '\n' || value[i] == '\r') {
+		i++
+	}
+	if i >= len(value) || !strings.HasPrefix(value[i:], `{"`) {
+		return -1
+	}
+	decoder := json.NewDecoder(strings.NewReader(value[i:]))
+	var raw json.RawMessage
+	if err := decoder.Decode(&raw); err != nil {
+		return i
+	}
+	var object map[string]any
+	if err := json.Unmarshal(raw, &object); err != nil || !toolishObject(object) {
+		return -1
+	}
+	return i
+}
+
+func skipLeakBlock(value string) (string, bool) {
+	if strings.HasPrefix(strings.TrimLeft(value, " \t\n"), "{") {
+		return skipToolJSON(value)
+	}
+	brace := strings.Index(value, "{")
+	if brace < 0 {
+		return value, false
+	}
+	rest, done := skipToolJSON(value[brace:])
+	if !done {
+		return value, false
+	}
+	return skipLeakGarbage(rest), true
+}
+
+func skipToolJSON(value string) (string, bool) {
+	rest := value
+	skipped := false
+	for {
+		rest = strings.TrimLeft(rest, " \t\n")
 		if !strings.HasPrefix(rest, "{") {
-			return false
+			break
 		}
 		decoder := json.NewDecoder(strings.NewReader(rest))
 		var raw json.RawMessage
 		if err := decoder.Decode(&raw); err != nil {
-			return true
+			if skipped {
+				return rest, true
+			}
+			return value, false
 		}
 		var object map[string]any
 		if err := json.Unmarshal(raw, &object); err != nil || !toolishObject(object) {
-			return false
+			if skipped {
+				break
+			}
+			return value, true
 		}
-		rest = strings.TrimSpace(rest[decoder.InputOffset():])
+		skipped = true
+		rest = rest[decoder.InputOffset():]
 	}
-	return true
+	if !skipped {
+		return value, false
+	}
+	return skipLeakGarbage(rest), true
+}
+
+func skipLeakGarbage(value string) string {
+	rest := value
+	for {
+		trimmed := strings.TrimLeft(rest, " \t\n")
+		if trimmed == "" {
+			return trimmed
+		}
+		if leakStart(trimmed) == 0 || strings.HasPrefix(trimmed, `{"`) {
+			return trimmed
+		}
+		token, leftover := nextGarbageToken(trimmed)
+		if !isLeakGarbage(token) {
+			return rest
+		}
+		rest = leftover
+	}
+}
+
+func nextGarbageToken(value string) (string, string) {
+	i := 0
+	for i < len(value) {
+		r, size := utf8.DecodeRuneInString(value[i:])
+		if r == ' ' || r == '\t' || r == '\n' {
+			break
+		}
+		i += size
+	}
+	if i == 0 {
+		return "", value
+	}
+	return value[:i], value[i:]
+}
+
+func isLeakGarbage(token string) bool {
+	letters, nonLatin := 0, 0
+	for _, r := range token {
+		if !unicode.IsLetter(r) {
+			continue
+		}
+		letters++
+		if r > unicode.MaxASCII {
+			nonLatin++
+		}
+	}
+	return letters > 0 && nonLatin*2 >= letters
+}
+
+func looksLikeProse(value string) bool {
+	value = strings.TrimLeft(value, " \t")
+	if value == "" || leakStart(value) == 0 || strings.HasPrefix(value, `{"`) {
+		return false
+	}
+	r, _ := utf8.DecodeRuneInString(value)
+	return unicode.IsLetter(r) || unicode.IsNumber(r)
 }
 
 func toolishObject(object map[string]any) bool {
 	for _, key := range []string{
 		"path", "command", "query", "offset_line", "limit_lines", "timeout_seconds",
+		"changes", "action", "old_text", "new_text", "glob", "max_depth", "max_results",
+		"tool_uses", "recipient_name",
 	} {
 		if _, ok := object[key]; ok {
 			return true

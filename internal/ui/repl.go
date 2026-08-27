@@ -72,7 +72,6 @@ type Renderer struct {
 	frame      int
 	running    []runningTool
 	pending    pendingDoneGroup
-	reveal     []activityLine
 	heldText   string
 	usage      agent.Usage
 
@@ -101,7 +100,6 @@ func (r *Renderer) StartTurn() {
 	r.textOpen = false
 	r.running = nil
 	r.pending = pendingDoneGroup{}
-	r.reveal = nil
 	r.heldText = ""
 	r.frame = 0
 	r.liveHeight = 0
@@ -145,18 +143,15 @@ func (r *Renderer) handleEventLocked(event agent.Event) bool {
 	switch event.Kind {
 	case agent.EventTextDelta:
 		r.clearLiveLocked()
-		r.flushRevealLocked()
 		r.flushPendingDoneLocked()
 		r.queueTextLocked(event.Text)
 	case agent.EventToolCall:
 		r.clearLiveLocked()
-		r.flushRevealLocked()
 		r.dropHeldTextLocked()
 		r.flushPendingDoneLocked()
 		r.thinking = false
 	case agent.EventToolStarted:
 		r.clearLiveLocked()
-		r.flushRevealLocked()
 		r.dropHeldTextLocked()
 		name := ""
 		if event.ToolCall != nil {
@@ -183,13 +178,12 @@ func (r *Renderer) handleEventLocked(event agent.Event) bool {
 		r.endTextLine()
 		tool := r.takeRunning(event.Result)
 		r.noteToolDoneLocked(event.Result, tool)
-		if r.live && len(r.running) == 0 && len(r.reveal) == 0 {
+		if r.live && len(r.running) == 0 {
 			r.thinking = true
 			r.thinkStart = r.timestamp()
 		}
 	case agent.EventNotice:
 		r.clearLiveLocked()
-		r.flushRevealLocked()
 		r.flushPendingDoneLocked()
 		r.endTextLine()
 		if event.Text != "" {
@@ -241,7 +235,6 @@ func (r *Renderer) noteToolDoneLocked(result *agent.ToolResult, tool runningTool
 	stats := formatLineCounts(r.color, "", tool.added, tool.deleted, tool.removed)
 	if result.IsError {
 		r.flushPendingDoneLocked()
-		r.flushRevealLocked()
 		r.writeToolDoneLocked(doneLine{
 			name:      result.Name,
 			hints:     compactHints([]string{tool.hint}),
@@ -263,7 +256,7 @@ func (r *Renderer) noteToolDoneLocked(result *agent.ToolResult, tool runningTool
 			duration:  result.DurationMS,
 			truncated: result.Truncated,
 		})
-		r.queueRevealLocked(extra)
+		r.writeExtraLinesLocked(extra)
 		return
 	}
 	if r.pending.count > 0 && r.pending.name != result.Name {
@@ -272,27 +265,10 @@ func (r *Renderer) noteToolDoneLocked(result *agent.ToolResult, tool runningTool
 	r.pending.add(result.Name, tool.hint, result.DurationMS, result.Truncated)
 }
 
-func (r *Renderer) queueRevealLocked(lines []activityLine) {
-	if len(lines) == 0 {
-		return
-	}
-	if !r.live || r.spinEvery <= 0 {
-		for _, line := range lines {
-			r.writeActivityLineLocked(line)
-		}
-		return
-	}
-	r.reveal = append(r.reveal, lines...)
-}
-
-func (r *Renderer) flushRevealLocked() {
-	if len(r.reveal) == 0 {
-		return
-	}
-	for _, line := range r.reveal {
+func (r *Renderer) writeExtraLinesLocked(lines []activityLine) {
+	for _, line := range lines {
 		r.writeActivityLineLocked(line)
 	}
-	r.reveal = nil
 }
 
 func (r *Renderer) writeActivityLineLocked(line activityLine) {
@@ -356,11 +332,11 @@ func (r *Renderer) writeToolDoneLocked(line doneLine) {
 func (r *Renderer) queueTextLocked(text string) {
 	r.thinking = false
 	r.heldText += text
-	if holdModelText(r.heldText) {
-		return
+	safe, hold := splitHeld(r.heldText)
+	r.heldText = hold
+	if safe != "" {
+		r.writeTextLocked(safe)
 	}
-	r.writeTextLocked(r.heldText)
-	r.heldText = ""
 }
 
 func (r *Renderer) writeTextLocked(text string) {
@@ -374,8 +350,11 @@ func (r *Renderer) writeTextLocked(text string) {
 }
 
 func (r *Renderer) dropHeldTextLocked() {
-	if holdModelText(r.heldText) {
-		r.heldText = ""
+	safe, _ := splitHeld(r.heldText)
+	r.heldText = ""
+	if strings.TrimSpace(safe) != "" {
+		r.writeTextLocked(safe)
+		r.endTextLine()
 	}
 }
 
@@ -384,20 +363,20 @@ func (r *Renderer) Finish(answer string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.clearLiveLocked()
-	r.flushRevealLocked()
 	r.flushPendingDoneLocked()
 	r.showCursorLocked()
 	r.thinking = false
 	r.running = nil
-	r.reveal = nil
-	if holdModelText(r.heldText) {
-		r.heldText = ""
-	} else if r.heldText != "" {
-		r.writeTextLocked(r.heldText)
-		r.heldText = ""
+	safe, _ := splitHeld(r.heldText)
+	r.heldText = ""
+	if strings.TrimSpace(safe) != "" {
+		r.writeTextLocked(safe)
 	}
-	if !r.sawText && strings.TrimSpace(answer) != "" && !holdModelText(answer) {
-		r.writeTextLocked(answer)
+	if !r.sawText && strings.TrimSpace(answer) != "" {
+		safe, hold := splitHeld(answer)
+		if hold == "" && strings.TrimSpace(safe) != "" {
+			r.writeTextLocked(safe)
+		}
 	}
 	r.endTextLine()
 	if line := formatTurnUsage(r.color, r.usage); line != "" {

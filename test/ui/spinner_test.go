@@ -363,6 +363,87 @@ func TestHoldModelTextDetectsToolJSON(t *testing.T) {
 	if ui.HoldModelText(`{"name":"gxx","version":"0.0.2"}`) {
 		t.Fatal("unrelated JSON should stream")
 	}
+	if !ui.HoldModelText("to=functions.apply_patch code:") {
+		t.Fatal("leaked function call header should be held")
+	}
+	if !ui.HoldModelText("to=") {
+		t.Fatal("incomplete to= prefix should be held")
+	}
+}
+
+func TestRendererDropsLeakedFunctionCallText(t *testing.T) {
+	var output bytes.Buffer
+	renderer := ui.NewRenderer(&output)
+	renderer.StartTurn()
+	renderer.Event(agent.Event{
+		Kind: agent.EventTextDelta,
+		Text: "Revisando el modal. to=functions.apply_patch code:\n",
+	})
+	renderer.Event(agent.Event{
+		Kind: agent.EventTextDelta,
+		Text: `{"changes":[{"path":"styles.css","action":"update","old_text":"a","new_text":"b"}]} Ахада to=functions.read_file code:` + "\n",
+	})
+	renderer.Event(agent.Event{
+		Kind: agent.EventTextDelta,
+		Text: `{"limit_lines":10,"offset_line":1500,"path":"styles.css"}` + "\nHaré un último ajuste.\n",
+	})
+	renderer.Finish("")
+	text := output.String()
+	for _, leaked := range []string{
+		"to=functions", "old_text", "limit_lines", "Ахада", "changes",
+	} {
+		if strings.Contains(text, leaked) {
+			t.Fatalf("leaked tool text %q was printed: %q", leaked, text)
+		}
+	}
+	if !strings.Contains(text, "Revisando el modal.") {
+		t.Fatalf("output = %q, want prose before leak", text)
+	}
+	if !strings.Contains(text, "Haré un último ajuste.") {
+		t.Fatalf("output = %q, want prose after leak", text)
+	}
+}
+
+func TestRendererKeepsSearchCountsOnTheMatchingLine(t *testing.T) {
+	var output bytes.Buffer
+	renderer := ui.NewRenderer(&output)
+	renderer.SetLive(true)
+	renderer.SetSpinEvery(0)
+
+	renderer.StartTurn()
+	renderer.Event(agent.Event{
+		Kind:     agent.EventToolStarted,
+		ToolCall: &agent.ToolCall{ID: "a", Name: "search_files", Arguments: []byte(`{"query":"alpha"}`)},
+	})
+	renderer.Event(agent.Event{
+		Kind:     agent.EventToolStarted,
+		ToolCall: &agent.ToolCall{ID: "b", Name: "search_files", Arguments: []byte(`{"query":"beta"}`)},
+	})
+	renderer.Event(agent.Event{
+		Kind: agent.EventToolDone,
+		Result: &agent.ToolResult{
+			CallID: "a", Name: "search_files", DurationMS: 1, Output: "No matches found.",
+		},
+	})
+	renderer.Event(agent.Event{
+		Kind: agent.EventToolDone,
+		Result: &agent.ToolResult{
+			CallID: "b", Name: "search_files", DurationMS: 2,
+			Output: "index.html:15:beta\nindex.html:32:beta",
+		},
+	})
+	renderer.Finish("")
+	text := output.String()
+	alpha := strings.Index(text, "✓ search_files  alpha")
+	beta := strings.Index(text, "✓ search_files  beta")
+	none := strings.Index(text, "no matches")
+	two := strings.Index(text, "2 matches")
+	if alpha < 0 || beta < 0 || none < 0 || two < 0 {
+		t.Fatalf("search lines = %q", text)
+	}
+	if !(alpha < none && none < beta && beta < two) {
+		t.Fatalf("search extras were detached: %q", text)
+	}
 }
 
 func TestNonLiveRendererKeepsStaticToolArrow(t *testing.T) {
@@ -423,11 +504,11 @@ func TestRendererShowsSearchProgressAndMatches(t *testing.T) {
 	if !strings.Contains(text, "✓ search_files") {
 		t.Fatalf("search done = %q, want completed search", text)
 	}
-	if !strings.Contains(text, "internal/ui/repl.go:88") || !strings.Contains(text, "internal/tools/fs.go:250") {
-		t.Fatalf("search done = %q, want match locations", text)
-	}
 	if !strings.Contains(text, "2 matches") {
 		t.Fatalf("search done = %q, want match count", text)
+	}
+	if strings.Contains(text, "TODO here") {
+		t.Fatalf("search done = %q, want count not match bodies", text)
 	}
 }
 

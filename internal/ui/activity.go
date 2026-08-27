@@ -24,7 +24,6 @@ import (
 
 const (
 	maxLiveDetails = 5
-	revealPerTick  = 2
 )
 
 type activityKind byte
@@ -219,7 +218,6 @@ func searchDetailLines(output string) []activityLine {
 	if strings.HasPrefix(output, "No matches") {
 		return []activityLine{{kind: activityContext, text: "no matches"}}
 	}
-	var lines []activityLine
 	count := 0
 	for _, raw := range strings.Split(output, "\n") {
 		raw = strings.TrimSpace(raw)
@@ -227,16 +225,6 @@ func searchDetailLines(output string) []activityLine {
 			continue
 		}
 		count++
-		if len(lines) >= 5 {
-			continue
-		}
-		path, rest, ok := strings.Cut(raw, ":")
-		lineNo, _, okLine := strings.Cut(rest, ":")
-		if ok && okLine && path != "" && lineNo != "" {
-			lines = append(lines, activityLine{kind: activityContext, text: path + ":" + lineNo})
-			continue
-		}
-		lines = append(lines, activityLine{kind: activityContext, text: raw})
 	}
 	if count == 0 {
 		return nil
@@ -245,7 +233,7 @@ func searchDetailLines(output string) []activityLine {
 	if count == 1 {
 		label = "1 match"
 	}
-	return append(lines, activityLine{kind: activityContext, text: label})
+	return []activityLine{{kind: activityContext, text: label}}
 }
 
 func listDetailLines(output string) []activityLine {
