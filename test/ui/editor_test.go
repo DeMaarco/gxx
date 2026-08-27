@@ -147,8 +147,8 @@ func TestPromptFrameHomesBeforeRedrawWhenWrapped(t *testing.T) {
 	if cursorRow < 1 {
 		t.Fatalf("cursor row = %d, want wrapped", cursorRow)
 	}
-	if strings.Count(first.String(), "> "+text) != 1 {
-		t.Fatalf("first frame reprinted the prompt: %q", first.String())
+	if strings.Contains(first.String(), strings.Repeat("x", 21)) {
+		t.Fatalf("first frame should hard-wrap: %q", first.String())
 	}
 
 	var second bytes.Buffer
@@ -160,8 +160,21 @@ func TestPromptFrameHomesBeforeRedrawWhenWrapped(t *testing.T) {
 	if !strings.HasPrefix(got, ui.PromptHome(cursorRow)) {
 		t.Fatalf("wrapped redraw should home to the first prompt row, got %q", got)
 	}
-	if strings.Count(got, "> "+longer) != 1 {
-		t.Fatalf("redraw reprinted the prompt: %q", got)
+	if strings.Contains(got, strings.Repeat("x", 21)) {
+		t.Fatalf("redraw should hard-wrap: %q", got)
+	}
+}
+
+func TestWrapVisibleSplitsOnWidth(t *testing.T) {
+	got := ui.WrapVisible("abcdef", 3)
+	if len(got) != 2 || got[0] != "abc" || got[1] != "def" {
+		t.Fatalf("wrap = %#v", got)
+	}
+	if lines := ui.WrapVisible("ab", 5); len(lines) != 1 || lines[0] != "ab" {
+		t.Fatalf("short wrap = %#v", lines)
+	}
+	if lines := ui.WrapVisible("", 5); len(lines) != 1 || lines[0] != "" {
+		t.Fatalf("empty wrap = %#v", lines)
 	}
 }
 

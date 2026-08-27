@@ -679,6 +679,9 @@ func (e *lineEditor) Read(ctx context.Context, settings *REPLSettings) (string, 
 	}
 	defer term.Restore(fd, state)
 
+	_, _ = io.WriteString(e.out, wrapOff)
+	defer func() { _, _ = io.WriteString(e.out, wrapOn) }()
+
 	e.state.buffer = nil
 	e.state.cursor = 0
 	e.state.suggest = 0
@@ -895,15 +898,22 @@ func (e *lineEditor) paintFrame(settings REPLSettings, body string, bodyRows int
 	promptRows := promptRowCount(cells, width)
 	cursorRow, cursorCol := promptCursorPos(prefixW+cursorW, width)
 
+	display := prefix + text
+	if ghostText != "" {
+		display += paint(e.color, dim, ghostText)
+	}
+
 	var out strings.Builder
 	out.WriteString(promptHome(e.cursorRow))
-	out.WriteString(prefix)
-	out.WriteString(text)
-	if ghostText != "" {
-		out.WriteString(paint(e.color, dim, ghostText))
+	lines := wrapVisible(display, width)
+	for index, line := range lines {
+		out.WriteString(line)
+		if index < len(lines)-1 {
+			out.WriteString("\r\n")
+		}
 	}
 	if width > 0 && cells > 0 && cells%width == 0 {
-		out.WriteByte('\n')
+		out.WriteString("\r\n")
 	}
 	out.WriteString("\r\n")
 	out.WriteString(body)
@@ -921,6 +931,7 @@ func (e *lineEditor) paintFrame(settings REPLSettings, body string, bodyRows int
 func (e *lineEditor) finish(settings REPLSettings, line string) {
 	var out strings.Builder
 	out.WriteString(promptHome(e.cursorRow))
+	out.WriteString(wrapOn)
 	out.WriteString(promptPrefix(settings))
 	out.WriteString(line)
 	out.WriteString(eraseDown)
@@ -984,6 +995,42 @@ func promptHome(cursorRow int) string {
 	return fmt.Sprintf("\r\x1b[%dA%s", cursorRow, eraseDown)
 }
 
+func wrapVisible(value string, width int) []string {
+	if width < 1 {
+		return []string{value}
+	}
+	var lines []string
+	var current strings.Builder
+	currentW := 0
+	inEscape := false
+	for i := 0; i < len(value); {
+		if value[i] == '\x1b' {
+			inEscape = true
+			current.WriteByte(value[i])
+			i++
+			continue
+		}
+		if inEscape {
+			current.WriteByte(value[i])
+			if (value[i] >= 'A' && value[i] <= 'Z') || (value[i] >= 'a' && value[i] <= 'z') {
+				inEscape = false
+			}
+			i++
+			continue
+		}
+		_, size := utf8.DecodeRuneInString(value[i:])
+		if currentW == width {
+			lines = append(lines, current.String())
+			current.Reset()
+			currentW = 0
+		}
+		current.WriteString(value[i : i+size])
+		currentW++
+		i += size
+	}
+	return append(lines, current.String())
+}
+
 func renderPromptFrame(out io.Writer, settings REPLSettings, text string, width int, prevCursorRow int) (int, error) {
 	e := &lineEditor{out: out, columns: width, cursorRow: prevCursorRow, color: settings.Color}
 	e.state.setText(text)
@@ -995,6 +1042,8 @@ func renderPromptFrame(out io.Writer, settings REPLSettings, text string, width 
 
 const (
 	eraseDown = "\x1b[J"
+	wrapOff   = "\x1b[?7l"
+	wrapOn    = "\x1b[?7h"
 )
 
 func readKey(reader io.Reader) (keyEvent, error) {

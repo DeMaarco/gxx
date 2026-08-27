@@ -76,6 +76,7 @@ var (
 	PromptCursorPos     = promptCursorPos
 	PromptHome          = promptHome
 	RenderPromptFrame   = renderPromptFrame
+	WrapVisible         = wrapVisible
 )
 
 type ModelCommand = modelCommand
