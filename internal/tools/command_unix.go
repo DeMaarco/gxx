@@ -52,7 +52,7 @@ func (r *Registry) previewRunCommand(raw json.RawMessage) (approval.Action, erro
 	}
 	return approval.Action{
 		Title:   "Run command in " + r.workspace.Root(),
-		Preview: "$ " + args.Command,
+		Preview: approval.CapPreview("$ " + args.Command),
 		Kind:    approval.KindCommand,
 	}, nil
 }
@@ -146,14 +146,15 @@ func sanitizedEnvironment(environment []string) []string {
 func isSensitiveEnvironmentName(name string) bool {
 	upper := strings.ToUpper(name)
 	switch upper {
-	case "OPENAI_API_KEY", "GH_TOKEN", "GITHUB_TOKEN", "GOOGLE_APPLICATION_CREDENTIALS",
-		"BASH_ENV", "CDPATH", "ENV", "SHELLOPTS", "ZDOTDIR":
+	case "OPENAI_API_KEY", "OPENAI_ADMIN_KEY", "GH_TOKEN", "GITHUB_TOKEN",
+		"GOOGLE_APPLICATION_CREDENTIALS", "BASH_ENV", "CDPATH", "ENV", "SHELLOPTS",
+		"ZDOTDIR", "HOME", "USERPROFILE":
 		return true
 	}
 	if strings.HasPrefix(upper, "AWS_") {
 		return true
 	}
-	for _, suffix := range []string{"_API_KEY", "_TOKEN", "_SECRET", "_PASSWORD", "_PRIVATE_KEY"} {
+	for _, suffix := range []string{"_API_KEY", "_TOKEN", "_SECRET", "_PASSWORD", "_PRIVATE_KEY", "_KEY"} {
 		if strings.HasSuffix(upper, suffix) {
 			return true
 		}

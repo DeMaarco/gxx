@@ -6,8 +6,10 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestPromptApprovesOnlyExplicitYes(t *testing.T) {
@@ -53,6 +55,54 @@ func TestNonInteractivePromptDeniesWithoutReading(t *testing.T) {
 	}
 	if output.Len() != 0 {
 		t.Fatalf("output = %q, want empty", output.String())
+	}
+}
+
+func TestPromptCancelDoesNotConsumeNextLine(t *testing.T) {
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	defer writer.Close()
+
+	prompt := testPrompt(bufio.NewReader(reader), io.Discard, true)
+	prompt.SetFile(reader)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	started := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		close(started)
+		_, err := prompt.Approve(ctx, Action{Title: "Run"})
+		done <- err
+	}()
+	<-started
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Approve() error = %v, want context.Canceled", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Approve() did not return after cancel")
+	}
+
+	writeDone := make(chan error, 1)
+	go func() {
+		_, err := writer.Write([]byte("y-test\n"))
+		writeDone <- err
+	}()
+	approved, err := prompt.Approve(context.Background(), Action{Title: "Next"})
+	if err != nil {
+		t.Fatalf("second Approve() error = %v", err)
+	}
+	if !approved {
+		t.Fatal("cancelled read consumed the next approval line")
+	}
+	if err := <-writeDone; err != nil {
+		t.Fatalf("write approval: %v", err)
 	}
 }
 
@@ -109,14 +159,32 @@ func TestPromptEscapesTerminalControls(t *testing.T) {
 	}
 }
 
-func TestPromptRejectsOversizedPreview(t *testing.T) {
-	prompt := testPrompt(bufio.NewReader(strings.NewReader("y-test\n")), io.Discard, true)
+func TestPromptTruncatesOversizedPreview(t *testing.T) {
+	var output bytes.Buffer
+	prompt := testPrompt(bufio.NewReader(strings.NewReader("y-test\n")), &output, true)
 	approved, err := prompt.Approve(context.Background(), Action{
 		Title:   "Write",
 		Preview: strings.Repeat("x", maxPreviewBytes+1),
 	})
-	if approved || err == nil {
-		t.Fatalf("Approve() = %v, %v; want safe rejection", approved, err)
+	if err != nil {
+		t.Fatalf("Approve() error = %v", err)
+	}
+	if !approved {
+		t.Fatal("Approve() = false, want truncated preview to still be approvable")
+	}
+	text := output.String()
+	if !strings.Contains(text, "preview truncated") {
+		t.Fatalf("output = %q, want truncation marker", text)
+	}
+	if strings.Count(text, "x") < maxPreviewBytes {
+		t.Fatalf("output showed %d x runes, want at least %d", strings.Count(text, "x"), maxPreviewBytes)
+	}
+}
+
+func TestCapPreviewCutsWithoutBlocking(t *testing.T) {
+	got := CapPreview(strings.Repeat("a", maxPreviewBytes+8))
+	if len(got) != maxPreviewBytes {
+		t.Fatalf("len(CapPreview()) = %d, want %d", len(got), maxPreviewBytes)
 	}
 }
 

@@ -53,7 +53,7 @@ func (r *Registry) listFilesSpec() toolSpec {
 	return toolSpec{
 		definition: agent.ToolDefinition{
 			Name:        "list_files",
-			Description: "List files and directories under a workspace-relative path. Common dependency and build directories are skipped.",
+			Description: "List files and directories under a workspace-relative path. Common dependency directories, .gitignore, and .gxxignore patterns are skipped.",
 			ReadOnly:    true,
 			Parameters: objectSchema(map[string]any{
 				"path": map[string]any{
@@ -74,7 +74,7 @@ func (r *Registry) searchFilesSpec() toolSpec {
 	return toolSpec{
 		definition: agent.ToolDefinition{
 			Name:        "search_files",
-			Description: "Search regular text files for a case-insensitive literal string and return matching lines.",
+			Description: "Search regular text files for a case-insensitive literal string and return matching lines. Common dependency directories, .gitignore, and .gxxignore patterns are skipped.",
 			ReadOnly:    true,
 			Parameters: objectSchema(map[string]any{
 				"query": map[string]any{
@@ -124,7 +124,7 @@ func (r *Registry) editFileSpec() toolSpec {
 	return toolSpec{
 		definition: agent.ToolDefinition{
 			Name:        "edit_file",
-			Description: "Replace exactly one occurrence of old_text in an existing workspace file. Requires user approval.",
+			Description: "Replace exactly one occurrence of old_text in an existing workspace file. Prefer apply_patch for anything larger than a single exact replacement. Requires user approval.",
 			ReadOnly:    false,
 			Parameters: objectSchema(map[string]any{
 				"path": map[string]any{
@@ -149,7 +149,7 @@ func (r *Registry) writeFileSpec() toolSpec {
 	return toolSpec{
 		definition: agent.ToolDefinition{
 			Name:        "write_file",
-			Description: "Create or completely replace a workspace file, creating parent directories as needed. Requires user approval.",
+			Description: "Create a new workspace file, creating parent directories as needed. Fails if the path already exists; use apply_patch or edit_file to change existing files. Requires user approval.",
 			ReadOnly:    false,
 			Parameters: objectSchema(map[string]any{
 				"path": map[string]any{
@@ -194,6 +194,7 @@ func (r *Registry) listFiles(ctx context.Context, raw json.RawMessage) (string, 
 		return "", fmt.Errorf("not a directory: %s", path)
 	}
 
+	matcher := r.ignoreForWalk(root)
 	var entries []string
 	err = iofs.WalkDir(r.workspace.FS(), root, func(current string, entry iofs.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -211,13 +212,18 @@ func (r *Registry) listFiles(ctx context.Context, raw json.RawMessage) (string, 
 			return err
 		}
 		currentDepth := strings.Count(relativeToRoot, "/") + 1
-		if entry.IsDir() && isIgnoredDirectory(entry.Name()) {
+		r.loadNestedIgnore(matcher, current, entry, root)
+		ignored := matcher.ignores(current, entry.IsDir())
+		if ignored && entry.IsDir() && !matcher.hasNegation {
 			return iofs.SkipDir
 		}
 		if currentDepth > depth {
 			if entry.IsDir() {
 				return iofs.SkipDir
 			}
+			return nil
+		}
+		if ignored {
 			return nil
 		}
 		if entry.Type()&os.ModeSymlink != 0 {
@@ -275,9 +281,10 @@ func (r *Registry) searchFiles(ctx context.Context, raw json.RawMessage) (string
 		return "", err
 	}
 
+	matcher := r.ignoreForWalk(target)
 	var matches []string
 	searchOne := func(file string) error {
-		if isSensitivePath(file) {
+		if isSensitivePath(file) || matcher.ignores(file, false) {
 			return nil
 		}
 		found, err := r.searchTextFile(ctx, file, query, limit-len(matches))
@@ -296,6 +303,9 @@ func (r *Registry) searchFiles(ctx context.Context, raw json.RawMessage) (string
 		if isSensitivePath(target) {
 			return "", fmt.Errorf("refusing to search sensitive path: %s", path)
 		}
+		if matcher.ignores(target, false) {
+			return "No matches found.", nil
+		}
 		if err := searchOne(target); err != nil {
 			return "", err
 		}
@@ -308,7 +318,8 @@ func (r *Registry) searchFiles(ctx context.Context, raw json.RawMessage) (string
 				return err
 			}
 			if entry.IsDir() {
-				if current != target && isIgnoredDirectory(entry.Name()) {
+				r.loadNestedIgnore(matcher, current, entry, target)
+				if current != target && matcher.ignores(current, true) && !matcher.hasNegation {
 					return iofs.SkipDir
 				}
 				return nil
@@ -316,7 +327,7 @@ func (r *Registry) searchFiles(ctx context.Context, raw json.RawMessage) (string
 			if len(matches) >= limit {
 				return errStopWalk
 			}
-			if isSensitivePath(current) {
+			if isSensitivePath(current) || matcher.ignores(current, false) {
 				return nil
 			}
 			fileInfo, err := r.workspace.Stat(current)
@@ -423,7 +434,7 @@ func (r *Registry) prepareEditFile(raw json.RawMessage) (approval.Action, toolRu
 	}
 	action := approval.Action{
 		Title:   "Edit " + args.Path,
-		Preview: compactDiff(args.Path, string(current), string(proposed)),
+		Preview: approval.CapPreview(compactDiff(args.Path, string(current), string(proposed))),
 		Kind:    approval.KindWrite,
 	}
 	run := func(ctx context.Context) (string, error) {
@@ -494,10 +505,16 @@ func (r *Registry) prepareWriteFile(raw json.RawMessage) (approval.Action, toolR
 	if err != nil {
 		return approval.Action{}, nil, err
 	}
+	if existed {
+		return approval.Action{}, nil, fmt.Errorf(
+			"write_file can only create new files; %s already exists (use apply_patch or edit_file)",
+			args.Path,
+		)
+	}
 	proposed := []byte(args.Content)
 	action := approval.Action{
 		Title:   "Write " + args.Path,
-		Preview: compactDiff(args.Path, string(current), args.Content),
+		Preview: approval.CapPreview(compactDiff(args.Path, string(current), args.Content)),
 		Kind:    approval.KindWrite,
 	}
 	run := func(ctx context.Context) (string, error) {
@@ -541,45 +558,6 @@ func (r *Registry) fileSnapshot(path string) ([]byte, bool, error) {
 		return nil, false, nil
 	}
 	return nil, false, err
-}
-
-func compactDiff(path, oldValue, newValue string) string {
-	oldLines := strings.Split(oldValue, "\n")
-	newLines := strings.Split(newValue, "\n")
-	if oldValue == "" {
-		oldLines = nil
-	}
-	if newValue == "" {
-		newLines = nil
-	}
-
-	prefix := 0
-	for prefix < len(oldLines) && prefix < len(newLines) && oldLines[prefix] == newLines[prefix] {
-		prefix++
-	}
-	suffix := 0
-	for suffix < len(oldLines)-prefix &&
-		suffix < len(newLines)-prefix &&
-		oldLines[len(oldLines)-1-suffix] == newLines[len(newLines)-1-suffix] {
-		suffix++
-	}
-
-	var output strings.Builder
-	fmt.Fprintf(&output, "--- %s\n+++ %s\n", path, path)
-	contextStart := max(prefix-2, 0)
-	for _, line := range oldLines[contextStart:prefix] {
-		fmt.Fprintf(&output, " %s\n", line)
-	}
-	for _, line := range oldLines[prefix : len(oldLines)-suffix] {
-		fmt.Fprintf(&output, "-%s\n", line)
-	}
-	for _, line := range newLines[prefix : len(newLines)-suffix] {
-		fmt.Fprintf(&output, "+%s\n", line)
-	}
-	for _, line := range oldLines[len(oldLines)-suffix : min(len(oldLines)-suffix+2, len(oldLines))] {
-		fmt.Fprintf(&output, " %s\n", line)
-	}
-	return strings.TrimSuffix(output.String(), "\n")
 }
 
 func (r *Registry) searchTextFile(

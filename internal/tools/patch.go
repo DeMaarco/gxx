@@ -24,7 +24,7 @@ func (r *Registry) applyPatchSpec() toolSpec {
 	return toolSpec{
 		definition: agent.ToolDefinition{
 			Name: "apply_patch",
-			Description: `Apply an approved multi-file patch as one transaction. Format:
+			Description: `Preferred way to update existing files. Apply an approved multi-file patch as one transaction. Format:
 *** Begin Patch
 *** Add File: path
 +new line
@@ -146,7 +146,7 @@ func (r *Registry) prepareApplyPatch(
 
 	action := approval.Action{
 		Title:   fmt.Sprintf("Apply patch to %d file(s)", len(changes)),
-		Preview: preview.String(),
+		Preview: approval.CapPreview(preview.String()),
 		Kind:    approval.KindWrite,
 	}
 	run := func(ctx context.Context) (string, error) {

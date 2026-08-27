@@ -112,6 +112,9 @@ func (s *inputState) afterEdit() {
 	if s.picker == pickerModes && !isModePickerText(s.text()) {
 		s.picker = pickerClosed
 	}
+	if s.picker == pickerContext && !strings.HasPrefix(s.text(), "/context") {
+		s.picker = pickerClosed
+	}
 	if s.picker == pickerModels {
 		s.clampModelIndex()
 	}
@@ -122,6 +125,14 @@ func (s *inputState) afterEdit() {
 	if len(matches) == 0 {
 		s.suggest = 0
 		return
+	}
+	current := s.text()
+	for index, match := range matches {
+		if match.name == current {
+			// Prefer an exact name so "/mode" is not stolen by "/model".
+			s.suggest = index
+			return
+		}
 	}
 	if s.suggest >= len(matches) {
 		s.suggest = len(matches) - 1
@@ -200,6 +211,9 @@ func (s *inputState) complete() {
 	if s.picker == pickerModes {
 		return
 	}
+	if s.picker == pickerContext {
+		return
+	}
 	matches := s.matches()
 	if len(matches) == 0 {
 		return
@@ -212,6 +226,11 @@ func (s *inputState) complete() {
 	if matches[s.suggest].name == "/mode" {
 		s.setText("/mode")
 		s.startModePicker()
+		return
+	}
+	if matches[s.suggest].name == "/context" {
+		s.setText("/context")
+		s.startContextPicker()
 		return
 	}
 	s.setText(matches[s.suggest].name)
@@ -348,6 +367,10 @@ func (s *inputState) modeCommand() string {
 	return strings.TrimSpace(s.text())
 }
 
+func (s *inputState) startContextPicker() {
+	s.picker = pickerContext
+}
+
 func (s *inputState) cycleOption(delta int) {
 	switch s.optionIndex {
 	case optionContext:
@@ -366,10 +389,19 @@ func (s *inputState) submit() string {
 	if s.picker == pickerModes {
 		return s.modeCommand()
 	}
+	if s.picker == pickerContext {
+		s.picker = pickerClosed
+		s.setText("")
+		s.afterEdit()
+		return ""
+	}
 	if s.openModelPicker() {
 		return ""
 	}
 	if s.openModePicker() {
+		return ""
+	}
+	if s.openContextPicker() {
 		return ""
 	}
 	matches := s.matches()
@@ -385,6 +417,11 @@ func (s *inputState) submit() string {
 			if selected == "/mode" {
 				s.setText("/mode")
 				s.startModePicker()
+				return ""
+			}
+			if selected == "/context" {
+				s.setText("/context")
+				s.startContextPicker()
 				return ""
 			}
 			return selected
@@ -415,6 +452,17 @@ func (s *inputState) openModePicker() bool {
 	return true
 }
 
+func (s *inputState) openContextPicker() bool {
+	if s.picker != pickerClosed {
+		return false
+	}
+	if strings.TrimSpace(s.text()) != "/context" {
+		return false
+	}
+	s.startContextPicker()
+	return true
+}
+
 func (s *inputState) up() {
 	if s.picker == pickerModels {
 		if s.modelIndex > 0 {
@@ -432,6 +480,9 @@ func (s *inputState) up() {
 		if s.modeIndex > 0 {
 			s.modeIndex--
 		}
+		return
+	}
+	if s.picker == pickerContext {
 		return
 	}
 	if matches := s.matches(); len(matches) > 0 {
@@ -467,6 +518,9 @@ func (s *inputState) down() {
 		if s.modeIndex < len(s.visibleModes())-1 {
 			s.modeIndex++
 		}
+		return
+	}
+	if s.picker == pickerContext {
 		return
 	}
 	if matches := s.matches(); len(matches) > 0 {
@@ -538,7 +592,7 @@ func (s *inputState) apply(event keyEvent) (submitted string, eof bool, handled 
 	case keyEsc:
 		if s.picker == pickerOptions {
 			s.picker = pickerModels
-		} else if s.picker == pickerModels || s.picker == pickerModes {
+		} else if s.picker == pickerModels || s.picker == pickerModes || s.picker == pickerContext {
 			s.picker = pickerClosed
 			s.setText("")
 			s.afterEdit()
@@ -625,6 +679,12 @@ func (e *lineEditor) Read(ctx context.Context, settings REPLSettings) (string, e
 		var event keyEvent
 		select {
 		case <-ctx.Done():
+			_ = e.in.SetReadDeadline(time.Now())
+			select {
+			case <-read:
+			case <-time.After(200 * time.Millisecond):
+			}
+			_ = e.in.SetReadDeadline(time.Time{})
 			e.finish("")
 			return "", ctx.Err()
 		case value := <-read:
@@ -694,6 +754,9 @@ func (e *lineEditor) render(settings REPLSettings) error {
 func (e *lineEditor) renderPicker(settings REPLSettings) error {
 	if e.state.picker == pickerModes {
 		return e.renderModePicker(settings)
+	}
+	if e.state.picker == pickerContext {
+		return e.renderContextPicker(settings)
 	}
 	e.state.clampModelIndex()
 	var body strings.Builder
@@ -774,6 +837,22 @@ func (e *lineEditor) renderModePicker(settings REPLSettings) error {
 		body.WriteString(marker + label + note + "\r\n")
 	}
 	body.WriteString(paint(e.color, dim, "enter apply · esc cancel") + "\r\n")
+	rows := strings.Count(body.String(), "\r\n")
+	output := "\r" + eraseLine + "> " + string(e.state.buffer) + eraseDown + "\r\n"
+	output += body.String()
+	output += formatStatus(settings)
+	output += fmt.Sprintf("\x1b[%dA\x1b[%dG", 1+rows, 3+e.state.cursor)
+	_, err := io.WriteString(e.out, output)
+	return err
+}
+
+func (e *lineEditor) renderContextPicker(settings REPLSettings) error {
+	text := strings.TrimRight(FormatContext(settings.contextUsage(), e.color), "\n")
+	var body strings.Builder
+	for _, line := range strings.Split(text, "\n") {
+		body.WriteString(line + "\r\n")
+	}
+	body.WriteString(paint(e.color, dim, "enter / esc close") + "\r\n")
 	rows := strings.Count(body.String(), "\r\n")
 	output := "\r" + eraseLine + "> " + string(e.state.buffer) + eraseDown + "\r\n"
 	output += body.String()

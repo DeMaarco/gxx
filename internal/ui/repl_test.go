@@ -5,8 +5,10 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"gxx/internal/agent"
 	"gxx/internal/config"
@@ -29,6 +31,10 @@ func (m *replModel) Respond(
 func (m *replModel) Reset() {
 	m.resetCount++
 }
+
+func (m *replModel) AbsorbToolResults([]agent.ToolResult) {}
+
+func (m *replModel) CloseOpenToolCalls(string) {}
 
 type emptyExecutor struct{}
 
@@ -71,9 +77,9 @@ func TestRunREPLHandlesCommandsAndInjectedIO(t *testing.T) {
 	}
 	text := output.String()
 	for _, expected := range []string{
-		"◆ gxx  0.0.1",
+		"◆ gxx  v0.0.1",
 		">",
-		"test-model · ask · medium · 272k",
+		"test-model · ask · medium · 272k · 0%",
 		"/clear",
 		"Conversation cleared.",
 		"world",
@@ -84,6 +90,115 @@ func TestRunREPLHandlesCommandsAndInjectedIO(t *testing.T) {
 	}
 	if model.resetCount != 1 {
 		t.Fatalf("reset count = %d, want 1", model.resetCount)
+	}
+}
+
+func TestRunREPLShowsUsage(t *testing.T) {
+	loop := &agent.Loop{Model: &replModel{}, Executor: emptyExecutor{}, MaxSteps: 2}
+	input := bufio.NewReader(strings.NewReader("/usage\n/exit\n"))
+	var output bytes.Buffer
+
+	err := RunREPL(
+		context.Background(),
+		loop,
+		input,
+		NewRenderer(&output),
+		&output,
+		REPLSettings{
+			Version:          "0.0.1",
+			Model:            "test-model",
+			PermissionMode:   config.PermissionAsk,
+			Effort:           "medium",
+			Workspace:        "/workspace",
+			APIKeyConfigured: true,
+			FetchUsage: func(context.Context) (agent.UsageReport, error) {
+				return agent.UsageReport{
+					Session:         agent.Usage{InputTokens: 10, OutputTokens: 4, TotalTokens: 14},
+					SessionRequests: 1,
+					RateLimit: agent.RateLimit{
+						Known:             true,
+						RequestsLimit:     100,
+						RequestsRemaining: 99,
+						TokensLimit:       1000,
+						TokensRemaining:   900,
+					},
+					Account: agent.AccountUsage{
+						SpendUSD:     1.5,
+						HasSpend:     true,
+						LimitUSD:     10,
+						HasLimit:     true,
+						RemainingUSD: 8.5,
+						HasRemaining: true,
+					},
+				}, nil
+			},
+		},
+	)
+	if err != nil {
+		t.Fatalf("RunREPL() error = %v", err)
+	}
+	text := output.String()
+	for _, expected := range []string{
+		"session",
+		"remaining    $8.50",
+		"99 / 100",
+		"900 / 1,000",
+	} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("output = %q, want %q", text, expected)
+		}
+	}
+}
+
+func TestRunREPLShowsContext(t *testing.T) {
+	loop := &agent.Loop{Model: &replModel{}, Executor: emptyExecutor{}, MaxSteps: 2}
+	input := bufio.NewReader(strings.NewReader("/context\n/exit\n"))
+	var output bytes.Buffer
+
+	err := RunREPL(
+		context.Background(),
+		loop,
+		input,
+		NewRenderer(&output),
+		&output,
+		REPLSettings{
+			Version:          "0.0.1",
+			Model:            "test-model",
+			PermissionMode:   config.PermissionAsk,
+			Effort:           "medium",
+			Workspace:        "/workspace",
+			APIKeyConfigured: true,
+			FetchContext: func() agent.ContextUsage {
+				return agent.ContextUsage{
+					WindowTokens:       272_000,
+					UsedTokens:         27_200,
+					Percent:            10,
+					InstructionsTokens: 1_200,
+					UserTokens:         8_000,
+					AssistantTokens:    12_000,
+					ReasoningTokens:    4_000,
+					ToolTokens:         2_000,
+				}
+			},
+		},
+	)
+	if err != nil {
+		t.Fatalf("RunREPL() error = %v", err)
+	}
+	text := output.String()
+	for _, expected := range []string{
+		"10%",
+		"27,200 / 272,000",
+		"instructions",
+		"user",
+		"assistant",
+		"reasoning",
+		"tools",
+		"free",
+	} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("output = %q, want %q", text, expected)
+		}
 	}
 }
 
@@ -135,6 +250,135 @@ func TestRunREPLConfiguresAPIKeyWithoutEchoingIt(t *testing.T) {
 	}
 }
 
+func TestRunREPLRejectsUnknownSlashCommands(t *testing.T) {
+	model := &countingReplModel{}
+	loop := &agent.Loop{Model: model, Executor: emptyExecutor{}, MaxSteps: 2}
+	input := bufio.NewReader(strings.NewReader("/foo\n/help extra\nhello\n/exit\n"))
+	var output bytes.Buffer
+
+	err := RunREPL(
+		context.Background(),
+		loop,
+		input,
+		NewRenderer(&output),
+		&output,
+		REPLSettings{
+			Version:          "0.0.1",
+			Model:            "test-model",
+			PermissionMode:   config.PermissionAsk,
+			Effort:           "medium",
+			Workspace:        "/workspace",
+			APIKeyConfigured: true,
+		},
+	)
+	if err != nil {
+		t.Fatalf("RunREPL() error = %v", err)
+	}
+	text := output.String()
+	for _, expected := range []string{
+		"unknown command /foo",
+		"unexpected argument for /help",
+		"world",
+	} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("output = %q, want %q", text, expected)
+		}
+	}
+	if model.calls != 1 {
+		t.Fatalf("model calls = %d, want 1", model.calls)
+	}
+}
+
+func TestRunREPLInterruptedTurnStaysOpen(t *testing.T) {
+	loop := &agent.Loop{Model: &canceledReplModel{}, Executor: emptyExecutor{}, MaxSteps: 2}
+	input := bufio.NewReader(strings.NewReader("hello\n/exit\n"))
+	var output bytes.Buffer
+
+	err := RunREPL(
+		context.Background(),
+		loop,
+		input,
+		NewRenderer(&output),
+		&output,
+		REPLSettings{
+			Version:          "0.0.1",
+			Model:            "test-model",
+			PermissionMode:   config.PermissionAsk,
+			Effort:           "medium",
+			Workspace:        "/workspace",
+			APIKeyConfigured: true,
+		},
+	)
+	if err != nil {
+		t.Fatalf("RunREPL() error = %v, want to stay open after interrupt", err)
+	}
+	if !strings.Contains(output.String(), "interrupted") {
+		t.Fatalf("output = %q, want interrupted", output.String())
+	}
+}
+
+type countingReplModel struct {
+	replModel
+	calls int
+}
+
+func (m *countingReplModel) Respond(
+	ctx context.Context,
+	input agent.ModelInput,
+	definitions []agent.ToolDefinition,
+	emit agent.EmitFunc,
+) (agent.ModelResponse, error) {
+	m.calls++
+	return m.replModel.Respond(ctx, input, definitions, emit)
+}
+
+type canceledReplModel struct{}
+
+func (canceledReplModel) Respond(
+	context.Context,
+	agent.ModelInput,
+	[]agent.ToolDefinition,
+	agent.EmitFunc,
+) (agent.ModelResponse, error) {
+	return agent.ModelResponse{}, context.Canceled
+}
+
+func (canceledReplModel) Reset() {}
+
+func (canceledReplModel) AbsorbToolResults([]agent.ToolResult) {}
+
+func (canceledReplModel) CloseOpenToolCalls(string) {}
+
+func TestTurnGateFirstInterruptCancelsTurn(t *testing.T) {
+	var gate turnGate
+	parent, cancelParent := context.WithCancel(context.Background())
+	defer cancelParent()
+	turnCtx, finish := gate.start(parent)
+	defer finish()
+
+	gate.handle(cancelParent)
+	if turnCtx.Err() == nil {
+		t.Fatal("first interrupt should cancel the turn")
+	}
+	if parent.Err() != nil {
+		t.Fatal("first interrupt should not cancel the session")
+	}
+}
+
+func TestTurnGateSecondInterruptCancelsSession(t *testing.T) {
+	var gate turnGate
+	parent, cancelParent := context.WithCancel(context.Background())
+	defer cancelParent()
+	_, finish := gate.start(parent)
+	defer finish()
+
+	gate.handle(cancelParent)
+	gate.handle(cancelParent)
+	if parent.Err() == nil {
+		t.Fatal("second interrupt should cancel the session")
+	}
+}
+
 func TestReadLineHonorsCancellation(t *testing.T) {
 	reader, writer := io.Pipe()
 	defer reader.Close()
@@ -142,9 +386,55 @@ func TestReadLineHonorsCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, err := readLine(ctx, bufio.NewReader(reader))
+	_, err := readLine(ctx, bufio.NewReader(reader), nil)
 	if err != context.Canceled {
 		t.Fatalf("readLine() error = %v, want context.Canceled", err)
+	}
+}
+
+func TestReadLineCancelDoesNotConsumeNextLine(t *testing.T) {
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	defer writer.Close()
+
+	buffered := bufio.NewReader(reader)
+	ctx, cancel := context.WithCancel(context.Background())
+	started := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		close(started)
+		_, err := readLine(ctx, buffered, reader)
+		done <- err
+	}()
+	<-started
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+	select {
+	case err := <-done:
+		if err != context.Canceled {
+			t.Fatalf("readLine() error = %v, want context.Canceled", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("readLine() did not return after cancel")
+	}
+
+	writeDone := make(chan error, 1)
+	go func() {
+		_, err := writer.Write([]byte("hello\n"))
+		writeDone <- err
+	}()
+	line, err := readLine(context.Background(), buffered, reader)
+	if err != nil {
+		t.Fatalf("second readLine() error = %v", err)
+	}
+	if strings.TrimSpace(line) != "hello" {
+		t.Fatalf("line = %q, cancelled read consumed the next prompt", line)
+	}
+	if err := <-writeDone; err != nil {
+		t.Fatalf("write line: %v", err)
 	}
 }
 
@@ -225,7 +515,7 @@ func TestRunREPLAppliesModelCommand(t *testing.T) {
 		"model gpt-5.6-terra · context 272k · effort medium · fast off",
 		"model gpt-5.6-terra · context 272k · effort high · fast on",
 		"Conversation cleared.",
-		"gpt-5.6-terra · ask · high · 272k · fast",
+		"gpt-5.6-terra · ask · high · 272k · 0% · fast",
 	} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("output = %q, want %q", text, expected)
@@ -281,7 +571,7 @@ func TestRunREPLAppliesModeCommand(t *testing.T) {
 		"auto-writes",
 		"permission auto-writes · file changes run without confirmation; commands still ask",
 		"permission auto · file changes and commands run without confirmation",
-		"gpt-5.6-sol · auto · medium · 272k",
+		"gpt-5.6-sol · auto · medium · 272k · 0%",
 	} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("output = %q, want %q", text, expected)

@@ -12,14 +12,30 @@ const (
 )
 
 func formatHeader(settings REPLSettings) string {
-	version := strings.TrimSpace(settings.Version)
-	if version == "" {
-		version = "dev"
-	}
+	version := formatVersion(settings.Version)
 	name := paint(settings.Color, bold, "gxx")
 	badge := paint(settings.Color, dim, version)
 	diamond := paint(settings.Color, bold+magenta, markGxx)
 	return diamond + " " + name + "  " + badge
+}
+
+// FormatVersion prefixes a release number with v for display.
+func FormatVersion(version string) string {
+	return formatVersion(version)
+}
+
+func formatVersion(version string) string {
+	version = strings.TrimSpace(version)
+	if version == "" {
+		return "dev"
+	}
+	if strings.EqualFold(version, "dev") {
+		return version
+	}
+	if strings.HasPrefix(version, "v") || strings.HasPrefix(version, "V") {
+		return version
+	}
+	return "v" + version
 }
 
 func formatStatus(settings REPLSettings) string {
@@ -36,6 +52,7 @@ func formatStatus(settings REPLSettings) string {
 		paintPermission(settings.Color, settings.PermissionMode),
 		paint(settings.Color, dim, effort),
 		paint(settings.Color, dim, orDefault(settings.Context, "272k")),
+		paintContextPercent(settings.Color, settings.contextUsage().Percent),
 	}
 	if settings.Fast {
 		parts = append(parts, paint(settings.Color, dim, "fast"))

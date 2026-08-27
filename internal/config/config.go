@@ -54,17 +54,18 @@ type Config struct {
 
 // Load reads environment configuration and applies conservative defaults.
 func Load(workspace string) Config {
+	stored, _ := loadPersistent()
 	apiKey := strings.TrimSpace(os.Getenv("OPENAI_API_KEY"))
 	if apiKey == "" {
-		apiKey, _ = LoadAPIKey()
+		apiKey = strings.TrimSpace(stored.OpenAIAPIKey)
 	}
 	return Config{
 		APIKey:             apiKey,
-		Model:              envString("GXX_MODEL", DefaultModel),
-		Effort:             envString("GXX_EFFORT", DefaultEffort),
-		Context:            envString("GXX_CONTEXT", DefaultContext),
-		Fast:               envBool("GXX_FAST", false),
-		PermissionMode:     envString("GXX_PERMISSION", DefaultPermissionMode),
+		Model:              envString("GXX_MODEL", firstNonEmpty(stored.Model, DefaultModel)),
+		Effort:             envString("GXX_EFFORT", validEffortOr(stored.Effort, DefaultEffort)),
+		Context:            envString("GXX_CONTEXT", validContextOr(stored.Context, DefaultContext)),
+		Fast:               envBool("GXX_FAST", stored.Fast),
+		PermissionMode:     envString("GXX_PERMISSION", validPermissionOr(stored.Permission, DefaultPermissionMode)),
 		Workspace:          workspace,
 		MaxSteps:           envInt("GXX_MAX_STEPS", DefaultMaxSteps),
 		MaxToolResultBytes: envInt("GXX_MAX_TOOL_RESULT_BYTES", DefaultMaxToolResultBytes),
@@ -141,7 +142,12 @@ func (c *Config) validate(requireAPIKey bool) error {
 }
 
 type persistentConfig struct {
-	OpenAIAPIKey string `json:"openai_api_key"`
+	OpenAIAPIKey string `json:"openai_api_key,omitempty"`
+	Model        string `json:"model,omitempty"`
+	Effort       string `json:"effort,omitempty"`
+	Context      string `json:"context,omitempty"`
+	Fast         bool   `json:"fast,omitempty"`
+	Permission   string `json:"permission,omitempty"`
 }
 
 // Path returns the cross-platform gxx config path requested by the MVP.
@@ -163,40 +169,9 @@ func Path() (string, error) {
 
 // LoadAPIKey reads a private API key from the persistent config, if present.
 func LoadAPIKey() (string, error) {
-	path, err := Path()
+	stored, err := loadPersistent()
 	if err != nil {
 		return "", err
-	}
-	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK|syscall.O_NOFOLLOW, 0)
-	if errors.Is(err, os.ErrNotExist) {
-		return "", nil
-	}
-	if err != nil {
-		return "", fmt.Errorf("open config: %w", err)
-	}
-	defer file.Close()
-
-	info, err := file.Stat()
-	if err != nil {
-		return "", fmt.Errorf("stat config: %w", err)
-	}
-	if !info.Mode().IsRegular() {
-		return "", errors.New("config is not a regular file")
-	}
-	if info.Mode().Perm()&0o077 != 0 {
-		return "", fmt.Errorf("config permissions are %04o; expected 0600", info.Mode().Perm())
-	}
-
-	data, err := io.ReadAll(io.LimitReader(file, maxConfigBytes+1))
-	if err != nil {
-		return "", fmt.Errorf("read config: %w", err)
-	}
-	if len(data) > maxConfigBytes {
-		return "", fmt.Errorf("config exceeds %d bytes", maxConfigBytes)
-	}
-	var stored persistentConfig
-	if err := json.Unmarshal(data, &stored); err != nil {
-		return "", fmt.Errorf("decode config: %w", err)
 	}
 	return strings.TrimSpace(stored.OpenAIAPIKey), nil
 }
@@ -207,10 +182,76 @@ func SaveAPIKey(apiKey string) (string, error) {
 	if apiKey == "" {
 		return "", errors.New("API key cannot be empty")
 	}
+	return savePersistent(func(stored *persistentConfig) error {
+		stored.OpenAIAPIKey = apiKey
+		return nil
+	})
+}
+
+// SaveSession persists REPL model settings without touching the API key.
+func SaveSession(model, effort, contextValue string, fast bool, permission string) (string, error) {
+	return savePersistent(func(stored *persistentConfig) error {
+		stored.Model = strings.TrimSpace(model)
+		stored.Effort = strings.TrimSpace(effort)
+		stored.Context = strings.TrimSpace(contextValue)
+		stored.Fast = fast
+		stored.Permission = strings.TrimSpace(permission)
+		return nil
+	})
+}
+
+func loadPersistent() (persistentConfig, error) {
+	var stored persistentConfig
+	path, err := Path()
+	if err != nil {
+		return stored, err
+	}
+	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK|syscall.O_NOFOLLOW, 0)
+	if errors.Is(err, os.ErrNotExist) {
+		return stored, nil
+	}
+	if err != nil {
+		return stored, fmt.Errorf("open config: %w", err)
+	}
+	defer file.Close()
+
+	info, err := file.Stat()
+	if err != nil {
+		return stored, fmt.Errorf("stat config: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return stored, errors.New("config is not a regular file")
+	}
+	if info.Mode().Perm()&0o077 != 0 {
+		return stored, fmt.Errorf("config permissions are %04o; expected 0600", info.Mode().Perm())
+	}
+
+	data, err := io.ReadAll(io.LimitReader(file, maxConfigBytes+1))
+	if err != nil {
+		return stored, fmt.Errorf("read config: %w", err)
+	}
+	if len(data) > maxConfigBytes {
+		return stored, fmt.Errorf("config exceeds %d bytes", maxConfigBytes)
+	}
+	if err := json.Unmarshal(data, &stored); err != nil {
+		return persistentConfig{}, fmt.Errorf("decode config: %w", err)
+	}
+	return stored, nil
+}
+
+func savePersistent(mutate func(*persistentConfig) error) (string, error) {
 	path, err := Path()
 	if err != nil {
 		return "", err
 	}
+	stored, err := loadPersistent()
+	if err != nil {
+		return "", err
+	}
+	if err := mutate(&stored); err != nil {
+		return "", err
+	}
+
 	directory := filepath.Dir(path)
 	if err := os.MkdirAll(directory, 0o700); err != nil {
 		return "", fmt.Errorf("create config directory: %w", err)
@@ -244,7 +285,7 @@ func SaveAPIKey(apiKey string) (string, error) {
 	}
 	encoder := json.NewEncoder(temp)
 	encoder.SetEscapeHTML(false)
-	if err := encoder.Encode(persistentConfig{OpenAIAPIKey: apiKey}); err != nil {
+	if err := encoder.Encode(stored); err != nil {
 		cleanup()
 		return "", fmt.Errorf("write config: %w", err)
 	}
@@ -306,6 +347,36 @@ func envBool(name string, fallback bool) bool {
 	default:
 		return fallback
 	}
+}
+
+func firstNonEmpty(value, fallback string) string {
+	if strings.TrimSpace(value) != "" {
+		return value
+	}
+	return fallback
+}
+
+func validEffortOr(value, fallback string) string {
+	if err := ValidateEffort(value); err != nil {
+		return fallback
+	}
+	return value
+}
+
+func validContextOr(value, fallback string) string {
+	normalized, err := NormalizeContext(value)
+	if err != nil {
+		return fallback
+	}
+	return normalized
+}
+
+func validPermissionOr(value, fallback string) string {
+	canonical, err := CanonicalPermission(value)
+	if err != nil {
+		return fallback
+	}
+	return canonical
 }
 
 func CanonicalPermission(value string) (string, error) {

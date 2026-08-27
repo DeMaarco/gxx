@@ -250,6 +250,12 @@ func TestProviderStreamsAndResendsStatelessHistory(t *testing.T) {
 	if !strings.Contains(string(firstJSON), `"effort":"medium"`) {
 		t.Fatalf("first request = %s, want default reasoning effort", firstJSON)
 	}
+	if !strings.Contains(string(firstJSON), `"prompt_cache_key":"gxx"`) {
+		t.Fatalf("first request = %s, want prompt cache key", firstJSON)
+	}
+	if !strings.Contains(string(firstJSON), `"ttl":"30m"`) {
+		t.Fatalf("first request = %s, want prompt cache ttl", firstJSON)
+	}
 	if strings.Contains(string(firstJSON), `"context":`) {
 		t.Fatalf("first request = %s, did not want reasoning context", firstJSON)
 	}
@@ -502,6 +508,236 @@ func TestProviderContextBudgetUsesWindowSize(t *testing.T) {
 	}
 }
 
+func TestProviderCapturesUsageAndRateLimits(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/responses" {
+			http.NotFound(writer, request)
+			return
+		}
+		writer.Header().Set("Content-Type", "text/event-stream")
+		writer.Header().Set("x-ratelimit-limit-requests", "5000")
+		writer.Header().Set("x-ratelimit-remaining-requests", "4999")
+		writer.Header().Set("x-ratelimit-reset-requests", "6s")
+		writer.Header().Set("x-ratelimit-limit-tokens", "200000")
+		writer.Header().Set("x-ratelimit-remaining-tokens", "199000")
+		writer.Header().Set("x-ratelimit-reset-tokens", "6s")
+		writeSSE(t, writer, map[string]any{
+			"type": "response.completed",
+			"response": responseFixture([]any{map[string]any{
+				"id":     "msg_1",
+				"type":   "message",
+				"role":   "assistant",
+				"status": "completed",
+				"content": []any{map[string]any{
+					"type": "output_text", "text": "ok", "annotations": []any{},
+				}},
+			}}),
+		})
+		_, _ = fmt.Fprint(writer, "data: [DONE]\n\n")
+	}))
+	defer server.Close()
+
+	provider := New("test-key", "gpt-5.6", "instructions", time.Second)
+	provider.client = openaisdk.NewClient(
+		option.WithAPIKey("test-key"),
+		option.WithBaseURL(server.URL+"/"),
+	)
+	provider.httpClient = server.Client()
+	provider.baseURL = server.URL
+	result, err := provider.Respond(
+		context.Background(),
+		agent.ModelInput{UserText: "hello"},
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("Respond() error = %v", err)
+	}
+	if result.Usage.TotalTokens != 5 || result.Usage.ReasoningTokens != 1 ||
+		result.Usage.CachedTokens != 2 || result.Usage.CacheWriteTokens != 1 {
+		t.Fatalf("response usage = %+v", result.Usage)
+	}
+
+	report := provider.Report(context.Background())
+	if report.SessionRequests != 1 ||
+		report.Session.TotalTokens != 5 ||
+		report.Session.InputTokens != 3 ||
+		report.Session.OutputTokens != 2 {
+		t.Fatalf("session = %+v", report)
+	}
+	if !report.RateLimit.Known ||
+		report.RateLimit.RequestsRemaining != 4999 ||
+		report.RateLimit.TokensRemaining != 199000 {
+		t.Fatalf("rate limit = %+v", report.RateLimit)
+	}
+
+	if err := provider.SetAPIKey("other-key"); err != nil {
+		t.Fatalf("SetAPIKey() error = %v", err)
+	}
+	if provider.sessionRequests != 0 || provider.session.TotalTokens != 0 || provider.rateLimit.Known {
+		t.Fatalf("usage survived key change: session=%+v requests=%d limit=%+v", provider.session, provider.sessionRequests, provider.rateLimit)
+	}
+}
+
+func TestProviderClosesOpenToolCallsBeforeNewUserMessage(t *testing.T) {
+	var request map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, httpRequest *http.Request) {
+		body, _ := io.ReadAll(httpRequest.Body)
+		_ = json.Unmarshal(body, &request)
+		writeCompletedText(t, writer, "ok")
+	}))
+	defer server.Close()
+
+	provider := testStreamingProvider(t, server, "instructions")
+	provider.history = []responses.ResponseInputItemUnionParam{
+		responses.ResponseInputItemParamOfMessage("earlier", responses.EasyInputMessageRoleUser),
+		responses.ResponseInputItemParamOfFunctionCall(`{}`, "call_orphan", "read_file"),
+	}
+
+	var notices []string
+	if _, err := provider.Respond(
+		context.Background(),
+		agent.ModelInput{UserText: "continue"},
+		nil,
+		func(event agent.Event) {
+			if event.Kind == agent.EventNotice {
+				notices = append(notices, event.Text)
+			}
+		},
+	); err != nil {
+		t.Fatalf("Respond() error = %v", err)
+	}
+	input, _ := json.Marshal(request["input"])
+	if !strings.Contains(string(input), "function_call_output") ||
+		!strings.Contains(string(input), "call_orphan") ||
+		!strings.Contains(string(input), "not executed") {
+		t.Fatalf("input = %s, want closed orphan tool call", input)
+	}
+	if len(notices) != 1 || !strings.Contains(notices[0], "unanswered") {
+		t.Fatalf("notices = %#v", notices)
+	}
+}
+
+func TestProviderCompactsHistoryInsteadOfWiping(t *testing.T) {
+	var request map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, httpRequest *http.Request) {
+		body, _ := io.ReadAll(httpRequest.Body)
+		_ = json.Unmarshal(body, &request)
+		writeCompletedText(t, writer, "ok")
+	}))
+	defer server.Close()
+
+	provider := testStreamingProvider(t, server, "inst")
+	provider.contextTokens = 80
+	oldUser := strings.Repeat("old-turn-", 40)
+	provider.history = []responses.ResponseInputItemUnionParam{
+		responses.ResponseInputItemParamOfMessage(oldUser, responses.EasyInputMessageRoleUser),
+		responses.ResponseInputItemParamOfMessage("old answer", responses.EasyInputMessageRoleAssistant),
+		responses.ResponseInputItemParamOfMessage("recent question", responses.EasyInputMessageRoleUser),
+		responses.ResponseInputItemParamOfMessage("recent answer", responses.EasyInputMessageRoleAssistant),
+	}
+
+	var notices []string
+	if _, err := provider.Respond(
+		context.Background(),
+		agent.ModelInput{UserText: "latest question"},
+		nil,
+		func(event agent.Event) {
+			if event.Kind == agent.EventNotice {
+				notices = append(notices, event.Text)
+			}
+		},
+	); err != nil {
+		t.Fatalf("Respond() error = %v", err)
+	}
+	input, _ := json.Marshal(request["input"])
+	if !strings.Contains(string(input), "latest question") {
+		t.Fatalf("input = %s, want current user message", input)
+	}
+	if !strings.Contains(string(input), "compacted") {
+		t.Fatalf("input = %s, want compact notice rather than a wipe", input)
+	}
+	if strings.Contains(string(input), oldUser) {
+		t.Fatalf("input = %s, old turn should have been compacted away", input)
+	}
+	if len(notices) != 1 || !strings.Contains(notices[0], "compacted") {
+		t.Fatalf("notices = %#v", notices)
+	}
+}
+
+func TestProviderRespondDoesNotHoldLockDuringStream(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		close(started)
+		<-release
+		writeCompletedText(t, writer, "ok")
+	}))
+	defer server.Close()
+
+	provider := testStreamingProvider(t, server, "instructions")
+	done := make(chan error, 1)
+	go func() {
+		_, err := provider.Respond(
+			context.Background(),
+			agent.ModelInput{UserText: "hello"},
+			nil,
+			nil,
+		)
+		done <- err
+	}()
+
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("stream did not start")
+	}
+
+	snapshotDone := make(chan struct{})
+	go func() {
+		_ = provider.ContextSnapshot()
+		close(snapshotDone)
+	}()
+	select {
+	case <-snapshotDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("ContextSnapshot blocked while Respond held the provider lock")
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatalf("Respond() error = %v", err)
+	}
+}
+
+func testStreamingProvider(t *testing.T, server *httptest.Server, instructions string) *Provider {
+	t.Helper()
+	provider := New("test-key", "gpt-5.6", instructions, time.Second)
+	provider.client = openaisdk.NewClient(
+		option.WithAPIKey("test-key"),
+		option.WithBaseURL(server.URL+"/"),
+		option.WithMaxRetries(0),
+	)
+	return provider
+}
+
+func writeCompletedText(t *testing.T, writer http.ResponseWriter, text string) {
+	t.Helper()
+	writer.Header().Set("Content-Type", "text/event-stream")
+	writeSSE(t, writer, map[string]any{
+		"type": "response.completed",
+		"response": responseFixture([]any{map[string]any{
+			"id":     "msg_1",
+			"type":   "message",
+			"role":   "assistant",
+			"status": "completed",
+			"content": []any{map[string]any{
+				"type": "output_text", "text": text, "annotations": []any{},
+			}},
+		}}),
+	})
+	_, _ = fmt.Fprint(writer, "data: [DONE]\n\n")
+}
+
 func writeSSE(t *testing.T, writer io.Writer, event any) {
 	t.Helper()
 	data, err := json.Marshal(event)
@@ -526,8 +762,8 @@ func responseFixture(output []any) map[string]any {
 			"output_tokens": 2,
 			"total_tokens":  5,
 			"input_tokens_details": map[string]any{
-				"cached_tokens":      0,
-				"cache_write_tokens": 0,
+				"cached_tokens":      2,
+				"cache_write_tokens": 1,
 			},
 			"output_tokens_details": map[string]any{
 				"reasoning_tokens": 1,

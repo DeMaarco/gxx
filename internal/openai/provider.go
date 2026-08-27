@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -32,13 +34,20 @@ type Provider struct {
 	instructions  string
 	timeout       time.Duration
 
-	mu      sync.Mutex
-	history []responses.ResponseInputItemUnionParam
+	mu              sync.Mutex
+	generation      uint64
+	history         []responses.ResponseInputItemUnionParam
+	session         agent.Usage
+	sessionRequests int64
+	rateLimit       agent.RateLimit
+	contextUsage    agent.ContextUsage
+	httpClient      *http.Client
+	baseURL         string
 }
 
 func New(apiKey, model, instructions string, timeout time.Duration) *Provider {
 	apiKey = strings.TrimSpace(apiKey)
-	return &Provider{
+	provider := &Provider{
 		client:        newClient(apiKey),
 		apiKey:        apiKey,
 		model:         model,
@@ -46,7 +55,11 @@ func New(apiKey, model, instructions string, timeout time.Duration) *Provider {
 		contextTokens: config.ContextTokens(config.DefaultContext),
 		instructions:  instructions,
 		timeout:       timeout,
+		httpClient:    &http.Client{Timeout: usageFetchTimeout},
+		baseURL:       defaultAPIBaseURL,
 	}
+	provider.refreshContextLocked()
+	return provider
 }
 
 func (p *Provider) SetEffort(effort string) {
@@ -77,6 +90,7 @@ func (p *Provider) SetContext(value string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.contextTokens = config.ContextTokens(value)
+	p.refreshContextLocked()
 }
 
 func (p *Provider) SetFast(fast bool) {
@@ -94,71 +108,48 @@ func (p *Provider) Respond(
 	var result agent.ModelResponse
 
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	if p.apiKey == "" {
+		p.mu.Unlock()
 		return result, errors.New("OpenAI API key is not configured; run /config")
 	}
 
 	hasUserText := strings.TrimSpace(input.UserText) != ""
-	if hasUserText && p.overBudget(p.history) {
-		p.history = nil
-		agent.Emit(emit, agent.Event{
-			Kind: agent.EventNotice,
-			Text: "Conversation context reset after reaching the local history limit.",
-		})
-	}
-
-	staged := append([]responses.ResponseInputItemUnionParam(nil), p.history...)
-	for _, toolResult := range input.ToolResults {
-		staged = append(staged, responses.ResponseInputItemParamOfFunctionCallOutput(
-			toolResult.CallID,
-			toolResult.Output,
-		))
-	}
 	if len(input.ToolResults) > 0 {
-		// Tool outputs resolve function calls already committed to history. Keep
-		// them even if the follow-up API request fails so the next turn remains
-		// protocol-valid.
-		p.history = append([]responses.ResponseInputItemUnionParam(nil), staged...)
+		p.appendToolResultsLocked(input.ToolResults)
 	}
 	if hasUserText {
-		staged = append(staged, responses.ResponseInputItemParamOfMessage(
+		if n := p.closeOpenFunctionCallsLocked(unansweredToolOutput); n > 0 {
+			agent.Emit(emit, agent.Event{
+				Kind: agent.EventNotice,
+				Text: "Closed unanswered tool calls from the previous turn.",
+			})
+		}
+		if p.shouldCompact(input.UserText) {
+			p.compactLocked(emit)
+		}
+		p.history = append(p.history, responses.ResponseInputItemParamOfMessage(
 			input.UserText,
 			responses.EasyInputMessageRoleUser,
 		))
-		// Preserve the user's request across transport errors so a later
-		// "continue" still has the task that produced any partial stream.
-		p.history = append([]responses.ResponseInputItemUnionParam(nil), staged...)
 	}
 	if !hasUserText && len(input.ToolResults) == 0 {
+		p.mu.Unlock()
 		return result, errors.New("model input contains neither a user message nor tool results")
 	}
 
-	requestContext, cancel := context.WithTimeout(ctx, p.timeout)
+	staged := append([]responses.ResponseInputItemUnionParam(nil), p.history...)
+	generation := p.generation
+	timeout := p.timeout
+	params := p.requestParamsLocked(staged, definitions)
+	client := p.client
+	p.refreshContextLocked()
+	p.mu.Unlock()
+
+	requestContext, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	params := responses.ResponseNewParams{
-		Model:             shared.ResponsesModel(p.model),
-		Instructions:      openaisdk.String(p.instructions),
-		Store:             openaisdk.Bool(false),
-		ParallelToolCalls: openaisdk.Bool(true),
-		Truncation:        responses.ResponseNewParamsTruncationAuto,
-		Reasoning: shared.ReasoningParam{
-			Effort: shared.ReasoningEffort(p.effort),
-		},
-		Include: []responses.ResponseIncludable{
-			responses.ResponseIncludableReasoningEncryptedContent,
-		},
-		Input: responses.ResponseNewParamsInputUnion{
-			OfInputItemList: staged,
-		},
-		Tools: toolParams(definitions),
-	}
-	if p.fast {
-		params.ServiceTier = responses.ResponseNewParamsServiceTierFast
-	}
-
-	stream := p.client.Responses.NewStreaming(requestContext, params)
+	var raw *http.Response
+	stream := client.Responses.NewStreaming(requestContext, params, option.WithResponseInto(&raw))
 	defer stream.Close()
 
 	var completed *responses.Response
@@ -176,6 +167,13 @@ func (p *Provider) Respond(
 		case "error":
 			streamError = fmt.Errorf("OpenAI stream error: %s", event.Message)
 		}
+	}
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	defer p.refreshContextLocked()
+	if raw != nil {
+		p.rateLimit = parseRateLimit(raw.Header)
 	}
 	if err := stream.Err(); err != nil {
 		return result, err
@@ -205,16 +203,54 @@ func (p *Provider) Respond(
 			})
 		}
 	}
-	p.history = append(staged, outputItems...)
 
 	result.Text = responseText(*completed)
 	result.Usage = agent.Usage{
-		InputTokens:     completed.Usage.InputTokens,
-		OutputTokens:    completed.Usage.OutputTokens,
-		ReasoningTokens: completed.Usage.OutputTokensDetails.ReasoningTokens,
-		TotalTokens:     completed.Usage.TotalTokens,
+		InputTokens:      completed.Usage.InputTokens,
+		OutputTokens:     completed.Usage.OutputTokens,
+		ReasoningTokens:  completed.Usage.OutputTokensDetails.ReasoningTokens,
+		CachedTokens:     completed.Usage.InputTokensDetails.CachedTokens,
+		CacheWriteTokens: completed.Usage.InputTokensDetails.CacheWriteTokens,
+		TotalTokens:      completed.Usage.TotalTokens,
+	}
+	if p.generation == generation {
+		p.history = append(staged, outputItems...)
+		p.session.Add(result.Usage)
+		p.sessionRequests++
 	}
 	return result, nil
+}
+
+func (p *Provider) requestParamsLocked(
+	staged []responses.ResponseInputItemUnionParam,
+	definitions []agent.ToolDefinition,
+) responses.ResponseNewParams {
+	params := responses.ResponseNewParams{
+		Model:             shared.ResponsesModel(p.model),
+		Instructions:      openaisdk.String(p.instructions),
+		Store:             openaisdk.Bool(false),
+		ParallelToolCalls: openaisdk.Bool(true),
+		Truncation:        responses.ResponseNewParamsTruncationAuto,
+		PromptCacheKey:    openaisdk.String("gxx"),
+		PromptCacheOptions: responses.ResponseNewParamsPromptCacheOptions{
+			Mode: "implicit",
+			Ttl:  "30m",
+		},
+		Reasoning: shared.ReasoningParam{
+			Effort: shared.ReasoningEffort(p.effort),
+		},
+		Include: []responses.ResponseIncludable{
+			responses.ResponseIncludableReasoningEncryptedContent,
+		},
+		Input: responses.ResponseNewParamsInputUnion{
+			OfInputItemList: staged,
+		},
+		Tools: toolParams(definitions),
+	}
+	if p.fast {
+		params.ServiceTier = responses.ResponseNewParamsServiceTierFast
+	}
+	return params
 }
 
 // SetAPIKey replaces the in-memory credential and clears provider history.
@@ -227,12 +263,24 @@ func (p *Provider) SetAPIKey(apiKey string) error {
 	defer p.mu.Unlock()
 	p.apiKey = apiKey
 	p.client = newClient(apiKey)
+	p.generation++
 	p.history = nil
+	p.session = agent.Usage{}
+	p.sessionRequests = 0
+	p.rateLimit = agent.RateLimit{}
+	p.refreshContextLocked()
 	return nil
 }
 
 func newClient(apiKey string) openaisdk.Client {
-	return openaisdk.NewClient(option.WithAPIKey(apiKey))
+	opts := []option.RequestOption{option.WithAPIKey(apiKey)}
+	if admin := strings.TrimSpace(os.Getenv("OPENAI_ADMIN_KEY")); admin != "" {
+		opts = append(opts, option.WithAdminAPIKey(admin))
+	} else if apiKey != "" {
+		// Admin usage endpoints only send Authorization when an admin key is set.
+		opts = append(opts, option.WithAdminAPIKey(apiKey))
+	}
+	return openaisdk.NewClient(opts...)
 }
 
 func responseText(response responses.Response) string {
@@ -256,19 +304,9 @@ func responseText(response responses.Response) string {
 func (p *Provider) Reset() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	p.generation++
 	p.history = nil
-}
-
-func (p *Provider) overBudget(items []responses.ResponseInputItemUnionParam) bool {
-	if p.contextTokens <= 0 {
-		return len(items) > fallbackHistoryItems
-	}
-	data, err := json.Marshal(items)
-	if err != nil {
-		return len(items) > fallbackHistoryItems
-	}
-	estimated := (len(p.instructions) + len(data)) / 4
-	return estimated > p.contextTokens
+	p.refreshContextLocked()
 }
 
 func toolParams(definitions []agent.ToolDefinition) []responses.ToolUnionParam {

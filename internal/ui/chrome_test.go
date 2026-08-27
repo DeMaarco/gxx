@@ -21,9 +21,9 @@ func TestWriteChromePrintsHeaderPromptAndStatus(t *testing.T) {
 	}
 	got := strings.Split(strings.TrimSuffix(output.String(), "\n"), "\n")
 	want := []string{
-		"◆ gxx  0.0.1",
+		"◆ gxx  v0.0.1",
 		">",
-		"gpt-5.6-sol · ask · medium · 272k",
+		"gpt-5.6-sol · ask · medium · 272k · 0%",
 	}
 	if len(got) != len(want) {
 		t.Fatalf("chrome lines = %#v, want %#v", got, want)
@@ -47,10 +47,10 @@ func TestWriteAskHeaderOmitsPrompt(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := output.String()
-	if !strings.HasPrefix(text, "◆ gxx  0.0.1\n") {
+	if !strings.HasPrefix(text, "◆ gxx  v0.0.1\n") {
 		t.Fatalf("header = %q", text)
 	}
-	if !strings.Contains(text, "gpt-5.6-sol · ask · high · 272k") {
+	if !strings.Contains(text, "gpt-5.6-sol · ask · high · 272k · 0%") {
 		t.Fatalf("status missing from %q", text)
 	}
 	if strings.Contains(text, "\n>\n") {
@@ -64,7 +64,7 @@ func TestFormatStatusAddsContextAndFast(t *testing.T) {
 		PermissionMode: config.PermissionAsk,
 		Effort:         "medium",
 	})
-	if plain != "gpt-5.6-sol · ask · medium · 272k" {
+	if plain != "gpt-5.6-sol · ask · medium · 272k · 0%" {
 		t.Fatalf("default status = %q", plain)
 	}
 	got := formatStatus(REPLSettings{
@@ -74,7 +74,7 @@ func TestFormatStatusAddsContextAndFast(t *testing.T) {
 		Context:        "1m",
 		Fast:           true,
 	})
-	if got != "gpt-5.6-terra · ask · high · 1m · fast" {
+	if got != "gpt-5.6-terra · ask · high · 1m · 0% · fast" {
 		t.Fatalf("status = %q", got)
 	}
 }
@@ -85,7 +85,7 @@ func TestFormatStatusPaintsAutoRed(t *testing.T) {
 		PermissionMode: config.PermissionAuto,
 		Effort:         "medium",
 	})
-	if plain != "gpt-5.6-sol · auto · medium · 272k" {
+	if plain != "gpt-5.6-sol · auto · medium · 272k · 0%" {
 		t.Fatalf("plain auto status = %q", plain)
 	}
 	got := formatStatus(REPLSettings{
@@ -115,5 +115,17 @@ func TestFormatStatusKeepsAutoWritesPlain(t *testing.T) {
 	}
 	if !strings.Contains(got, "auto-writes") {
 		t.Fatalf("status = %q, want auto-writes", got)
+	}
+}
+
+func TestFormatVersionPrefixesRelease(t *testing.T) {
+	if got := formatVersion("0.0.1"); got != "v0.0.1" {
+		t.Fatalf("formatVersion(0.0.1) = %q", got)
+	}
+	if got := formatVersion("v0.0.1"); got != "v0.0.1" {
+		t.Fatalf("formatVersion(v0.0.1) = %q", got)
+	}
+	if got := formatVersion(""); got != "dev" {
+		t.Fatalf("formatVersion(empty) = %q", got)
 	}
 }

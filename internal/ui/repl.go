@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"strings"
 	"sync"
 	"time"
@@ -31,6 +32,8 @@ type REPLSettings struct {
 	APIKeyConfigured bool
 	ReadAPIKey       func(context.Context) (string, error)
 	SaveAPIKey       func(string) (string, error)
+	FetchUsage       func(context.Context) (agent.UsageReport, error)
+	FetchContext     func() agent.ContextUsage
 	SyncSession      func(REPLSettings) error
 }
 
@@ -216,13 +219,21 @@ func RunREPL(
 		fmt.Fprintln(writer)
 	}
 
+	sessionCtx, cancelSession := context.WithCancel(ctx)
+	defer cancelSession()
+	interrupts := make(chan os.Signal, 1)
+	signal.Notify(interrupts, os.Interrupt)
+	defer signal.Stop(interrupts)
+	var turns turnGate
+	go watchInterrupts(sessionCtx, interrupts, cancelSession, &turns)
+
 	var editor *lineEditor
 	if lineEditorEnabled(settings.Stdin, writer) {
 		editor = &lineEditor{in: settings.Stdin, out: writer, color: settings.Color}
 	}
 
 	for {
-		if err := ctx.Err(); err != nil {
+		if err := sessionCtx.Err(); err != nil {
 			return err
 		}
 		var line string
@@ -231,12 +242,12 @@ func RunREPL(
 			if err := writeHeader(writer, settings); err != nil {
 				return err
 			}
-			line, err = editor.Read(ctx, settings)
+			line, err = editor.Read(sessionCtx, settings)
 		} else {
 			if err := writeChrome(writer, settings); err != nil {
 				return err
 			}
-			line, err = readLine(ctx, reader)
+			line, err = readLine(sessionCtx, reader, settings.Stdin)
 			clearStatusLine(writer, settings.Color)
 		}
 		if err != nil {
@@ -260,52 +271,129 @@ func RunREPL(
 			}
 			continue
 		}
-		switch {
-		case prompt == "/exit" || prompt == "/quit":
-			return nil
-		case prompt == "/clear":
-			loop.Reset()
-			fmt.Fprintln(writer, paint(settings.Color, dim, "Conversation cleared."))
-			fmt.Fprintln(writer)
-			continue
-		case prompt == "/config":
-			if err := configureAPIKey(ctx, loop, writer, settings); err != nil {
-				fmt.Fprintf(writer, "%s\n", paint(settings.Color, red, "error: "+err.Error()))
+		if strings.HasPrefix(prompt, "/") {
+			name, _, slashErr := lookupSlashCommand(prompt)
+			if slashErr != nil {
+				fmt.Fprintf(writer, "%s\n", paint(settings.Color, red, "error: "+slashErr.Error()))
+				fmt.Fprintln(writer)
+				continue
 			}
-			fmt.Fprintln(writer)
-			continue
-		case prompt == "/help":
-			printREPLHelp(writer, settings)
-			fmt.Fprintln(writer)
-			continue
-		case strings.HasPrefix(prompt, "/model"):
-			changedModel, err := applyModelCommand(writer, &settings, prompt)
-			if err != nil {
-				fmt.Fprintf(writer, "%s\n", paint(settings.Color, red, "error: "+err.Error()))
-			} else if changedModel {
+			switch name {
+			case "/exit":
+				return nil
+			case "/clear":
 				loop.Reset()
 				fmt.Fprintln(writer, paint(settings.Color, dim, "Conversation cleared."))
+				fmt.Fprintln(writer)
+				continue
+			case "/config":
+				if err := configureAPIKey(sessionCtx, loop, writer, settings); err != nil {
+					fmt.Fprintf(writer, "%s\n", paint(settings.Color, red, "error: "+err.Error()))
+				}
+				fmt.Fprintln(writer)
+				continue
+			case "/help":
+				printREPLHelp(writer, settings)
+				fmt.Fprintln(writer)
+				continue
+			case "/usage":
+				if err := showUsage(sessionCtx, writer, settings); err != nil {
+					fmt.Fprintf(writer, "%s\n", paint(settings.Color, red, "error: "+err.Error()))
+				}
+				fmt.Fprintln(writer)
+				continue
+			case "/context":
+				printContext(writer, settings.Color, settings.contextUsage())
+				fmt.Fprintln(writer)
+				continue
+			case "/model":
+				changedModel, err := applyModelCommand(writer, &settings, prompt)
+				if err != nil {
+					fmt.Fprintf(writer, "%s\n", paint(settings.Color, red, "error: "+err.Error()))
+				} else if changedModel {
+					loop.Reset()
+					fmt.Fprintln(writer, paint(settings.Color, dim, "Conversation cleared."))
+				}
+				fmt.Fprintln(writer)
+				continue
+			case "/mode":
+				if err := applyModeCommand(writer, &settings, prompt); err != nil {
+					fmt.Fprintf(writer, "%s\n", paint(settings.Color, red, "error: "+err.Error()))
+				}
+				fmt.Fprintln(writer)
+				continue
 			}
-			fmt.Fprintln(writer)
-			continue
-		case strings.HasPrefix(prompt, "/mode"):
-			if err := applyModeCommand(writer, &settings, prompt); err != nil {
-				fmt.Fprintf(writer, "%s\n", paint(settings.Color, red, "error: "+err.Error()))
-			}
-			fmt.Fprintln(writer)
-			continue
 		}
 
+		turnCtx, finishTurn := turns.start(sessionCtx)
 		renderer.StartTurn()
-		result, err := loop.Run(ctx, prompt, renderer.Event)
+		result, err := loop.Run(turnCtx, prompt, renderer.Event)
 		renderer.Finish(result.Answer)
+		finishTurn()
+		if sessionCtx.Err() != nil {
+			return sessionCtx.Err()
+		}
 		if err != nil {
-			if ctx.Err() != nil {
-				return ctx.Err()
+			if errors.Is(err, context.Canceled) {
+				fmt.Fprintln(writer, paint(settings.Color, red, "interrupted"))
+			} else {
+				fmt.Fprintf(writer, "%s\n", paint(settings.Color, red, "error: "+err.Error()))
 			}
-			fmt.Fprintf(writer, "%s\n", paint(settings.Color, red, "error: "+err.Error()))
 		}
 		fmt.Fprintln(writer)
+	}
+}
+
+type turnGate struct {
+	mu          sync.Mutex
+	cancelTurn  context.CancelFunc
+	active      bool
+	interrupted bool
+}
+
+func (g *turnGate) start(parent context.Context) (context.Context, context.CancelFunc) {
+	turnCtx, cancel := context.WithCancel(parent)
+	g.mu.Lock()
+	g.cancelTurn = cancel
+	g.active = true
+	g.interrupted = false
+	g.mu.Unlock()
+	return turnCtx, func() {
+		cancel()
+		g.mu.Lock()
+		g.active = false
+		g.cancelTurn = nil
+		g.interrupted = false
+		g.mu.Unlock()
+	}
+}
+
+func (g *turnGate) handle(cancelSession context.CancelFunc) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if !g.active || g.interrupted {
+		cancelSession()
+		return
+	}
+	g.interrupted = true
+	if g.cancelTurn != nil {
+		g.cancelTurn()
+	}
+}
+
+func watchInterrupts(
+	ctx context.Context,
+	interrupts <-chan os.Signal,
+	cancelSession context.CancelFunc,
+	turns *turnGate,
+) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-interrupts:
+			turns.handle(cancelSession)
+		}
 	}
 }
 
@@ -318,6 +406,18 @@ func printREPLHelp(writer io.Writer, settings REPLSettings) {
 			paint(settings.Color, dim, command.help),
 		)
 	}
+}
+
+func showUsage(ctx context.Context, writer io.Writer, settings REPLSettings) error {
+	if settings.FetchUsage == nil {
+		return errors.New("usage is unavailable")
+	}
+	report, err := settings.FetchUsage(ctx)
+	if err != nil {
+		return err
+	}
+	printUsage(writer, settings.Color, report)
+	return nil
 }
 
 func applyModelCommand(writer io.Writer, settings *REPLSettings, line string) (bool, error) {
@@ -459,7 +559,23 @@ func configureAPIKey(
 	return nil
 }
 
-func readLine(ctx context.Context, reader *bufio.Reader) (string, error) {
+func readLine(ctx context.Context, reader *bufio.Reader, file *os.File) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	if file != nil {
+		stop := context.AfterFunc(ctx, func() {
+			_ = file.SetReadDeadline(time.Now())
+		})
+		defer stop()
+		defer func() { _ = file.SetReadDeadline(time.Time{}) }()
+		line, err := reader.ReadString('\n')
+		if err != nil && ctx.Err() != nil {
+			return "", ctx.Err()
+		}
+		return line, err
+	}
+
 	type result struct {
 		line string
 		err  error
@@ -469,7 +585,6 @@ func readLine(ctx context.Context, reader *bufio.Reader) (string, error) {
 		line, err := reader.ReadString('\n')
 		read <- result{line: line, err: err}
 	}()
-
 	select {
 	case <-ctx.Done():
 		return "", ctx.Err()

@@ -83,15 +83,18 @@ func TestPolicyAutoApprovesWritesAndCommands(t *testing.T) {
 	}
 }
 
-func TestPolicyAutoStillRejectsOversizedPreview(t *testing.T) {
-	policy := NewPolicy(config.PermissionAuto, &recordingApprover{approved: true})
+func TestPolicyAutoApprovesOversizedPreview(t *testing.T) {
+	policy := NewPolicy(config.PermissionAuto, &recordingApprover{approved: false})
 	approved, err := policy.Approve(context.Background(), Action{
 		Title:   "Write",
 		Preview: strings.Repeat("x", maxPreviewBytes+1),
 		Kind:    KindWrite,
 	})
-	if approved || err == nil {
-		t.Fatalf("Approve() = %v, %v; want oversized rejection", approved, err)
+	if err != nil {
+		t.Fatalf("Approve() error = %v", err)
+	}
+	if !approved {
+		t.Fatal("auto mode denied an oversized write preview")
 	}
 }
 

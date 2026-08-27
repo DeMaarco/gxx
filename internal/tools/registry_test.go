@@ -111,6 +111,66 @@ func TestMutationRequiresApproval(t *testing.T) {
 	}
 }
 
+func TestWriteFileRejectsExistingPath(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, root, "file.txt", "before\n")
+	registry := newTestRegistry(t, root, &staticApprover{approved: true}, Options{
+		MaxResultBytes:  4096,
+		MaxSearchResult: 10,
+		ParallelReads:   1,
+		CommandTimeout:  time.Second,
+	})
+	result := registry.Execute(context.Background(), []agent.ToolCall{
+		toolCall("write", "write_file", map[string]any{
+			"path": "file.txt", "content": "after\n",
+		}),
+	}, nil)[0]
+	if !result.IsError || !strings.Contains(result.Output, "already exists") {
+		t.Fatalf("result = %+v, want existing-file error", result)
+	}
+	assertToolFileContents(t, filepath.Join(root, "file.txt"), "before\n")
+}
+
+func TestListAndSearchHonorGitignore(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, root, ".gitignore", "*.secret\nignored/\n")
+	writeTestFile(t, root, ".gxxignore", "skip-me.txt\n")
+	writeTestFile(t, root, "keep.txt", "hello visible\n")
+	writeTestFile(t, root, "hidden.secret", "hello secret\n")
+	writeTestFile(t, root, "skip-me.txt", "hello skipped\n")
+	writeTestFile(t, root, "ignored/file.txt", "hello ignored\n")
+
+	registry := newTestRegistry(t, root, &staticApprover{}, Options{
+		MaxResultBytes:  4096,
+		MaxSearchResult: 10,
+		ParallelReads:   1,
+		CommandTimeout:  time.Second,
+	})
+	results := registry.Execute(context.Background(), []agent.ToolCall{
+		toolCall("list", "list_files", map[string]any{"path": nil, "max_depth": 4}),
+		toolCall("search", "search_files", map[string]any{"query": "hello", "path": nil, "max_results": nil}),
+	}, nil)
+	if results[0].IsError || results[1].IsError {
+		t.Fatalf("results = %+v", results)
+	}
+	if !strings.Contains(results[0].Output, "keep.txt") {
+		t.Fatalf("list = %q, want keep.txt", results[0].Output)
+	}
+	for _, hidden := range []string{"hidden.secret", "skip-me.txt", "ignored/"} {
+		if strings.Contains(results[0].Output, hidden) {
+			t.Fatalf("list = %q, should omit %s", results[0].Output, hidden)
+		}
+	}
+	if !strings.Contains(results[1].Output, "keep.txt") {
+		t.Fatalf("search = %q, want keep.txt", results[1].Output)
+	}
+	for _, hidden := range []string{"hidden.secret", "skip-me.txt", "ignored/file.txt"} {
+		if strings.Contains(results[1].Output, hidden) {
+			t.Fatalf("search = %q, should omit %s", results[1].Output, hidden)
+		}
+	}
+}
+
 func TestApprovedWriteAndEditAreAtomic(t *testing.T) {
 	root := t.TempDir()
 	approver := &staticApprover{approved: true}

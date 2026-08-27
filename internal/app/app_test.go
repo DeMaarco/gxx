@@ -20,6 +20,9 @@ func TestRunHelpDoesNotRequireConfiguration(t *testing.T) {
 	if !strings.Contains(stdout.String(), "gxx ask") {
 		t.Fatalf("stdout = %q, want usage", stdout.String())
 	}
+	if !strings.Contains(stdout.String(), "gxx usage") {
+		t.Fatalf("stdout = %q, want usage command", stdout.String())
+	}
 	if !strings.Contains(stdout.String(), "--permission") {
 		t.Fatalf("stdout = %q, want permission flag", stdout.String())
 	}
@@ -32,8 +35,8 @@ func TestRunVersionPrintsRelease(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("Run() code = %d, want 0; stderr = %q", code, stderr.String())
 	}
-	if stdout.String() != "gxx 0.0.1\n" {
-		t.Fatalf("stdout = %q, want version 0.0.1", stdout.String())
+	if stdout.String() != "gxx v0.0.2\n" {
+		t.Fatalf("stdout = %q, want version v0.0.2", stdout.String())
 	}
 }
 
@@ -108,6 +111,21 @@ func TestInteractiveModeStartsWithoutAPIKeyForConfigCommand(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "Run /config") {
 		t.Fatalf("stdout = %q, want missing-key guidance", stdout.String())
+	}
+}
+
+func TestRunUsageReportsMissingAPIKey(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("OPENAI_API_KEY", "")
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	code := Run(context.Background(), []string{"usage"}, strings.NewReader(""), &stdout, &stderr, false)
+	if code != 2 {
+		t.Fatalf("Run() code = %d, want 2; stdout = %q", code, stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "OPENAI_API_KEY is not set") {
+		t.Fatalf("stderr = %q, want missing API key", stderr.String())
 	}
 }
 

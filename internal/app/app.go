@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"strings"
 
 	"golang.org/x/term"
@@ -22,7 +23,7 @@ import (
 	"gxx/internal/workspace"
 )
 
-var Version = "0.0.1"
+var Version = "0.0.2"
 
 type runtime struct {
 	config    config.Config
@@ -56,15 +57,20 @@ func Run(
 		switch args[0] {
 		case "ask":
 			return runAsk(ctx, args[1:], stdin, stdout, stderr, interactive)
+		case "usage":
+			return runUsage(ctx, args[1:], stdin, stdout, stderr)
 		case "help":
 			if len(args) > 1 && args[1] == "ask" {
 				printAskUsage(stdout)
+			} else if len(args) > 1 && args[1] == "usage" {
+				fmt.Fprintln(stdout, "Usage:")
+				fmt.Fprintln(stdout, "  gxx usage")
 			} else {
 				printRootUsage(stdout)
 			}
 			return 0
 		case "version", "--version":
-			fmt.Fprintf(stdout, "gxx %s\n", Version)
+			fmt.Fprintf(stdout, "gxx %s\n", ui.FormatVersion(Version))
 			return 0
 		case "-h", "--help":
 			printRootUsage(stdout)
@@ -127,6 +133,9 @@ func runAsk(
 	stderr io.Writer,
 	interactive bool,
 ) int {
+	ctx, stop := signal.NotifyContext(ctx, os.Interrupt)
+	defer stop()
+
 	jsonRequested := wantsJSON(args)
 	settings, help, err := parseFlags("gxx ask", args, stderr, true)
 	if help {
@@ -199,6 +208,46 @@ func runAsk(
 		}
 		return 1
 	}
+	return 0
+}
+
+func runUsage(
+	ctx context.Context,
+	args []string,
+	_ io.Reader,
+	stdout io.Writer,
+	stderr io.Writer,
+) int {
+	ctx, stop := signal.NotifyContext(ctx, os.Interrupt)
+	defer stop()
+
+	if len(args) > 0 {
+		switch args[0] {
+		case "-h", "--help":
+			fmt.Fprintln(stdout, "Usage:")
+			fmt.Fprintln(stdout, "  gxx usage")
+			fmt.Fprintln(stdout)
+			fmt.Fprintln(stdout, "Show session token usage, organization spend for the current month,")
+			fmt.Fprintln(stdout, "remaining spend quota, and remaining rate-limit quota.")
+			return 0
+		}
+		fmt.Fprintf(stderr, "gxx usage: unexpected argument %q\n", args[0])
+		return 2
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		fmt.Fprintf(stderr, "gxx usage: %v\n", err)
+		return 2
+	}
+	settings := config.Load(cwd)
+	if strings.TrimSpace(settings.APIKey) == "" {
+		fmt.Fprintln(stderr, "gxx usage: OPENAI_API_KEY is not set")
+		return 2
+	}
+
+	provider := openaiProvider.New(settings.APIKey, settings.Model, "", settings.APITimeout)
+	fmt.Fprint(stdout, ui.FormatUsage(provider.Report(ctx), ui.ColorEnabled(stdout)))
 	return 0
 }
 
@@ -284,7 +333,11 @@ func newRuntimeFromConfig(
 	settings.Workspace = ws.Root()
 
 	reader := bufio.NewReader(stdin)
-	policy := approval.NewPolicy(settings.PermissionMode, approval.NewPrompt(reader, stderr, interactive))
+	prompt := approval.NewPrompt(reader, stderr, interactive)
+	if file := terminalFile(stdin); file != nil {
+		prompt.SetFile(file)
+	}
+	policy := approval.NewPolicy(settings.PermissionMode, prompt)
 	registry := tools.NewRegistry(ws, policy, tools.Options{
 		MaxResultBytes:  settings.MaxToolResultBytes,
 		MaxSearchResult: settings.MaxSearchResults,
@@ -330,7 +383,22 @@ func replSettings(rt *runtime, stdin io.Reader, stdout io.Writer) ui.REPLSetting
 		APIKeyConfigured: rt.config.APIKey != "",
 		ReadAPIKey:       terminalAPIKeyReader(stdin, rt.reader),
 		SaveAPIKey:       rt.saveAPIKey,
+		FetchUsage: func(ctx context.Context) (agent.UsageReport, error) {
+			return rt.provider.Report(ctx), nil
+		},
+		FetchContext: func() agent.ContextUsage {
+			return rt.provider.ContextSnapshot()
+		},
 		SyncSession: func(session ui.REPLSettings) error {
+			if _, err := config.SaveSession(
+				session.Model,
+				session.Effort,
+				session.Context,
+				session.Fast,
+				session.PermissionMode,
+			); err != nil {
+				return err
+			}
 			rt.provider.SetModel(session.Model)
 			rt.provider.SetEffort(session.Effort)
 			rt.provider.SetContext(session.Context)
@@ -429,6 +497,7 @@ func printRootUsage(writer io.Writer) {
 	fmt.Fprintln(writer, "Usage:")
 	fmt.Fprintln(writer, "  gxx [flags]                  Start the interactive REPL")
 	fmt.Fprintln(writer, "  gxx ask [flags] <prompt>     Run one request")
+	fmt.Fprintln(writer, "  gxx usage                    Show API usage and remaining quota")
 	fmt.Fprintln(writer, "  gxx help                     Show help")
 	fmt.Fprintln(writer, "  gxx version                  Show version")
 	fmt.Fprintln(writer)
@@ -447,10 +516,10 @@ func printAskUsage(writer io.Writer) {
 }
 
 func printCommonFlags(writer io.Writer) {
-	fmt.Fprintln(writer, "  --model string          OpenAI model (default: GXX_MODEL or gpt-5.6-sol)")
-	fmt.Fprintln(writer, "  --effort string         Reasoning effort (default: GXX_EFFORT or medium)")
-	fmt.Fprintln(writer, "  --context string        Context window size (default: GXX_CONTEXT or 272k)")
-	fmt.Fprintln(writer, "  --permission string     Permission mode (default: GXX_PERMISSION or ask)")
+	fmt.Fprintln(writer, "  --model string          OpenAI model (default: GXX_MODEL, config.json, or gpt-5.6-sol)")
+	fmt.Fprintln(writer, "  --effort string         Reasoning effort (default: GXX_EFFORT, config.json, or medium)")
+	fmt.Fprintln(writer, "  --context string        Context window size (default: GXX_CONTEXT, config.json, or 272k)")
+	fmt.Fprintln(writer, "  --permission string     Permission mode (default: GXX_PERMISSION, config.json, or ask)")
 	fmt.Fprintln(writer, "  --fast                  Use OpenAI fast service tier")
 	fmt.Fprintln(writer, "  --max-steps int         Maximum model steps (default: 12)")
 	fmt.Fprintln(writer, "  --command-timeout dur   Maximum command duration (default: 2m)")

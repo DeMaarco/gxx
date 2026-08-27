@@ -58,6 +58,9 @@ func (l *Loop) Run(ctx context.Context, prompt string, emit EmitFunc) (Result, e
 			return result, nil
 		}
 		if step == l.MaxSteps {
+			l.Model.CloseOpenToolCalls(
+				"error: tool call was not executed because the agent reached the maximum number of steps",
+			)
 			return result, ErrMaxSteps
 		}
 
@@ -68,6 +71,10 @@ func (l *Loop) Run(ctx context.Context, prompt string, emit EmitFunc) (Result, e
 
 		toolResults := l.Executor.Execute(ctx, response.ToolCalls, emit)
 		result.ToolResults = append(result.ToolResults, toolResults...)
+		if err := ctx.Err(); err != nil {
+			l.Model.AbsorbToolResults(toolResults)
+			return result, err
+		}
 		input = ModelInput{ToolResults: toolResults}
 	}
 

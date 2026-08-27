@@ -7,9 +7,12 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"sync"
+	"time"
 	"unicode"
+	"unicode/utf8"
 )
 
 const maxPreviewBytes = 16 * 1024
@@ -35,6 +38,7 @@ type Approver interface {
 type Prompt struct {
 	reader      *bufio.Reader
 	writer      io.Writer
+	file        *os.File
 	interactive bool
 	code        func() (string, error)
 	mu          sync.Mutex
@@ -47,6 +51,10 @@ func NewPrompt(reader *bufio.Reader, writer io.Writer, interactive bool) *Prompt
 		interactive: interactive,
 		code:        confirmationCode,
 	}
+}
+
+func (p *Prompt) SetFile(file *os.File) {
+	p.file = file
 }
 
 func (p *Prompt) Approve(ctx context.Context, action Action) (bool, error) {
@@ -63,13 +71,6 @@ func (p *Prompt) Approve(ctx context.Context, action Action) (bool, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	if len(action.Preview) > maxPreviewBytes {
-		return false, fmt.Errorf(
-			"action preview is %d bytes; refusing to approve more than %d bytes",
-			len(action.Preview),
-			maxPreviewBytes,
-		)
-	}
 	if buffered := p.reader.Buffered(); buffered > 0 {
 		if _, err := p.reader.Discard(buffered); err != nil {
 			return false, fmt.Errorf("discard stale terminal input: %w", err)
@@ -80,7 +81,7 @@ func (p *Prompt) Approve(ctx context.Context, action Action) (bool, error) {
 		return false, fmt.Errorf("create approval challenge: %w", err)
 	}
 	title := safeDisplay(action.Title)
-	preview := safeDisplay(action.Preview)
+	preview := displayPreview(action.Preview)
 	if strings.TrimSpace(preview) != "" {
 		if _, err := fmt.Fprintf(p.writer, "\n%s\n%s\n", title, preview); err != nil {
 			return false, err
@@ -96,28 +97,46 @@ func (p *Prompt) Approve(ctx context.Context, action Action) (bool, error) {
 		return false, err
 	}
 
+	answer, err := readLineContext(ctx, p.reader, p.file)
+	if err != nil && err != io.EOF {
+		return false, err
+	}
+	answer = strings.ToLower(strings.TrimSpace(answer))
+	return answer == "y-"+code, nil
+}
+
+func readLineContext(ctx context.Context, reader *bufio.Reader, file *os.File) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	if file != nil {
+		stop := context.AfterFunc(ctx, func() {
+			_ = file.SetReadDeadline(time.Now())
+		})
+		defer stop()
+		defer func() { _ = file.SetReadDeadline(time.Time{}) }()
+		line, err := reader.ReadString('\n')
+		if err != nil && ctx.Err() != nil {
+			return "", ctx.Err()
+		}
+		return line, err
+	}
+
 	type readResult struct {
 		answer string
 		err    error
 	}
 	read := make(chan readResult, 1)
 	go func() {
-		answer, err := p.reader.ReadString('\n')
+		answer, err := reader.ReadString('\n')
 		read <- readResult{answer: answer, err: err}
 	}()
-
-	var answer string
 	select {
 	case <-ctx.Done():
-		return false, ctx.Err()
+		return "", ctx.Err()
 	case result := <-read:
-		if result.err != nil && result.err != io.EOF {
-			return false, result.err
-		}
-		answer = result.answer
+		return result.answer, result.err
 	}
-	answer = strings.ToLower(strings.TrimSpace(answer))
-	return answer == "y-"+code, nil
 }
 
 func safeDisplay(value string) string {
@@ -153,4 +172,29 @@ func confirmationCode() (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(value), nil
+}
+
+// CapPreview limits a raw action preview so callers do not keep huge diffs in memory.
+func CapPreview(preview string) string {
+	if len(preview) <= maxPreviewBytes {
+		return preview
+	}
+	keep := maxPreviewBytes
+	for keep > 0 && !utf8.RuneStart(preview[keep]) {
+		keep--
+	}
+	return preview[:keep]
+}
+
+func displayPreview(preview string) string {
+	shown := safeDisplay(preview)
+	n := len(shown)
+	if n <= maxPreviewBytes {
+		return shown
+	}
+	keep := maxPreviewBytes
+	for keep > 0 && !utf8.RuneStart(shown[keep]) {
+		keep--
+	}
+	return shown[:keep] + fmt.Sprintf("\n… preview truncated (%d of %d bytes shown)", keep, n)
 }

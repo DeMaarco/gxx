@@ -236,6 +236,102 @@ func TestEnvironmentAPIKeyOverridesPersistentConfig(t *testing.T) {
 	}
 }
 
+func TestSaveSessionPersistsAndLoads(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("GXX_MODEL", "")
+	t.Setenv("GXX_EFFORT", "")
+	t.Setenv("GXX_CONTEXT", "")
+	t.Setenv("GXX_FAST", "")
+	t.Setenv("GXX_PERMISSION", "")
+
+	if _, err := SaveAPIKey("persisted-key"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := SaveSession("gpt-5.6-terra", "high", "1m", true, PermissionAutoWrites); err != nil {
+		t.Fatal(err)
+	}
+
+	settings := Load(t.TempDir())
+	if settings.APIKey != "persisted-key" {
+		t.Fatalf("APIKey = %q", settings.APIKey)
+	}
+	if settings.Model != "gpt-5.6-terra" || settings.Effort != "high" || settings.Context != "1m" {
+		t.Fatalf("session = %+v", settings)
+	}
+	if !settings.Fast || settings.PermissionMode != PermissionAutoWrites {
+		t.Fatalf("session = %+v", settings)
+	}
+}
+
+func TestEnvironmentOverridesPersistedSession(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("OPENAI_API_KEY", "")
+	if _, err := SaveSession("gpt-5.6-luna", "low", "32k", true, PermissionAuto); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GXX_MODEL", "gpt-5.6-sol")
+	t.Setenv("GXX_EFFORT", "medium")
+	t.Setenv("GXX_CONTEXT", "272k")
+	t.Setenv("GXX_FAST", "off")
+	t.Setenv("GXX_PERMISSION", "ask")
+
+	settings := Load(t.TempDir())
+	if settings.Model != "gpt-5.6-sol" || settings.Effort != "medium" || settings.Context != "272k" {
+		t.Fatalf("settings = %+v", settings)
+	}
+	if settings.Fast || settings.PermissionMode != PermissionAsk {
+		t.Fatalf("settings = %+v", settings)
+	}
+}
+
+func TestSaveAPIKeyPreservesSessionFields(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	if _, err := SaveSession("gpt-5.6-terra", "high", "128k", true, PermissionAsk); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := SaveAPIKey("later-key"); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("GXX_MODEL", "")
+	t.Setenv("GXX_EFFORT", "")
+	t.Setenv("GXX_CONTEXT", "")
+	t.Setenv("GXX_FAST", "")
+	t.Setenv("GXX_PERMISSION", "")
+
+	settings := Load(t.TempDir())
+	if settings.APIKey != "later-key" {
+		t.Fatalf("APIKey = %q", settings.APIKey)
+	}
+	if settings.Model != "gpt-5.6-terra" || settings.Effort != "high" || !settings.Fast {
+		t.Fatalf("session lost after SaveAPIKey: %+v", settings)
+	}
+}
+
+func TestLoadIgnoresInvalidPersistedSessionFields(t *testing.T) {
+	base := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", base)
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("GXX_MODEL", "")
+	t.Setenv("GXX_EFFORT", "")
+	t.Setenv("GXX_CONTEXT", "")
+	t.Setenv("GXX_PERMISSION", "")
+	directory := filepath.Join(base, "gxx")
+	if err := os.MkdirAll(directory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(directory, "config.json")
+	if err := os.WriteFile(path, []byte(`{"effort":"ludicrous","context":"nope","permission":"yolo-ish"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	settings := Load(t.TempDir())
+	if settings.Effort != DefaultEffort || settings.Context != DefaultContext || settings.PermissionMode != DefaultPermissionMode {
+		t.Fatalf("invalid persisted fields were not ignored: %+v", settings)
+	}
+}
+
 func TestSaveAPIKeyRejectsSymlinkedConfig(t *testing.T) {
 	base := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", base)

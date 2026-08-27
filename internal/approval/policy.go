@@ -2,7 +2,6 @@ package approval
 
 import (
 	"context"
-	"fmt"
 	"sync"
 
 	"gxx/internal/config"
@@ -52,13 +51,6 @@ func (p *Policy) Approve(ctx context.Context, action Action) (bool, error) {
 	p.mu.Unlock()
 
 	if autoApproved(mode, action.Kind) {
-		if len(action.Preview) > maxPreviewBytes {
-			return false, fmt.Errorf(
-				"action preview is %d bytes; refusing to approve more than %d bytes",
-				len(action.Preview),
-				maxPreviewBytes,
-			)
-		}
 		return true, nil
 	}
 	if inner == nil {

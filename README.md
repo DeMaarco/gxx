@@ -12,9 +12,10 @@ local tools.
 - OpenAI Responses API using the official Go SDK.
 - Stateless API requests with `store:false`; conversation state only lives in
   the current process.
-- Workspace-local tools to list, search, and read files.
+- Workspace-local tools to list, search, and read files, honoring `.gitignore`
+  and `.gxxignore`.
 - Transactional `apply_patch` changes across added, updated, and deleted files.
-- Exact text edits, complete file writes, and shell commands, gated by permission
+- Exact text edits, new-file writes, and shell commands, gated by permission
   mode (`ask`, `auto-writes`, or `auto`).
 - Bounded parallel execution for independent read-only tools.
 - No runtime dependency on `rg`, `git`, or a TUI framework.
@@ -34,11 +35,14 @@ export OPENAI_API_KEY="..."
 Alternatively, start the interactive REPL and run `/config`. The key is entered
 without terminal echo and stored as plaintext JSON at
 `~/.config/gxx/config.json` (or `$XDG_CONFIG_HOME/gxx/config.json`) with file
-permissions `0600` and directory permissions `0700`. `OPENAI_API_KEY` takes
-precedence over the saved value on future starts.
+permissions `0600` and directory permissions `0700`. `/model` and `/mode` persist
+the selected model, context size, effort, fast tier, and permission mode to the
+same file. Flags and `GXX_*` / `OPENAI_API_KEY` environment variables take
+precedence over saved values on future starts.
 
-`gxx` removes the OpenAI key and common secret-bearing environment variables
-from commands launched by the agent.
+`gxx` removes the OpenAI API key, OpenAI admin key, `HOME` / `USERPROFILE`, and
+common secret-bearing environment variables (`*_KEY`, `*_TOKEN`, `*_SECRET`,
+and similar) from commands launched by the agent.
 
 ## Build
 
@@ -63,19 +67,22 @@ Start an interactive session in the current directory:
 The REPL chrome is:
 
 ```text
-◆ gxx  0.0.1
+◆ gxx  v0.0.2
 >
-gpt-5.6-sol · ask · medium · 272k
+gpt-5.6-sol · ask · medium · 272k · 0%
 ```
 
 The first line is the product badge and version. The second line is the prompt.
-The third line shows the selected model, permission mode, reasoning effort, and
-context window size. `fast` also appears there when the fast service tier is on.
-Permission mode `auto` is shown in red.
+The third line shows the selected model, permission mode, reasoning effort,
+context window size, and how full the conversation context is. `fast` also
+appears there when the fast service tier is on. Permission mode `auto` is shown
+in red. The context percent turns yellow at 70% and red at 90%.
 
 Type `/` to open slash-command autocomplete; Tab accepts the highlighted
 command, and the up/down arrows move through suggestions. With a normal prompt,
-the same arrows walk previous lines from the current session. `/model` opens a
+the same arrows walk previous lines from the current session. Unknown slash
+commands and extra arguments on commands that do not take them are rejected
+instead of being sent to the model. `/model` opens a
 picker for GPT-5.6 Sol, Terra, and Luna; Tab switches to a submenu for context
 window size, effort, and the fast service tier. Left/right cycle those options,
 and Enter applies them. `/mode` opens a picker for `ask`, `auto-writes`, and
@@ -87,6 +94,7 @@ Run one request:
 ./gxx ask "explain this repository"
 ./gxx ask "run the tests and fix the failure"
 printf 'summarize README.md' | ./gxx ask
+./gxx usage
 ```
 
 Return one machine-readable result and suppress token streaming:
@@ -110,16 +118,28 @@ REPL commands:
   terminal, Tab opens a picker. You can also set it directly: `/mode auto-writes`.
   `yolo` is accepted as an alias for `auto`.
 - `/config` securely prompts for and persists the OpenAI API key.
+- `/context` shows a colored breakdown of context occupancy (instructions, user,
+  assistant, reasoning, tools, and free space). In a terminal, Tab or Enter
+  opens it as a submenu.
+- `/usage` shows this process's token usage, including cached and cache-write
+  tokens, organization spend for the current month, remaining spend quota, and
+  remaining rate-limit quota. Account spend
+  needs an OpenAI admin key (`OPENAI_ADMIN_KEY`) or a key allowed to read
+  organization usage.
 - `/clear` discards the in-memory conversation.
 - `/exit` exits.
+
+Ctrl+C during a generation cancels that turn and returns to the prompt. A second
+Ctrl+C while the turn is cancelling, or Ctrl+C at an idle prompt in a non-raw
+terminal, exits. In the line editor, Ctrl+C clears the current line.
 
 Common flags:
 
 ```text
---model string          OpenAI model (default: GXX_MODEL or gpt-5.6-sol)
---effort string         Reasoning effort (default: GXX_EFFORT or medium)
---context string        Context window size (default: GXX_CONTEXT or 272k)
---permission string     Permission mode (default: GXX_PERMISSION or ask)
+--model string          OpenAI model (default: GXX_MODEL, config.json, or gpt-5.6-sol)
+--effort string         Reasoning effort (default: GXX_EFFORT, config.json, or medium)
+--context string        Context window size (default: GXX_CONTEXT, config.json, or 272k)
+--permission string     Permission mode (default: GXX_PERMISSION, config.json, or ask)
 --fast                  Use OpenAI fast service tier
 --max-steps int         Maximum model steps (default: 12)
 --command-timeout dur   Maximum command duration (default: 2m)
@@ -139,6 +159,7 @@ Additional environment settings are available for automation:
 - `GXX_MAX_TOOL_RESULT_BYTES`
 - `GXX_MAX_SEARCH_RESULTS`
 - `GXX_PARALLEL_READS`
+- `OPENAI_ADMIN_KEY` (optional; organization spend and remaining quota on `/usage`)
 
 ## Permissions and workspace safety
 
@@ -165,11 +186,14 @@ Common secret-bearing paths such as `.env`, private keys, and credential files
 are unavailable to automatic file tools.
 
 Approval previews and streamed model output escape terminal control characters.
-Actions whose preview exceeds 16 KiB are rejected instead of executing hidden
-content. `apply_patch` stages every output first, atomically captures and
-revalidates all approved source snapshots, then commits the complete file set;
-any failure before completion restores the originals. Single-file edits are
-also cancelled if their source changes between preview and write.
+Previews longer than 16 KiB are truncated in the terminal with a size marker;
+the underlying write or command can still be approved. `apply_patch` is the
+preferred way to change existing files: it stages every output first, atomically
+captures and revalidates all approved source snapshots, then commits the
+complete file set; any failure before completion restores the originals.
+`write_file` only creates new files. Single-file edits are also cancelled if
+their source changes between preview and write. `list_files` and `search_files`
+skip common dependency directories plus patterns from `.gitignore` and `.gxxignore`.
 
 Shell commands run in the workspace with a finite timeout and sanitized
 environment through a fixed non-login `/bin/sh`, but they are **not** placed in
@@ -178,9 +202,11 @@ command before approving it.
 
 ## Privacy
 
-Each OpenAI Responses request sets `store:false`. `gxx` manually resends the
-in-memory conversation and requests encrypted reasoning content so reasoning
-models can continue correctly without `previous_response_id`.
+Each OpenAI Responses request sets `store:false`. `gxx` resends the in-memory
+conversation, including encrypted reasoning items, so GPT-5.6 can keep
+persisted reasoning (`all_turns` by default) without `previous_response_id`.
+Requests also send a stable `prompt_cache_key` and a 30-minute prompt-cache TTL
+so the instruction prefix can be reused across turns.
 
 Only files selected through tool calls are sent back to the model; the
 repository is not indexed or uploaded at startup. OpenAI still receives the

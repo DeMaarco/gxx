@@ -22,6 +22,7 @@ const (
 	pickerModels
 	pickerOptions
 	pickerModes
+	pickerContext
 )
 
 const (

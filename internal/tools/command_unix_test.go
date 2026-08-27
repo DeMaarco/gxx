@@ -41,6 +41,32 @@ func TestRunCommandScrubsProviderCredential(t *testing.T) {
 	}
 }
 
+func TestRunCommandScrubsAdminKeyAndHome(t *testing.T) {
+	t.Setenv("OPENAI_ADMIN_KEY", "admin-secret")
+	t.Setenv("HOME", "/tmp/gxx-home-should-not-leak")
+	t.Setenv("ENCRYPTION_KEY", "enc-secret")
+	root := t.TempDir()
+	registry := newTestRegistry(t, root, &staticApprover{approved: true}, Options{
+		MaxResultBytes:  4096,
+		MaxSearchResult: 10,
+		ParallelReads:   1,
+		CommandTimeout:  time.Second,
+	})
+
+	result := registry.Execute(context.Background(), []agent.ToolCall{
+		toolCall("command", "run_command", map[string]any{
+			"command":         `printf '%s %s %s' "${OPENAI_ADMIN_KEY-unset}" "${HOME-unset}" "${ENCRYPTION_KEY-unset}"`,
+			"timeout_seconds": nil,
+		}),
+	}, nil)[0]
+	if result.IsError {
+		t.Fatalf("run command failed: %s", result.Output)
+	}
+	if result.Output != "unset unset unset" {
+		t.Fatalf("command output = %q, want unset unset unset", result.Output)
+	}
+}
+
 func TestRunCommandHonorsTimeout(t *testing.T) {
 	root := t.TempDir()
 	registry := newTestRegistry(t, root, &staticApprover{approved: true}, Options{

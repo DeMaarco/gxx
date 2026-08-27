@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -12,6 +13,9 @@ type fakeModel struct {
 	inputs          []ModelInput
 	definitionCount []int
 	resetCount      int
+	closeCount      int
+	closeReason     string
+	absorbed        []ToolResult
 }
 
 func (m *fakeModel) Respond(
@@ -34,10 +38,20 @@ func (m *fakeModel) Reset() {
 	m.resetCount++
 }
 
+func (m *fakeModel) AbsorbToolResults(results []ToolResult) {
+	m.absorbed = append(m.absorbed, results...)
+}
+
+func (m *fakeModel) CloseOpenToolCalls(reason string) {
+	m.closeReason = reason
+	m.closeCount++
+}
+
 type fakeExecutor struct {
 	definitions []ToolDefinition
 	results     []ToolResult
 	calls       [][]ToolCall
+	after       func()
 }
 
 func (e *fakeExecutor) Definitions() []ToolDefinition {
@@ -50,6 +64,9 @@ func (e *fakeExecutor) Execute(
 	_ EmitFunc,
 ) []ToolResult {
 	e.calls = append(e.calls, calls)
+	if e.after != nil {
+		e.after()
+	}
 	return e.results
 }
 
@@ -116,6 +133,9 @@ func TestLoopStopsIfModelCallsToolOnFinalStep(t *testing.T) {
 	if len(executor.calls) != 0 {
 		t.Fatalf("executor was called on final step: %#v", executor.calls)
 	}
+	if model.closeCount != 1 || !strings.Contains(model.closeReason, "maximum number of steps") {
+		t.Fatalf("CloseOpenToolCalls() count = %d reason = %q", model.closeCount, model.closeReason)
+	}
 }
 
 func TestLoopResetDelegatesToModel(t *testing.T) {
@@ -139,5 +159,29 @@ func TestLoopHonorsCancelledContext(t *testing.T) {
 	}
 	if len(model.inputs) != 0 {
 		t.Fatalf("model was called after cancellation: %#v", model.inputs)
+	}
+}
+
+func TestLoopAbsorbsToolResultsWhenCancelledAfterExecute(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	model := &fakeModel{responses: []ModelResponse{{
+		ToolCalls: []ToolCall{{ID: "call-1", Name: "read_file", Arguments: json.RawMessage(`{}`)}},
+	}}}
+	executor := &fakeExecutor{
+		definitions: []ToolDefinition{{Name: "read_file", ReadOnly: true}},
+		results:     []ToolResult{{CallID: "call-1", Name: "read_file", Output: "contents"}},
+		after:       cancel,
+	}
+	loop := &Loop{Model: model, Executor: executor, MaxSteps: 3}
+
+	_, err := loop.Run(ctx, "question", nil)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run() error = %v, want context.Canceled", err)
+	}
+	if len(model.absorbed) != 1 || model.absorbed[0].Output != "contents" {
+		t.Fatalf("absorbed = %#v, want executed tool result", model.absorbed)
+	}
+	if len(model.inputs) != 1 {
+		t.Fatalf("model inputs = %#v, want only the first step", model.inputs)
 	}
 }

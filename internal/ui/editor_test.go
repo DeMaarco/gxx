@@ -10,11 +10,15 @@ import (
 
 func TestMatchingCommandsFiltersByPrefix(t *testing.T) {
 	matches := matchingCommands("/c")
-	if len(matches) != 2 || matches[0].name != "/config" || matches[1].name != "/clear" {
-		t.Fatalf("matches = %#v, want /config and /clear", matches)
+	if len(matches) != 3 || matches[0].name != "/config" || matches[1].name != "/context" || matches[2].name != "/clear" {
+		t.Fatalf("matches = %#v, want /config, /context, and /clear", matches)
 	}
 	if matchingCommands("help") != nil || matchingCommands("/help extra") != nil {
 		t.Fatal("matchingCommands() accepted a non-command prefix")
+	}
+	usage := matchingCommands("/u")
+	if len(usage) != 1 || usage[0].name != "/usage" {
+		t.Fatalf("matches = %#v, want /usage", usage)
 	}
 }
 
@@ -33,6 +37,7 @@ func TestInputStateCompletesSlashCommands(t *testing.T) {
 	for _, char := range "/c" {
 		state.insert(char)
 	}
+	state.apply(keyEvent{kind: keyDown})
 	state.apply(keyEvent{kind: keyDown})
 	state.apply(keyEvent{kind: keyTab})
 	if state.text() != "/clear" {
@@ -165,5 +170,20 @@ func TestInputStateTabOnModeCommandOpensPicker(t *testing.T) {
 	state.apply(keyEvent{kind: keyTab})
 	if state.text() != "/mode" || state.picker != pickerModes {
 		t.Fatalf("tab /mode = %q picker=%d, want mode picker", state.text(), state.picker)
+	}
+}
+
+func TestInputStateTabOnContextCommandOpensPicker(t *testing.T) {
+	var state inputState
+	for _, char := range "/context" {
+		state.insert(char)
+	}
+	state.apply(keyEvent{kind: keyTab})
+	if state.text() != "/context" || state.picker != pickerContext {
+		t.Fatalf("tab /context = %q picker=%d, want context picker", state.text(), state.picker)
+	}
+	line, _, submitted := state.apply(keyEvent{kind: keyEnter})
+	if !submitted || line != "" || state.picker != pickerClosed {
+		t.Fatalf("enter on context picker = %q picker=%d submitted=%v, want close", line, state.picker, submitted)
 	}
 }
