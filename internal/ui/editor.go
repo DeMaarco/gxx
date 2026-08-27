@@ -649,10 +649,12 @@ func (s *inputState) apply(event keyEvent) (submitted string, eof bool, handled 
 }
 
 type lineEditor struct {
-	in    *os.File
-	out   io.Writer
-	color bool
-	state inputState
+	in        *os.File
+	out       io.Writer
+	color     bool
+	columns   int
+	cursorRow int
+	state     inputState
 }
 
 func lineEditorEnabled(stdin *os.File, stdout io.Writer) bool {
@@ -689,6 +691,7 @@ func (e *lineEditor) Read(ctx context.Context, settings *REPLSettings) (string, 
 	e.state.sessionPermission = settings.PermissionMode
 	e.state.picker = pickerClosed
 	e.state.exitArmed = false
+	e.cursorRow = 0
 	e.color = settings.Color
 	if err := e.render(*settings); err != nil {
 		return "", err
@@ -770,13 +773,7 @@ func (e *lineEditor) render(settings REPLSettings) error {
 	if e.state.suggest >= len(matches) {
 		e.state.suggest = max(len(matches)-1, 0)
 	}
-	var line string
-	prefix := promptPrefix(settings)
-	line += "\r" + eraseLine + prefix + string(e.state.buffer)
-	if ghost := e.state.ghost(); ghost != "" {
-		line += paint(e.color, dim, ghost)
-	}
-	line += eraseDown + "\r\n"
+	var body strings.Builder
 	for index, command := range matches {
 		marker := "  "
 		name := command.name
@@ -785,13 +782,9 @@ func (e *lineEditor) render(settings REPLSettings) error {
 			marker = paint(e.color, cyan, "▸ ")
 			name = paint(e.color, bold+cyan, command.name)
 		}
-		line += marker + name + "  " + help + "\r\n"
+		body.WriteString(marker + name + "  " + help + "\r\n")
 	}
-	line += e.statusLine(settings)
-	up := 1 + len(matches)
-	line += fmt.Sprintf("\x1b[%dA\x1b[%dG", up, visibleWidth(prefix)+1+e.state.cursor)
-	_, err := io.WriteString(e.out, line)
-	return err
+	return e.paintFrame(settings, body.String(), len(matches), true)
 }
 
 func (e *lineEditor) renderPicker(settings REPLSettings) error {
@@ -848,14 +841,7 @@ func (e *lineEditor) renderPicker(settings REPLSettings) error {
 		}
 		body.WriteString(paint(e.color, dim, "tab options · enter apply · esc cancel") + "\r\n")
 	}
-	rows := strings.Count(body.String(), "\r\n")
-	prefix := promptPrefix(settings)
-	output := "\r" + eraseLine + prefix + string(e.state.buffer) + eraseDown + "\r\n"
-	output += body.String()
-	output += e.statusLine(settings)
-	output += fmt.Sprintf("\x1b[%dA\x1b[%dG", 1+rows, visibleWidth(prefix)+1+e.state.cursor)
-	_, err := io.WriteString(e.out, output)
-	return err
+	return e.paintFrame(settings, body.String(), strings.Count(body.String(), "\r\n"), true)
 }
 
 func (e *lineEditor) renderModePicker(settings REPLSettings) error {
@@ -881,14 +867,7 @@ func (e *lineEditor) renderModePicker(settings REPLSettings) error {
 		body.WriteString(marker + label + note + "\r\n")
 	}
 	body.WriteString(paint(e.color, dim, "enter apply · esc cancel") + "\r\n")
-	rows := strings.Count(body.String(), "\r\n")
-	prefix := promptPrefix(settings)
-	output := "\r" + eraseLine + prefix + string(e.state.buffer) + eraseDown + "\r\n"
-	output += body.String()
-	output += e.statusLine(settings)
-	output += fmt.Sprintf("\x1b[%dA\x1b[%dG", 1+rows, visibleWidth(prefix)+1+e.state.cursor)
-	_, err := io.WriteString(e.out, output)
-	return err
+	return e.paintFrame(settings, body.String(), strings.Count(body.String(), "\r\n"), true)
 }
 
 func (e *lineEditor) renderContextPicker(settings REPLSettings) error {
@@ -898,18 +877,56 @@ func (e *lineEditor) renderContextPicker(settings REPLSettings) error {
 		body.WriteString(line + "\r\n")
 	}
 	body.WriteString(paint(e.color, dim, "enter / esc close") + "\r\n")
-	rows := strings.Count(body.String(), "\r\n")
+	return e.paintFrame(settings, body.String(), strings.Count(body.String(), "\r\n"), true)
+}
+
+func (e *lineEditor) paintFrame(settings REPLSettings, body string, bodyRows int, ghost bool) error {
+	width := e.termWidth()
 	prefix := promptPrefix(settings)
-	output := "\r" + eraseLine + prefix + string(e.state.buffer) + eraseDown + "\r\n"
-	output += body.String()
-	output += e.statusLine(settings)
-	output += fmt.Sprintf("\x1b[%dA\x1b[%dG", 1+rows, visibleWidth(prefix)+1+e.state.cursor)
-	_, err := io.WriteString(e.out, output)
+	text := string(e.state.buffer)
+	ghostText := ""
+	if ghost {
+		ghostText = e.state.ghost()
+	}
+	prefixW := visibleWidth(prefix)
+	textW := visibleWidth(text) + visibleWidth(ghostText)
+	cursorW := visibleWidth(string(e.state.buffer[:e.state.cursor]))
+	cells := prefixW + textW
+	promptRows := promptRowCount(cells, width)
+	cursorRow, cursorCol := promptCursorPos(prefixW+cursorW, width)
+
+	var out strings.Builder
+	out.WriteString(promptHome(e.cursorRow))
+	out.WriteString(prefix)
+	out.WriteString(text)
+	if ghostText != "" {
+		out.WriteString(paint(e.color, dim, ghostText))
+	}
+	if width > 0 && cells > 0 && cells%width == 0 {
+		out.WriteByte('\n')
+	}
+	out.WriteString("\r\n")
+	out.WriteString(body)
+	out.WriteString(e.statusLine(settings))
+	up := promptRows - cursorRow + bodyRows
+	if up > 0 {
+		fmt.Fprintf(&out, "\x1b[%dA", up)
+	}
+	fmt.Fprintf(&out, "\x1b[%dG", cursorCol+1)
+	e.cursorRow = cursorRow
+	_, err := io.WriteString(e.out, out.String())
 	return err
 }
 
 func (e *lineEditor) finish(settings REPLSettings, line string) {
-	_, _ = io.WriteString(e.out, "\r"+eraseLine+promptPrefix(settings)+line+eraseDown+"\r\n")
+	var out strings.Builder
+	out.WriteString(promptHome(e.cursorRow))
+	out.WriteString(promptPrefix(settings))
+	out.WriteString(line)
+	out.WriteString(eraseDown)
+	out.WriteByte('\n')
+	e.cursorRow = 0
+	_, _ = io.WriteString(e.out, out.String())
 }
 
 func (e *lineEditor) statusLine(settings REPLSettings) string {
@@ -919,8 +936,64 @@ func (e *lineEditor) statusLine(settings REPLSettings) string {
 	return formatStatus(settings)
 }
 
+func (e *lineEditor) termWidth() int {
+	if e.columns > 0 {
+		return e.columns
+	}
+	if file, ok := e.out.(*os.File); ok {
+		if width, _, err := term.GetSize(int(file.Fd())); err == nil && width > 1 {
+			return width
+		}
+	}
+	if e.in != nil {
+		if width, _, err := term.GetSize(int(e.in.Fd())); err == nil && width > 1 {
+			return width
+		}
+	}
+	return 80
+}
+
+func promptRowCount(cells, width int) int {
+	if width < 1 {
+		return 1
+	}
+	if cells < 1 {
+		return 1
+	}
+	rows := (cells + width - 1) / width
+	if cells%width == 0 {
+		rows++
+	}
+	return rows
+}
+
+func promptCursorPos(cells, width int) (row, col int) {
+	if width < 1 {
+		return 0, max(cells, 0)
+	}
+	if cells < 0 {
+		cells = 0
+	}
+	return cells / width, cells % width
+}
+
+func promptHome(cursorRow int) string {
+	if cursorRow <= 0 {
+		return "\r" + eraseDown
+	}
+	return fmt.Sprintf("\r\x1b[%dA%s", cursorRow, eraseDown)
+}
+
+func renderPromptFrame(out io.Writer, settings REPLSettings, text string, width int, prevCursorRow int) (int, error) {
+	e := &lineEditor{out: out, columns: width, cursorRow: prevCursorRow, color: settings.Color}
+	e.state.setText(text)
+	if err := e.render(settings); err != nil {
+		return 0, err
+	}
+	return e.cursorRow, nil
+}
+
 const (
-	eraseLine = "\x1b[2K"
 	eraseDown = "\x1b[J"
 )
 

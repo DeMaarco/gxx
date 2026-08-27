@@ -109,6 +109,62 @@ func TestReadKeyParsesArrowsAndRunes(t *testing.T) {
 	}
 }
 
+func TestPromptWrapLayoutCountsRows(t *testing.T) {
+	if rows := ui.PromptRowCount(0, 20); rows != 1 {
+		t.Fatalf("empty = %d rows", rows)
+	}
+	if rows := ui.PromptRowCount(19, 20); rows != 1 {
+		t.Fatalf("short = %d rows", rows)
+	}
+	if rows := ui.PromptRowCount(20, 20); rows != 2 {
+		t.Fatalf("exact fill = %d rows, want phantom row", rows)
+	}
+	if rows := ui.PromptRowCount(21, 20); rows != 2 {
+		t.Fatalf("wrapped = %d rows", rows)
+	}
+	row, col := ui.PromptCursorPos(2, 20)
+	if row != 0 || col != 2 {
+		t.Fatalf("start cursor = (%d,%d), want (0,2)", row, col)
+	}
+	row, col = ui.PromptCursorPos(27, 20)
+	if row != 1 || col != 7 {
+		t.Fatalf("wrapped cursor = (%d,%d), want (1,7)", row, col)
+	}
+}
+
+func TestPromptFrameHomesBeforeRedrawWhenWrapped(t *testing.T) {
+	settings := ui.REPLSettings{
+		Model:          "gpt-5.6-sol",
+		PermissionMode: config.PermissionAsk,
+		Effort:         "medium",
+	}
+	var first bytes.Buffer
+	text := strings.Repeat("x", 40)
+	cursorRow, err := ui.RenderPromptFrame(&first, settings, text, 20, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cursorRow < 1 {
+		t.Fatalf("cursor row = %d, want wrapped", cursorRow)
+	}
+	if strings.Count(first.String(), "> "+text) != 1 {
+		t.Fatalf("first frame reprinted the prompt: %q", first.String())
+	}
+
+	var second bytes.Buffer
+	longer := text + "yz"
+	if _, err := ui.RenderPromptFrame(&second, settings, longer, 20, cursorRow); err != nil {
+		t.Fatal(err)
+	}
+	got := second.String()
+	if !strings.HasPrefix(got, ui.PromptHome(cursorRow)) {
+		t.Fatalf("wrapped redraw should home to the first prompt row, got %q", got)
+	}
+	if strings.Count(got, "> "+longer) != 1 {
+		t.Fatalf("redraw reprinted the prompt: %q", got)
+	}
+}
+
 func TestTogglePlanFlipsSessionFlag(t *testing.T) {
 	var applied bool
 	settings := ui.REPLSettings{

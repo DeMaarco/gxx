@@ -72,6 +72,10 @@ var (
 	IsModePickerText    = isModePickerText
 	ReadKey             = readKeyForTest
 	ReadLine            = readLine
+	PromptRowCount      = promptRowCount
+	PromptCursorPos     = promptCursorPos
+	PromptHome          = promptHome
+	RenderPromptFrame   = renderPromptFrame
 )
 
 type ModelCommand = modelCommand
