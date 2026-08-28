@@ -511,6 +511,50 @@ func TestProviderSendsContextAndFastServiceTier(t *testing.T) {
 	}
 }
 
+func TestProviderOmitsEncryptedReasoningInEcoMax(t *testing.T) {
+	var body []byte
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/responses" {
+			http.NotFound(writer, request)
+			return
+		}
+		body, _ = io.ReadAll(request.Body)
+		writer.Header().Set("Content-Type", "text/event-stream")
+		writeSSE(t, writer, map[string]any{
+			"type": "response.completed",
+			"response": responseFixture([]any{map[string]any{
+				"id":     "msg_1",
+				"type":   "message",
+				"role":   "assistant",
+				"status": "completed",
+				"content": []any{map[string]any{
+					"type": "output_text", "text": "ok", "annotations": []any{},
+				}},
+			}}),
+		})
+		_, _ = fmt.Fprint(writer, "data: [DONE]\n\n")
+	}))
+	defer server.Close()
+
+	provider := openai.New("test-key", "gpt-5.6-sol", "instructions", time.Second)
+	provider.SetTokenBudget(3, 1, 3, 1, 256, false)
+	provider.SetClient(openaisdk.NewClient(
+		option.WithAPIKey("test-key"),
+		option.WithBaseURL(server.URL+"/"),
+	))
+	if _, err := provider.Respond(
+		context.Background(),
+		agent.ModelInput{UserText: "hello"},
+		nil,
+		nil,
+	); err != nil {
+		t.Fatalf("Respond() error = %v", err)
+	}
+	if strings.Contains(string(body), "reasoning.encrypted_content") {
+		t.Fatalf("request = %s, did not want encrypted reasoning include", body)
+	}
+}
+
 func TestProviderContextBudgetUsesWindowSize(t *testing.T) {
 	provider := openai.New("test-key", "gpt-5.6-sol", strings.Repeat("x", 64), time.Second)
 	provider.SetContext("32k")

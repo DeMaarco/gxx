@@ -43,17 +43,44 @@ If the goal is ambiguous, ask clarifying questions before planning.
 When ready, present: goal, approach, files to change, risks, and how to verify.
 Wait for the user to leave plan mode (Shift+Tab) before implementing.`
 
+const (
+	ecoInstructions1 = `Eco lite: no filler or hedging. Keep articles and full sentences. Tight professional. Code, paths, errors exact. Fire tools with no preamble.`
+	ecoInstructions2 = `Eco full: talk like smart caveman. Drop articles (a/an/the), filler, pleasantries, hedging. Fragments OK. Technical terms exact. Code blocks unchanged. Never drop not/never/no. Fire tools direct. No narration between calls.`
+	ecoInstructions3 = `Eco ultra: one word when one word enough. Strip extra conjunctions if meaning stay clear. State each fact once. Code, API names, errors never touch. No invented abbreviations. Fire tools direct.`
+)
+
 // SystemPrompt builds a compact, stable instruction prefix for prompt caching.
 func SystemPrompt(ws *workspace.Workspace, plan bool) string {
+	return SystemPromptWithEco(ws, plan, 0)
+}
+
+// SystemPromptWithEco adds a short token-saving instruction for eco 1–3.
+func SystemPromptWithEco(ws *workspace.Workspace, plan bool, eco int) string {
 	base := agentInstructions
 	if plan {
 		base = planInstructions
+	}
+	if extra := ecoInstructions(eco); extra != "" {
+		base = base + "\n" + extra
 	}
 	instructions := readRootInstructions(ws)
 	if instructions == "" {
 		return base
 	}
 	return fmt.Sprintf("%s\n\nProject instructions from AGENTS.md:\n%s", base, instructions)
+}
+
+func ecoInstructions(level int) string {
+	switch level {
+	case 1:
+		return ecoInstructions1
+	case 2:
+		return ecoInstructions2
+	case 3:
+		return ecoInstructions3
+	default:
+		return ""
+	}
 }
 
 func readRootInstructions(ws *workspace.Workspace) string {

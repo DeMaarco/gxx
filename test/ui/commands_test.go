@@ -31,6 +31,7 @@ func TestLookupSlashCommand(t *testing.T) {
 		{line: "/quit", name: "/exit"},
 		{line: "/model terra", name: "/model"},
 		{line: "/mode auto", name: "/mode"},
+		{line: "/eco 2", name: "/eco"},
 		{line: "/foo", wantErr: "unknown command /foo"},
 		{line: "/help extra", wantErr: "unexpected argument for /help"},
 		{line: "/clear now", wantErr: "unexpected argument for /clear"},

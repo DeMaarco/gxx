@@ -117,6 +117,36 @@ func TestFormatStatusShowsPlan(t *testing.T) {
 	}
 }
 
+func TestPromptPrefixShowsEcoInGreen(t *testing.T) {
+	if prefix := ui.PromptPrefix(ui.REPLSettings{Eco: 1}); prefix != "> eco lite " {
+		t.Fatalf("eco prefix = %q, want %q", prefix, "> eco lite ")
+	}
+	if prefix := ui.PromptPrefix(ui.REPLSettings{Eco: 2}); prefix != "> eco full " {
+		t.Fatalf("eco 2 prefix = %q, want %q", prefix, "> eco full ")
+	}
+	if prefix := ui.PromptPrefix(ui.REPLSettings{Plan: true, Eco: 3}); prefix != "> plan eco ultra " {
+		t.Fatalf("plan+eco prefix = %q", prefix)
+	}
+	colored := ui.PromptPrefix(ui.REPLSettings{Eco: 2, Color: true})
+	if !strings.Contains(colored, ui.Paint(true, ui.ColorGreen, "eco full")) {
+		t.Fatalf("colored eco prefix = %q, want green eco full", colored)
+	}
+}
+
+func TestFormatStatusIgnoresEcoForModel(t *testing.T) {
+	got := ui.FormatStatus(ui.REPLSettings{
+		Model:          "gpt-5.6-luna",
+		PermissionMode: config.PermissionAsk,
+		Effort:         "max",
+		Context:        "1m",
+		Fast:           true,
+		Eco:            2,
+	})
+	if got != "gpt-5.6-luna · ask · max · 1m · 0% · fast" {
+		t.Fatalf("eco must not change status model = %q", got)
+	}
+}
+
 func TestWriteChromeShowsPlanAfterPrompt(t *testing.T) {
 	var output bytes.Buffer
 	err := ui.WriteChrome(&output, ui.REPLSettings{

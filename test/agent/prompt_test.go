@@ -101,6 +101,27 @@ func TestSystemPromptPlanModeUsesReadOnlyInstructions(t *testing.T) {
 	}
 }
 
+func TestSystemPromptEcoAddsSaverInstructions(t *testing.T) {
+	root := t.TempDir()
+	ws, err := workspace.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ws.Close()
+
+	plain := agent.SystemPrompt(ws, false)
+	if strings.Contains(plain, "Eco lite:") {
+		t.Fatalf("default prompt included eco text: %q", plain)
+	}
+	eco := agent.SystemPromptWithEco(ws, false, 3)
+	if !strings.Contains(eco, "Eco ultra:") {
+		t.Fatalf("eco prompt = %q, want Eco ultra instructions", eco)
+	}
+	if !strings.Contains(eco, "make the in-scope local changes") {
+		t.Fatalf("eco prompt dropped agent instructions")
+	}
+}
+
 func TestSystemPromptReloadsUpdatedAgentsFile(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "AGENTS.md"), []byte("First instructions."), 0o644); err != nil {

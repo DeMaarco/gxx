@@ -66,11 +66,14 @@ var (
 	CatalogModels       = catalogModels
 	ParseModelCommand   = parseModelCommand
 	ParseModeCommand    = parseModeCommand
+	ParseEcoCommand     = parseEcoCommand
 	EncodeModelCommand  = encodeModelCommand
 	EncodeModeCommand   = encodeModeCommand
 	MatchingCommands    = matchingCommands
 	LookupSlashCommand  = lookupSlashCommand
 	TogglePlan          = togglePlan
+	EcoLabel            = ecoLabel
+	FormatEcoStatus     = formatEcoStatus
 	ContextPercentColor = contextPercentColor
 	IsModePickerText    = isModePickerText
 	ReadKey             = readKeyForTest
@@ -82,6 +85,7 @@ var (
 
 type ModelCommand = modelCommand
 type ModeCommand = modeCommand
+type EcoCommand = ecoCommand
 type KeyKind = keyKind
 
 type RunningTool struct {

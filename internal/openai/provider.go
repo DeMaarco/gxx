@@ -33,6 +33,7 @@ import (
 	"github.com/openai/openai-go/v3/shared"
 
 	"gxx/internal/agent"
+	"gxx/internal/caveman"
 	"gxx/internal/config"
 )
 
@@ -58,6 +59,12 @@ type Provider struct {
 	rateLimit       agent.RateLimit
 	contextUsage    agent.ContextUsage
 	lastInputTokens int64
+	ecoLevel        int
+	compactNumer    int
+	compactDenom    int
+	omitReasoning   bool
+	ecoToolKeep     int
+	ecoToolClip     int
 	httpClient      *http.Client
 	baseURL         string
 }
@@ -72,6 +79,8 @@ func New(apiKey, model, instructions string, timeout time.Duration) *Provider {
 		contextTokens: config.ContextTokens(config.DefaultContext),
 		instructions:  instructions,
 		timeout:       timeout,
+		compactNumer:  2,
+		compactDenom:  3,
 		httpClient:    &http.Client{Timeout: usageFetchTimeout},
 		baseURL:       defaultAPIBaseURL,
 	}
@@ -114,6 +123,22 @@ func (p *Provider) SetFast(fast bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.fast = fast
+}
+
+// SetTokenBudget controls how aggressively each request's input is slimmed.
+func (p *Provider) SetTokenBudget(ecoLevel, compactNumer, compactDenom, toolKeep, toolClip int, includeReasoning bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.ecoLevel = ecoLevel
+	if compactNumer <= 0 || compactDenom <= 0 {
+		compactNumer, compactDenom = 2, 3
+	}
+	p.compactNumer = compactNumer
+	p.compactDenom = compactDenom
+	p.omitReasoning = !includeReasoning
+	p.ecoToolKeep = toolKeep
+	p.ecoToolClip = toolClip
+	p.refreshContextLocked()
 }
 
 func (p *Provider) SetInstructions(instructions string) {
@@ -170,7 +195,7 @@ func (p *Provider) Respond(
 	staged := append([]responses.ResponseInputItemUnionParam(nil), p.history...)
 	generation := p.generation
 	timeout := p.timeout
-	params := p.requestParamsLocked(staged, definitions, input.FinalStep)
+	params := p.requestParamsLocked(slimInput(staged, p.ecoLevel, p.ecoToolKeep, p.ecoToolClip), definitions, input.FinalStep)
 	client := p.client
 	p.refreshContextLocked()
 	p.mu.Unlock()
@@ -251,13 +276,14 @@ func (p *Provider) requestParamsLocked(
 	definitions []agent.ToolDefinition,
 	finalStep bool,
 ) responses.ResponseNewParams {
+	instructions := compressInstructions(p.instructions, p.ecoLevel)
 	params := responses.ResponseNewParams{
 		Model:             shared.ResponsesModel(p.model),
-		Instructions:      openaisdk.String(p.instructions),
+		Instructions:      openaisdk.String(instructions),
 		Store:             openaisdk.Bool(false),
 		ParallelToolCalls: openaisdk.Bool(true),
 		Truncation:        responses.ResponseNewParamsTruncationDisabled,
-		PromptCacheKey:    openaisdk.String(promptCacheKey(p.model, p.instructions)),
+		PromptCacheKey:    openaisdk.String(promptCacheKey(p.model, instructions)),
 		PromptCacheOptions: responses.ResponseNewParamsPromptCacheOptions{
 			Mode: "implicit",
 			Ttl:  "30m",
@@ -265,13 +291,15 @@ func (p *Provider) requestParamsLocked(
 		Reasoning: shared.ReasoningParam{
 			Effort: shared.ReasoningEffort(p.effort),
 		},
-		Include: []responses.ResponseIncludable{
-			responses.ResponseIncludableReasoningEncryptedContent,
-		},
 		Input: responses.ResponseNewParamsInputUnion{
 			OfInputItemList: staged,
 		},
-		Tools: toolParams(definitions),
+		Tools: toolParams(definitions, p.ecoLevel),
+	}
+	if !p.omitReasoning {
+		params.Include = []responses.ResponseIncludable{
+			responses.ResponseIncludableReasoningEncryptedContent,
+		}
 	}
 	if finalStep {
 		params.ToolChoice = responses.ResponseNewParamsToolChoiceUnion{
@@ -347,7 +375,7 @@ func (p *Provider) Reset() {
 	p.refreshContextLocked()
 }
 
-func toolParams(definitions []agent.ToolDefinition) []responses.ToolUnionParam {
+func toolParams(definitions []agent.ToolDefinition, eco int) []responses.ToolUnionParam {
 	if len(definitions) == 0 {
 		// An empty slice serializes to "tools": [], which withdraws the tool
 		// namespace. Omit the field instead.
@@ -355,15 +383,51 @@ func toolParams(definitions []agent.ToolDefinition) []responses.ToolUnionParam {
 	}
 	params := make([]responses.ToolUnionParam, 0, len(definitions))
 	for _, definition := range definitions {
+		description := definition.Description
+		parameters := definition.Parameters
+		if eco > 0 {
+			description = caveman.Compress(description, eco)
+			parameters = compressToolParameters(parameters, eco)
+		}
 		function := responses.FunctionToolParam{
 			Name:        definition.Name,
-			Description: openaisdk.String(definition.Description),
-			Parameters:  definition.Parameters,
+			Description: openaisdk.String(description),
+			Parameters:  parameters,
 			Strict:      openaisdk.Bool(true),
 		}
 		params = append(params, responses.ToolUnionParam{OfFunction: &function})
 	}
 	return params
+}
+
+func compressToolParameters(parameters map[string]any, eco int) map[string]any {
+	if len(parameters) == 0 {
+		return parameters
+	}
+	compressed, ok := caveman.CompressDescriptions(cloneJSON(parameters), eco).(map[string]any)
+	if !ok {
+		return parameters
+	}
+	return compressed
+}
+
+func cloneJSON(value map[string]any) map[string]any {
+	if value == nil {
+		return nil
+	}
+	data, err := json.Marshal(value)
+	if err != nil {
+		return value
+	}
+	var cloned map[string]any
+	if json.Unmarshal(data, &cloned) != nil {
+		return value
+	}
+	return cloned
+}
+
+func compressInstructions(text string, level int) string {
+	return caveman.Compress(text, level)
 }
 
 func outputItemParam(item responses.ResponseOutputItemUnion) (responses.ResponseInputItemUnionParam, bool) {

@@ -91,6 +91,10 @@ func (r *Registry) Plan() bool {
 	return r.plan.Load()
 }
 
+func (r *Registry) SetMaxResultBytes(n int) {
+	r.maxResultBytes = max(n, 1024)
+}
+
 func (r *Registry) Definitions() []agent.ToolDefinition {
 	order := []string{
 		"list_files",

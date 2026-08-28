@@ -100,6 +100,92 @@ func TestUnmatchedCallIDsTracksOpenFunctionCalls(t *testing.T) {
 	}
 }
 
+func TestSlimInputClipsOldToolOutput(t *testing.T) {
+	items := []responses.ResponseInputItemUnionParam{
+		responses.ResponseInputItemParamOfMessage("old", responses.EasyInputMessageRoleUser),
+		responses.ResponseInputItemParamOfFunctionCallOutput("call_1", strings.Repeat("a", 80)),
+		responses.ResponseInputItemParamOfMessage("task", responses.EasyInputMessageRoleUser),
+		responses.ResponseInputItemParamOfFunctionCallOutput("call_2", strings.Repeat("b", 80)),
+	}
+	got := openai.SlimInput(items, 1, 0, 40)
+	data, _ := json.Marshal(got[1])
+	if !strings.Contains(string(data), "eco clipped") {
+		t.Fatalf("old tool output = %s, want clipped", data)
+	}
+	data, _ = json.Marshal(got[3])
+	if strings.Contains(string(data), "eco clipped") {
+		t.Fatalf("current-turn tool output was clipped: %s", data)
+	}
+}
+
+func TestClipOldToolOutputsKeepsCurrentTurn(t *testing.T) {
+	items := []responses.ResponseInputItemUnionParam{
+		responses.ResponseInputItemParamOfMessage("old", responses.EasyInputMessageRoleUser),
+		responses.ResponseInputItemParamOfFunctionCallOutput("old_1", strings.Repeat("a", 80)),
+		responses.ResponseInputItemParamOfFunctionCallOutput("old_2", strings.Repeat("b", 80)),
+		responses.ResponseInputItemParamOfMessage("now", responses.EasyInputMessageRoleUser),
+		responses.ResponseInputItemParamOfFunctionCallOutput("new_1", strings.Repeat("c", 80)),
+		responses.ResponseInputItemParamOfFunctionCallOutput("new_2", strings.Repeat("d", 80)),
+	}
+	got := openai.ClipOldToolOutputs(items, 1, 40)
+	old1, _ := json.Marshal(got[1])
+	old2, _ := json.Marshal(got[2])
+	new1, _ := json.Marshal(got[4])
+	new2, _ := json.Marshal(got[5])
+	if !strings.Contains(string(old1), "eco clipped") {
+		t.Fatalf("older prior-turn output = %s, want clipped", old1)
+	}
+	if strings.Contains(string(old2), "eco clipped") {
+		t.Fatalf("kept prior-turn output was clipped: %s", old2)
+	}
+	if strings.Contains(string(new1), "eco clipped") || strings.Contains(string(new2), "eco clipped") {
+		t.Fatalf("current-turn outputs were clipped: %s %s", new1, new2)
+	}
+}
+
+func TestSlimInputLevelThreeDropsReasoning(t *testing.T) {
+	items := []responses.ResponseInputItemUnionParam{
+		responses.ResponseInputItemParamOfMessage(strings.Repeat("old prompt ", 80), responses.EasyInputMessageRoleUser),
+		{OfReasoning: &responses.ResponseReasoningItemParam{ID: "rs_1"}},
+		responses.ResponseInputItemParamOfMessage("latest", responses.EasyInputMessageRoleUser),
+	}
+	got := openai.SlimInput(items, 3, 1, 256)
+	all, _ := json.Marshal(got)
+	if strings.Contains(string(all), "rs_1") {
+		t.Fatalf("level 3 kept reasoning: %s", all)
+	}
+	if !strings.Contains(string(all), "latest") {
+		t.Fatalf("level 3 dropped the current prompt: %s", all)
+	}
+}
+
+func TestKeepLatestReasoningDropsOlderBlobs(t *testing.T) {
+	items := []responses.ResponseInputItemUnionParam{
+		responses.ResponseInputItemParamOfMessage("task", responses.EasyInputMessageRoleUser),
+		{OfReasoning: &responses.ResponseReasoningItemParam{ID: "rs_1"}},
+		responses.ResponseInputItemParamOfFunctionCall(`{}`, "call_1", "read_file"),
+		{OfReasoning: &responses.ResponseReasoningItemParam{ID: "rs_2"}},
+	}
+	got := openai.KeepLatestReasoning(items)
+	if len(got) != 3 {
+		t.Fatalf("len = %d, want 3", len(got))
+	}
+	if got[2].OfReasoning == nil || got[2].OfReasoning.ID != "rs_2" {
+		t.Fatalf("kept = %#v, want latest reasoning", got)
+	}
+}
+
+func TestDropAllReasoning(t *testing.T) {
+	items := []responses.ResponseInputItemUnionParam{
+		responses.ResponseInputItemParamOfMessage("task", responses.EasyInputMessageRoleUser),
+		{OfReasoning: &responses.ResponseReasoningItemParam{ID: "rs_1"}},
+	}
+	got := openai.DropAllReasoning(items)
+	if len(got) != 1 || got[0].OfMessage == nil {
+		t.Fatalf("got = %#v, want user message only", got)
+	}
+}
+
 func TestSummarizeDroppedIncludesToolsAndErrors(t *testing.T) {
 	items := []responses.ResponseInputItemUnionParam{
 		responses.ResponseInputItemParamOfMessage("inspect the repo", responses.EasyInputMessageRoleUser),

@@ -22,6 +22,7 @@ import (
 	"github.com/openai/openai-go/v3/responses"
 
 	"gxx/internal/agent"
+	"gxx/internal/caveman"
 )
 
 const (
@@ -154,7 +155,163 @@ func (p *Provider) compactTarget() int64 {
 	if p.contextTokens <= 0 {
 		return int64(fallbackHistoryItems / 2)
 	}
-	return int64(p.contextTokens) * 2 / 3
+	numer := p.compactNumer
+	denom := p.compactDenom
+	if numer <= 0 || denom <= 0 {
+		numer, denom = 2, 3
+	}
+	return int64(p.contextTokens) * int64(numer) / int64(denom)
+}
+
+func slimInput(items []responses.ResponseInputItemUnionParam, level, keep, clip int) []responses.ResponseInputItemUnionParam {
+	if level <= 0 {
+		return items
+	}
+	items = dropOldReasoning(items)
+	items = compressInputProse(items, level)
+	switch {
+	case level >= 3:
+		items = dropAllReasoning(items)
+		items = clipOldToolOutputs(items, keep, clip)
+		items = clipOldUserMessages(items, 1, 400)
+	case level >= 2:
+		items = keepLatestReasoning(items)
+		items = clipOldToolOutputs(items, keep, clip)
+	default:
+		items = clipOldToolOutputs(items, keep, clip)
+	}
+	return items
+}
+
+func compressInputProse(items []responses.ResponseInputItemUnionParam, level int) []responses.ResponseInputItemUnionParam {
+	lastUser := -1
+	for index, item := range items {
+		if itemKind(item) == "user" {
+			lastUser = index
+		}
+	}
+	out := append([]responses.ResponseInputItemUnionParam(nil), items...)
+	for index, item := range out {
+		if index == lastUser {
+			continue
+		}
+		if text := userMessageText(item); text != "" {
+			compressed := caveman.Compress(text, level)
+			if compressed != text {
+				out[index] = responses.ResponseInputItemParamOfMessage(
+					compressed,
+					responses.EasyInputMessageRoleUser,
+				)
+			}
+			continue
+		}
+		id, _, isOutput := functionCallID(item)
+		if !isOutput {
+			continue
+		}
+		text := functionCallOutput(item)
+		compressed := caveman.Compress(text, level)
+		if compressed != text {
+			out[index] = responses.ResponseInputItemParamOfFunctionCallOutput(id, compressed)
+		}
+	}
+	return out
+}
+
+func clipOldToolOutputs(items []responses.ResponseInputItemUnionParam, keep, maxBytes int) []responses.ResponseInputItemUnionParam {
+	if maxBytes <= 0 {
+		return items
+	}
+	if keep < 0 {
+		keep = 0
+	}
+	lastUser := -1
+	for index, item := range items {
+		if itemKind(item) == "user" {
+			lastUser = index
+		}
+	}
+	indexes := make([]int, 0, 8)
+	for index, item := range items {
+		if lastUser >= 0 && index > lastUser {
+			continue
+		}
+		if _, _, isOutput := functionCallID(item); isOutput {
+			indexes = append(indexes, index)
+		}
+	}
+	clipCount := len(indexes) - keep
+	if clipCount <= 0 {
+		return items
+	}
+	out := append([]responses.ResponseInputItemUnionParam(nil), items...)
+	for _, index := range indexes[:clipCount] {
+		id, _, _ := functionCallID(out[index])
+		text := functionCallOutput(out[index])
+		if len(text) <= maxBytes {
+			continue
+		}
+		clipped := clipBytes(text, maxBytes)
+		if maxBytes > 24 {
+			clipped = clipBytes(text, maxBytes-18) + "\n… [eco clipped]"
+		}
+		out[index] = responses.ResponseInputItemParamOfFunctionCallOutput(id, clipped)
+	}
+	return out
+}
+
+func clipOldUserMessages(items []responses.ResponseInputItemUnionParam, keep, maxRunes int) []responses.ResponseInputItemUnionParam {
+	if maxRunes <= 0 {
+		return items
+	}
+	indexes := userIndexes(items)
+	clipCount := len(indexes) - keep
+	if clipCount <= 0 {
+		return items
+	}
+	out := append([]responses.ResponseInputItemUnionParam(nil), items...)
+	for _, index := range indexes[:clipCount] {
+		text := userMessageText(out[index])
+		if text == "" || utf8.RuneCountInString(text) <= maxRunes {
+			continue
+		}
+		out[index] = responses.ResponseInputItemParamOfMessage(
+			clipRunes(text, maxRunes),
+			responses.EasyInputMessageRoleUser,
+		)
+	}
+	return out
+}
+
+func dropAllReasoning(items []responses.ResponseInputItemUnionParam) []responses.ResponseInputItemUnionParam {
+	kept := make([]responses.ResponseInputItemUnionParam, 0, len(items))
+	for _, item := range items {
+		if item.OfReasoning != nil {
+			continue
+		}
+		kept = append(kept, item)
+	}
+	return kept
+}
+
+func keepLatestReasoning(items []responses.ResponseInputItemUnionParam) []responses.ResponseInputItemUnionParam {
+	last := -1
+	for index, item := range items {
+		if item.OfReasoning != nil {
+			last = index
+		}
+	}
+	if last < 0 {
+		return items
+	}
+	kept := make([]responses.ResponseInputItemUnionParam, 0, len(items))
+	for index, item := range items {
+		if item.OfReasoning != nil && index != last {
+			continue
+		}
+		kept = append(kept, item)
+	}
+	return kept
 }
 
 func dropOldReasoning(items []responses.ResponseInputItemUnionParam) []responses.ResponseInputItemUnionParam {

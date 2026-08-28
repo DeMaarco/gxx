@@ -605,3 +605,65 @@ func TestRunREPLAppliesModeCommand(t *testing.T) {
 		t.Fatalf("synced = %+v", synced)
 	}
 }
+
+func TestRunREPLAppliesEcoCommand(t *testing.T) {
+	model := &replModel{}
+	loop := &agent.Loop{Model: model, Executor: emptyExecutor{}, MaxSteps: 2}
+	input := bufio.NewReader(strings.NewReader("/eco 2\n/eco off\n/exit\n"))
+	var output bytes.Buffer
+	var ecoLevels []int
+	synced := 0
+
+	err := ui.RunREPL(
+		context.Background(),
+		loop,
+		input,
+		ui.NewRenderer(&output),
+		&output,
+		ui.REPLSettings{
+			Version:          "0.0.1",
+			Model:            "gpt-5.6-luna",
+			PermissionMode:   config.PermissionAsk,
+			Effort:           "max",
+			Context:          "1m",
+			Fast:             true,
+			Workspace:        "/workspace",
+			APIKeyConfigured: true,
+			SetEco: func(level int) error {
+				ecoLevels = append(ecoLevels, level)
+				return nil
+			},
+			SyncSession: func(session ui.REPLSettings) error {
+				synced++
+				return nil
+			},
+		},
+	)
+	if err != nil {
+		t.Fatalf("RunREPL() error = %v", err)
+	}
+	text := output.String()
+	for _, expected := range []string{
+		"eco full · caveman input · model unchanged",
+		"* eco full",
+		"eco off",
+		"> eco full",
+		"gpt-5.6-luna · ask · max · 1m · 0% · fast",
+	} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("output = %q, want %q", text, expected)
+		}
+	}
+	if strings.Contains(text, "Conversation cleared.") {
+		t.Fatalf("eco must not reset the conversation: %q", text)
+	}
+	if model.resetCount != 0 {
+		t.Fatalf("reset count = %d, want 0", model.resetCount)
+	}
+	if synced != 0 {
+		t.Fatalf("eco should not persist session, synced = %d", synced)
+	}
+	if len(ecoLevels) != 2 || ecoLevels[0] != 2 || ecoLevels[1] != 0 {
+		t.Fatalf("eco levels = %v", ecoLevels)
+	}
+}

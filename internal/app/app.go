@@ -37,7 +37,7 @@ import (
 	"gxx/internal/workspace"
 )
 
-var Version = "0.0.9"
+var Version = "0.0.10"
 
 type runtime struct {
 	config    config.Config
@@ -48,6 +48,7 @@ type runtime struct {
 	provider  *openaiProvider.Provider
 	policy    *approval.Policy
 	registry  *tools.Registry
+	eco       int
 }
 
 type jsonResult struct {
@@ -410,14 +411,18 @@ func replSettings(rt *runtime, stdin io.Reader, stdout io.Writer) ui.REPLSetting
 			if rt.registry != nil {
 				plan = rt.registry.Plan()
 			}
-			rt.provider.SetInstructions(agent.SystemPrompt(rt.workspace, plan))
+			rt.provider.SetInstructions(agent.SystemPromptWithEco(rt.workspace, plan, rt.eco))
 		},
 		SetPlan: func(plan bool) error {
-			rt.provider.SetInstructions(agent.SystemPrompt(rt.workspace, plan))
+			rt.provider.SetInstructions(agent.SystemPromptWithEco(rt.workspace, plan, rt.eco))
 			if rt.registry != nil {
 				rt.registry.SetPlan(plan)
 			}
 			return nil
+		},
+		SetEco: func(level int) error {
+			rt.eco = level
+			return applyEcoRuntime(rt)
 		},
 		SyncSession: func(session ui.REPLSettings) error {
 			if _, err := config.SaveSession(
@@ -429,10 +434,6 @@ func replSettings(rt *runtime, stdin io.Reader, stdout io.Writer) ui.REPLSetting
 			); err != nil {
 				return err
 			}
-			rt.provider.SetModel(session.Model)
-			rt.provider.SetEffort(session.Effort)
-			rt.provider.SetContext(session.Context)
-			rt.provider.SetFast(session.Fast)
 			if rt.policy != nil && strings.TrimSpace(session.PermissionMode) != "" {
 				if err := rt.policy.SetMode(session.PermissionMode); err != nil {
 					return err
@@ -443,9 +444,39 @@ func replSettings(rt *runtime, stdin io.Reader, stdout io.Writer) ui.REPLSetting
 			rt.config.Effort = session.Effort
 			rt.config.Context = session.Context
 			rt.config.Fast = session.Fast
-			return nil
+			return applyEcoRuntime(rt)
 		},
 	}
+}
+
+func applyEcoRuntime(rt *runtime) error {
+	if rt == nil || rt.provider == nil {
+		return nil
+	}
+	rt.provider.SetModel(rt.config.Model)
+	rt.provider.SetEffort(rt.config.Effort)
+	rt.provider.SetContext(rt.config.Context)
+	rt.provider.SetFast(rt.config.Fast)
+	state := config.ApplyEco(rt.config, rt.eco)
+	rt.provider.SetTokenBudget(
+		state.Level,
+		state.CompactNumer,
+		state.CompactDenom,
+		state.ToolOutputKeep,
+		state.ToolOutputClip,
+		state.IncludeReasoning,
+	)
+	if rt.registry != nil {
+		rt.registry.SetMaxResultBytes(state.MaxToolResultBytes)
+	}
+	plan := false
+	if rt.registry != nil {
+		plan = rt.registry.Plan()
+	}
+	if rt.workspace != nil {
+		rt.provider.SetInstructions(agent.SystemPromptWithEco(rt.workspace, plan, rt.eco))
+	}
+	return nil
 }
 
 func terminalFile(reader io.Reader) *os.File {

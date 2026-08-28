@@ -24,19 +24,26 @@ import (
 )
 
 var (
-	DropOldReasoning  = dropOldReasoning
-	DropOldTurns      = dropOldTurns
-	SummarizeDropped  = summarizeDropped
-	UnmatchedCallIDs  = unmatchedCallIDs
-	OutputItemParam   = outputItemParam
-	ResponseText      = responseText
-	ToolParams        = toolParams
-	FetchAccountUsage = fetchAccountUsage
-	ParseAPIError     = parseAPIError
-	ParseRateLimit    = parseRateLimit
-	Retryable         = retryable
-	PromptCacheKey    = promptCacheKey
+	DropOldReasoning    = dropOldReasoning
+	DropAllReasoning    = dropAllReasoning
+	KeepLatestReasoning = keepLatestReasoning
+	SlimInput           = slimInput
+	ClipOldToolOutputs  = clipOldToolOutputs
+	DropOldTurns        = dropOldTurns
+	SummarizeDropped    = summarizeDropped
+	UnmatchedCallIDs    = unmatchedCallIDs
+	OutputItemParam     = outputItemParam
+	ResponseText        = responseText
+	FetchAccountUsage   = fetchAccountUsage
+	ParseAPIError       = parseAPIError
+	ParseRateLimit      = parseRateLimit
+	Retryable           = retryable
+	PromptCacheKey      = promptCacheKey
 )
+
+func ToolParams(definitions []agent.ToolDefinition) []responses.ToolUnionParam {
+	return toolParams(definitions, 0)
+}
 
 func (p *Provider) SetHistory(items []responses.ResponseInputItemUnionParam) {
 	p.history = items

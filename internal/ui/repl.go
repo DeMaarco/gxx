@@ -53,6 +53,9 @@ type REPLSettings struct {
 	RefreshInstructions func()
 	SyncSession         func(REPLSettings) error
 	SetPlan             func(bool) error
+	SetEco              func(int) error
+	Eco                 int
+	EcoLast             int
 }
 
 type Renderer struct {
@@ -554,6 +557,16 @@ func RunREPL(
 				}
 				fmt.Fprintln(writer)
 				continue
+			case "/eco":
+				changedModel, err := applyEcoCommand(writer, &settings, prompt)
+				if err != nil {
+					fmt.Fprintf(writer, "%s\n", paint(settings.Color, red, "error: "+err.Error()))
+				} else if changedModel {
+					loop.Reset()
+					fmt.Fprintln(writer, paint(settings.Color, dim, "Conversation cleared."))
+				}
+				fmt.Fprintln(writer)
+				continue
 			}
 		}
 
@@ -647,6 +660,55 @@ func printREPLHelp(writer io.Writer, settings REPLSettings) {
 		paint(settings.Color, cyan, "Shift+Tab"),
 		paint(settings.Color, dim, "Toggle plan mode (read-only design) and agent mode"),
 	)
+}
+
+func applyEcoCommand(writer io.Writer, settings *REPLSettings, line string) (bool, error) {
+	command, err := parseEcoCommand(line)
+	if err != nil {
+		return false, err
+	}
+	previous := *settings
+	switch {
+	case command.Toggle:
+		if settings.Eco > 0 {
+			settings.EcoLast = settings.Eco
+			settings.Eco = config.EcoOff
+		} else {
+			settings.Eco = settings.EcoLast
+			if settings.Eco <= 0 {
+				settings.Eco = 1
+			}
+		}
+	default:
+		settings.Eco = command.Level
+		if command.Level > 0 {
+			settings.EcoLast = command.Level
+		}
+	}
+	if settings.SetEco != nil {
+		if err := settings.SetEco(settings.Eco); err != nil {
+			*settings = previous
+			return false, err
+		}
+	}
+	printEcoMenu(writer, *settings)
+	return false, nil
+}
+
+func printEcoMenu(writer io.Writer, settings REPLSettings) {
+	fmt.Fprintln(writer, paint(settings.Color, dim, formatEcoStatus(settings)))
+	for _, level := range []int{1, 2, 3} {
+		marker := "  "
+		label := ecoLabel(level)
+		if settings.Eco == level {
+			marker = "* "
+			label = paint(settings.Color, green, label)
+		} else {
+			label = paint(settings.Color, dim, label)
+		}
+		fmt.Fprintln(writer, marker+label+paint(settings.Color, dim, "  "+ecoHelp(level)))
+	}
+	fmt.Fprintln(writer, paint(settings.Color, dim, "Usage: /eco [lite|full|ultra|off]  ·  session only, not saved"))
 }
 
 func togglePlan(settings *REPLSettings) {

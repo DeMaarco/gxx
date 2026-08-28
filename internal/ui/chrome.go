@@ -75,10 +75,14 @@ func formatStatus(settings REPLSettings) string {
 }
 
 func promptPrefix(settings REPLSettings) string {
-	if !settings.Plan {
-		return "> "
+	prefix := "> "
+	if settings.Plan {
+		prefix += paint(settings.Color, yellow, "plan") + " "
 	}
-	return "> " + paint(settings.Color, yellow, "plan") + " "
+	if settings.Eco > 0 {
+		prefix += paint(settings.Color, green, ecoLabel(settings.Eco)) + " "
+	}
+	return prefix
 }
 
 func writeHeader(writer io.Writer, settings REPLSettings) error {

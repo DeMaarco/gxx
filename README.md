@@ -29,7 +29,7 @@ Inspired by [`fx`](https://github.com/vercel-labs/fx), but narrower on purpose:
 **one provider** (OpenAI), **one workspace**, **no TUI**. Just a prompt.
 
 ```text
-◆ gxx  v0.0.9
+◆ gxx  v0.0.10
 >
 gpt-5.6-sol · ask · medium · 272k · 0%
 ```
@@ -66,7 +66,7 @@ gxx version
 Pin a release or another directory:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/DeMaarco/gxx/main/install.sh | sh -s -- --version v0.0.9
+curl -fsSL https://raw.githubusercontent.com/DeMaarco/gxx/main/install.sh | sh -s -- --version v0.0.10
 curl -fsSL https://raw.githubusercontent.com/DeMaarco/gxx/main/install.sh | sh -s -- --dir /usr/local/bin
 ```
 
@@ -94,7 +94,7 @@ Drop an `AGENTS.md` in the project root if you want extra instructions loaded in
 ## REPL
 
 ```text
-◆ gxx  v0.0.9     badge and version
+◆ gxx  v0.0.10     badge and version
 >                 type here  ·  becomes  > plan  in plan mode
 gpt-5.6-sol · ask · medium · 272k · 0%
 ```
@@ -109,12 +109,15 @@ gpt-5.6-sol · ask · medium · 272k · 0%
 
 Plan mode is session-only. It is not saved to config.
 
+`/eco` is also session-only. It paints green on the prompt like plan. `/eco` toggles; `/eco lite` `full` `ultra` set the strength (aliases: 1/2/3). Eco never changes the model. It compresses request input the way Caveman does: drop filler, keep code, paths, URLs, and identifiers. Tool descriptions shrink too. Ultra also drops reasoning replay.
+
 ### Commands
 
 | Command | What it does |
 | --- | --- |
 | `/help` | Commands |
 | `/model` | GPT-5.6 Sol, Terra, or Luna · Tab for context, effort, fast |
+| `/eco` | Caveman input saver · `lite` `full` `ultra` · green on the prompt · session-only |
 | `/mode` | `ask` · `auto-writes` · `auto` |
 | `/config` | Save the API key |
 | `/context` | Window occupancy |
