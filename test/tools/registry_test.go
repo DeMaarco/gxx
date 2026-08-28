@@ -205,6 +205,45 @@ func TestMutationRequiresApproval(t *testing.T) {
 	}
 }
 
+func TestMutationDoesNotStartBeforeApproval(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, root, "file.txt", "before\n")
+	var events []agent.Event
+	emit := func(event agent.Event) {
+		events = append(events, event)
+	}
+	approver := approverFunc(func(_ context.Context, _ approval.Action) (bool, error) {
+		for _, event := range events {
+			if event.Kind == agent.EventToolStarted {
+				t.Fatal("tool started before approval")
+			}
+		}
+		return true, nil
+	})
+	registry := newTestRegistry(t, root, approver, tools.Options{
+		MaxResultBytes:  4096,
+		MaxSearchResult: 10,
+		ParallelReads:   1,
+		CommandTimeout:  time.Second,
+	})
+	result := registry.Execute(context.Background(), []agent.ToolCall{
+		toolCall("edit", "apply_patch", map[string]any{
+			"changes": []map[string]any{{
+				"path": "file.txt", "action": "update", "old_text": "before", "new_text": "after",
+			}},
+		}),
+	}, emit)[0]
+	if result.IsError {
+		t.Fatalf("apply_patch failed: %s", result.Output)
+	}
+	if len(events) == 0 || events[0].Kind != agent.EventToolStarted {
+		t.Fatalf("events = %#v, want started after approval", events)
+	}
+	if events[len(events)-1].Kind != agent.EventToolDone {
+		t.Fatalf("events = %#v, want done after the tool runs", events)
+	}
+}
+
 func TestWriteFileRejectsExistingPath(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "file.txt", "before\n")
@@ -798,10 +837,88 @@ func TestApplyPatchRejectsNonUniqueUpdate(t *testing.T) {
 			}},
 		}),
 	}, nil)[0]
-	if !result.IsError || !strings.Contains(result.Output, "exactly once") {
+	if !result.IsError || !strings.Contains(result.Output, "ambiguous") {
 		t.Fatalf("result = %+v, want unique-replace error", result)
 	}
 	assertToolFileContents(t, filepath.Join(root, "file.txt"), "same\nsame\n")
+}
+
+func TestApplyPatchReplacesEveryLongOldText(t *testing.T) {
+	root := t.TempDir()
+	url := "https://images.unsplash.com/photo-1524592094714-0f0654e20314?auto=format&fit=crop&w=900&q=88"
+	writeTestFile(t, root, "index.html", url+"\n"+url+"\n")
+	registry := newTestRegistry(t, root, &staticApprover{approved: true}, tools.Options{
+		MaxResultBytes:  4096,
+		MaxSearchResult: 10,
+		ParallelReads:   1,
+		CommandTimeout:  time.Second,
+	})
+	result := registry.Execute(context.Background(), []agent.ToolCall{
+		toolCall("patch", "apply_patch", map[string]any{
+			"changes": []map[string]any{{
+				"path": "index.html", "action": "update", "old_text": url, "new_text": "assets/nebula.svg",
+			}},
+		}),
+	}, nil)[0]
+	if result.IsError {
+		t.Fatalf("apply_patch failed: %s", result.Output)
+	}
+	assertToolFileContents(t, filepath.Join(root, "index.html"), "assets/nebula.svg\nassets/nebula.svg\n")
+}
+
+func TestApplyPatchNotFoundIsShort(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, root, "file.txt", "hello\n")
+	var events []agent.Event
+	emit := func(event agent.Event) {
+		events = append(events, event)
+	}
+	registry := newTestRegistry(t, root, &staticApprover{approved: true}, tools.Options{
+		MaxResultBytes:  4096,
+		MaxSearchResult: 10,
+		ParallelReads:   1,
+		CommandTimeout:  time.Second,
+	})
+	result := registry.Execute(context.Background(), []agent.ToolCall{
+		toolCall("patch", "apply_patch", map[string]any{
+			"changes": []map[string]any{{
+				"path": "file.txt", "action": "update", "old_text": "missing", "new_text": "other",
+			}},
+		}),
+	}, emit)[0]
+	if !result.IsError || !strings.Contains(result.Output, "old_text not found in file.txt") {
+		t.Fatalf("result = %+v, want not-found error", result)
+	}
+	if strings.Contains(result.Output, "exactly once") || strings.Contains(result.Output, "occurrences") {
+		t.Fatalf("result = %+v, want short not-found error", result)
+	}
+	if len(events) < 2 || events[0].Kind != agent.EventToolStarted || events[1].Kind != agent.EventToolDone {
+		t.Fatalf("events = %#v, want started then done on prepare error", events)
+	}
+	assertToolFileContents(t, filepath.Join(root, "file.txt"), "hello\n")
+}
+
+func TestApplyPatchMatchesCRLFOldText(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, root, "file.txt", "alpha\r\nbeta\r\n")
+	registry := newTestRegistry(t, root, &staticApprover{approved: true}, tools.Options{
+		MaxResultBytes:  4096,
+		MaxSearchResult: 10,
+		ParallelReads:   1,
+		CommandTimeout:  time.Second,
+	})
+	result := registry.Execute(context.Background(), []agent.ToolCall{
+		toolCall("patch", "apply_patch", map[string]any{
+			"changes": []map[string]any{{
+				"path": "file.txt", "action": "update",
+				"old_text": "alpha\nbeta\n", "new_text": "ALPHA\nBETA\n",
+			}},
+		}),
+	}, nil)[0]
+	if result.IsError {
+		t.Fatalf("apply_patch failed: %s", result.Output)
+	}
+	assertToolFileContents(t, filepath.Join(root, "file.txt"), "ALPHA\r\nBETA\r\n")
 }
 
 func TestApplyPatchRejectsMixedActionsOnSamePath(t *testing.T) {

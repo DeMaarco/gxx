@@ -369,6 +369,15 @@ func TestHoldModelTextDetectsToolJSON(t *testing.T) {
 	if !ui.HoldModelText("to=") {
 		t.Fatal("incomplete to= prefix should be held")
 	}
+	if !ui.HoldModelText("to=apply_patch code:") {
+		t.Fatal("leaked apply_patch header should be held")
+	}
+	if !ui.HoldModelText("<|recipient|>") {
+		t.Fatal("harmony recipient token should be held")
+	}
+	if ui.HoldModelText("Use list_files to inspect the tree.") {
+		t.Fatal("prose mentioning a tool should stream")
+	}
 }
 
 func TestRendererDropsLeakedFunctionCallText(t *testing.T) {
@@ -401,6 +410,88 @@ func TestRendererDropsLeakedFunctionCallText(t *testing.T) {
 	}
 	if !strings.Contains(text, "Haré un último ajuste.") {
 		t.Fatalf("output = %q, want prose after leak", text)
+	}
+}
+
+func TestRendererDropsLeakedApplyPatchFormats(t *testing.T) {
+	var output bytes.Buffer
+	renderer := ui.NewRenderer(&output)
+	renderer.StartTurn()
+	renderer.Event(agent.Event{
+		Kind: agent.EventTextDelta,
+		Text: "Voy a sustituir las imágenes.\n",
+	})
+	renderer.Event(agent.Event{
+		Kind: agent.EventTextDelta,
+		Text: `to=apply_patch code: functions.apply_patch({"changes":[]}) <|recipient|>functions.apply_patch<|content|>{"changes":[]} ` +
+			"<function=functions.apply_patch></function> recipient=functions.apply_patch ```tool " +
+			`to=functions.apply_patch (commentary) code:{"x":""} отс? ` +
+			"to=list_files code:\n",
+	})
+	renderer.Event(agent.Event{
+		Kind: agent.EventTextDelta,
+		Text: "Sigo con los cambios locales.\n",
+	})
+	renderer.Finish("")
+	text := output.String()
+	for _, leaked := range []string{
+		"to=apply_patch", "to=functions", "to=list_files", "functions.apply_patch",
+		"<|recipient|>", "<function=", "recipient=functions", "```tool",
+		`{"changes":[]}`, `{"x":""}`, "отс?", "commentary",
+	} {
+		if strings.Contains(text, leaked) {
+			t.Fatalf("leaked tool text %q was printed: %q", leaked, text)
+		}
+	}
+	if !strings.Contains(text, "Voy a sustituir las imágenes.") {
+		t.Fatalf("output = %q, want prose before leak", text)
+	}
+	if !strings.Contains(text, "Sigo con los cambios locales.") {
+		t.Fatalf("output = %q, want prose after leak", text)
+	}
+}
+
+func TestFailedToolDoneIncludesPathAndFitsWidth(t *testing.T) {
+	var output bytes.Buffer
+	renderer := ui.NewRenderer(&output)
+	renderer.SetLive(true)
+	renderer.SetSpinEvery(0)
+	renderer.SetColumns(48)
+
+	renderer.StartTurn()
+	renderer.Event(agent.Event{
+		Kind: agent.EventToolStarted,
+		ToolCall: &agent.ToolCall{
+			Name:      "apply_patch",
+			Arguments: []byte(`{"changes":[{"path":"index.html","action":"update","old_text":"a","new_text":"b"}]}`),
+		},
+	})
+	renderer.Event(agent.Event{
+		Kind: agent.EventToolDone,
+		Result: &agent.ToolResult{
+			Name:       "apply_patch",
+			DurationMS: 0,
+			IsError:    true,
+			Output:     "error: old_text not found in index.html " + strings.Repeat("x", 80),
+		},
+	})
+	renderer.Finish("")
+	text := output.String()
+	if !strings.Contains(text, "✗") || !strings.Contains(text, "apply_patch") || !strings.Contains(text, "index.html") {
+		t.Fatalf("failed tool = %q, want path on the error line", text)
+	}
+	done := text
+	if i := strings.LastIndex(text, "✗"); i >= 0 {
+		done = text[i:]
+		if j := strings.IndexAny(done, "\n\r"); j >= 0 {
+			done = done[:j]
+		}
+	}
+	if ui.VisibleWidth(done) >= 48 {
+		t.Fatalf("failed tool line exceeded width: %q", done)
+	}
+	if strings.Contains(done, strings.Repeat("x", 80)) {
+		t.Fatalf("failed tool line was not truncated: %q", done)
 	}
 }
 

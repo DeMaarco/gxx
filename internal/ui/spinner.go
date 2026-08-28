@@ -654,9 +654,25 @@ func splitHeld(value string) (emit, hold string) {
 	return output.String(), ""
 }
 
+var leakToolNames = []string{
+	"apply_patch", "read_file", "list_files", "search_files", "run_command",
+	"functions", "multi_tool_use", "parallel",
+}
+
+var leakMarkers = []string{
+	"to=functions", "to=multi_tool_use", "to=apply_patch", "to=read_file",
+	"to=list_files", "to=search_files", "to=run_command", "to=parallel",
+	"<|recipient|>", "<|content|>", "<|constrain|>",
+	"<function=", "</function>",
+	"functions.apply_patch", "functions.read_file", "functions.list_files",
+	"functions.search_files", "functions.run_command",
+	"recipient=functions", "recipient=apply_patch", "recipient=read_file",
+	"```tool", "```json",
+}
+
 func leakStart(value string) int {
 	idx := -1
-	for _, marker := range []string{"to=functions", "to=multi_tool_use"} {
+	for _, marker := range leakMarkers {
 		if i := strings.Index(value, marker); i >= 0 && (idx < 0 || i < idx) {
 			idx = i
 		}
@@ -665,14 +681,37 @@ func leakStart(value string) int {
 }
 
 func incompleteLeakAt(value string) int {
-	i := strings.LastIndex(value, "to=")
-	if i < 0 {
-		return -1
-	}
-	suffix := value[i:]
-	for _, marker := range []string{"to=functions", "to=multi_tool_use"} {
-		if strings.HasPrefix(marker, suffix) {
+	if i := strings.LastIndex(value, "to="); i >= 0 {
+		if _, incomplete := parseToHeader(value[i:]); incomplete {
 			return i
+		}
+	}
+	if i := strings.LastIndex(value, "functions."); i >= 0 {
+		if _, incomplete := parseFunctionsHeader(value[i:]); incomplete {
+			return i
+		}
+	}
+	if i := strings.LastIndex(value, "<|"); i >= 0 {
+		suffix := value[i+2:]
+		if !strings.Contains(suffix, "|>") && !strings.Contains(suffix, "\n") {
+			for _, name := range []string{"recipient", "content", "constrain"} {
+				if suffix == "" || strings.HasPrefix(name, suffix) || strings.HasPrefix(suffix, name) {
+					return i
+				}
+			}
+		}
+	}
+	if i := strings.LastIndex(value, "<function"); i >= 0 {
+		if !strings.Contains(value[i:], ">") && !strings.Contains(value[i:], "\n") {
+			return i
+		}
+	}
+	if i := strings.LastIndex(value, "```"); i >= 0 {
+		lang := value[i+3:]
+		if lang != "tool" && lang != "json" && !strings.ContainsAny(lang, " \t\n") {
+			if strings.HasPrefix("tool", lang) || strings.HasPrefix("json", lang) {
+				return i
+			}
 		}
 	}
 	return -1
@@ -699,68 +738,274 @@ func jsonToolIndex(value string) int {
 }
 
 func skipLeakBlock(value string) (string, bool) {
-	if strings.HasPrefix(strings.TrimLeft(value, " \t\n"), "{") {
-		return skipToolJSON(value)
-	}
-	brace := strings.Index(value, "{")
-	if brace < 0 {
-		return value, false
-	}
-	rest, done := skipToolJSON(value[brace:])
-	if !done {
-		return value, false
-	}
-	return skipLeakGarbage(rest), true
-}
-
-func skipToolJSON(value string) (string, bool) {
 	rest := value
-	skipped := false
+	progressed := false
 	for {
-		rest = strings.TrimLeft(rest, " \t\n")
-		if !strings.HasPrefix(rest, "{") {
-			break
+		trimmed := strings.TrimLeft(rest, " \t\n\r")
+		if trimmed == "" {
+			return "", true
 		}
-		decoder := json.NewDecoder(strings.NewReader(rest))
-		var raw json.RawMessage
-		if err := decoder.Decode(&raw); err != nil {
-			if skipped {
-				return rest, true
-			}
+		n, incomplete := leakHeaderLen(trimmed)
+		if incomplete {
 			return value, false
 		}
-		var object map[string]any
-		if err := json.Unmarshal(raw, &object); err != nil || !toolishObject(object) {
-			if skipped {
+		if n > 0 {
+			rest = trimmed[n:]
+			progressed = true
+			continue
+		}
+		if strings.HasPrefix(trimmed, "{") {
+			next, done := skipJSONObject(trimmed, !progressed)
+			if !done {
+				return value, false
+			}
+			if next == trimmed {
 				break
 			}
-			return value, true
-		}
-		skipped = true
-		rest = rest[decoder.InputOffset():]
-	}
-	if !skipped {
-		return value, false
-	}
-	return skipLeakGarbage(rest), true
-}
-
-func skipLeakGarbage(value string) string {
-	rest := value
-	for {
-		trimmed := strings.TrimLeft(rest, " \t\n")
-		if trimmed == "" {
-			return trimmed
-		}
-		if leakStart(trimmed) == 0 || strings.HasPrefix(trimmed, `{"`) {
-			return trimmed
+			rest = next
+			progressed = true
+			continue
 		}
 		token, leftover := nextGarbageToken(trimmed)
-		if !isLeakGarbage(token) {
-			return rest
+		if isLeakGarbage(token) || (progressed && isLeakResidue(token)) {
+			rest = leftover
+			progressed = true
+			continue
 		}
-		rest = leftover
+		if !progressed {
+			for _, marker := range leakMarkers {
+				if strings.HasPrefix(trimmed, marker) {
+					rest = trimmed[len(marker):]
+					progressed = true
+					break
+				}
+			}
+			if progressed {
+				continue
+			}
+		}
+		break
 	}
+	if !progressed {
+		return value, false
+	}
+	return rest, true
+}
+
+func leakHeaderLen(s string) (int, bool) {
+	if strings.HasPrefix(s, "<|") {
+		if j := strings.Index(s, "|>"); j >= 0 {
+			return j + 2, false
+		}
+		if strings.Contains(s, "\n") {
+			return strings.IndexByte(s, '\n'), false
+		}
+		return 0, true
+	}
+	if strings.HasPrefix(s, "</function>") {
+		return len("</function>"), false
+	}
+	if strings.HasPrefix(s, "<function") {
+		if j := strings.Index(s, ">"); j >= 0 {
+			return j + 1, false
+		}
+		if strings.Contains(s, "\n") {
+			return strings.IndexByte(s, '\n'), false
+		}
+		return 0, true
+	}
+	if strings.HasPrefix(s, "```") {
+		end := 3
+		for end < len(s) && s[end] != '\n' && s[end] != '\r' && s[end] != ' ' && s[end] != '\t' {
+			end++
+		}
+		word := s[3:end]
+		if word == "tool" || word == "json" {
+			return end, false
+		}
+		if end == len(s) && word != "" && (strings.HasPrefix("tool", word) || strings.HasPrefix("json", word)) {
+			return 0, true
+		}
+		return 0, false
+	}
+	if strings.HasPrefix(s, "to=") {
+		return parseToHeader(s)
+	}
+	if strings.HasPrefix(s, "recipient=") {
+		return parseRecipientHeader(s)
+	}
+	if strings.HasPrefix(s, "functions.") {
+		return parseFunctionsHeader(s)
+	}
+	return 0, false
+}
+
+func parseToHeader(s string) (int, bool) {
+	name, complete := readIdent(s[3:])
+	match, incomplete := identLooksLikeTool(name, !complete)
+	if incomplete {
+		return 0, true
+	}
+	if !match {
+		return 0, false
+	}
+	return consumeCallSuffix(s, 3+len(name)), false
+}
+
+func parseFunctionsHeader(s string) (int, bool) {
+	name, complete := readIdent(s[len("functions."):])
+	match, incomplete := identLooksLikeTool("functions."+name, !complete)
+	if incomplete {
+		return 0, true
+	}
+	if !match {
+		return 0, false
+	}
+	n := len("functions.") + len(name)
+	if n < len(s) && s[n] == '(' {
+		n++
+	}
+	return consumeCallSuffix(s, n), false
+}
+
+func parseRecipientHeader(s string) (int, bool) {
+	name, complete := readIdent(s[len("recipient="):])
+	match, incomplete := identLooksLikeTool(name, !complete)
+	if incomplete {
+		return 0, true
+	}
+	if !match {
+		return 0, false
+	}
+	return consumeCallSuffix(s, len("recipient=")+len(name)), false
+}
+
+func readIdent(s string) (string, bool) {
+	i := 0
+	for i < len(s) {
+		c := s[i]
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '.' || c == '-' {
+			i++
+			continue
+		}
+		return s[:i], true
+	}
+	return s, false
+}
+
+func identLooksLikeTool(name string, atEnd bool) (bool, bool) {
+	if isKnownToolName(name) {
+		return true, false
+	}
+	if atEnd && (name == "" || (len(name) >= 3 && isStrictPrefixOfTool(name))) {
+		return true, true
+	}
+	return false, false
+}
+
+func isKnownToolName(name string) bool {
+	if name == "" {
+		return false
+	}
+	parts := strings.Split(name, ".")
+	last := parts[len(parts)-1]
+	for _, tool := range leakToolNames {
+		if name == tool {
+			return true
+		}
+		if last == tool && tool != "functions" {
+			return true
+		}
+	}
+	return false
+}
+
+func isStrictPrefixOfTool(name string) bool {
+	for _, tool := range leakToolNames {
+		if strings.HasPrefix(tool, name) && name != tool {
+			return true
+		}
+	}
+	if strings.HasPrefix(name, "functions.") {
+		rest := name[len("functions."):]
+		for _, tool := range leakToolNames {
+			if tool != "functions" && strings.HasPrefix(tool, rest) && rest != tool {
+				return true
+			}
+		}
+	}
+	if strings.HasPrefix("functions.", name) {
+		return true
+	}
+	return false
+}
+
+func consumeCallSuffix(s string, n int) int {
+	for n < len(s) {
+		switch s[n] {
+		case ' ', '\t':
+			n++
+			continue
+		case ':':
+			return n + 1
+		case '(':
+			close := strings.IndexByte(s[n:], ')')
+			if close < 0 {
+				return n
+			}
+			inner := strings.ToLower(strings.TrimSpace(s[n+1 : n+close]))
+			if inner == "commentary" || inner == "code" || strings.HasPrefix(inner, "commentary") {
+				n += close + 1
+				continue
+			}
+			return n
+		}
+		rest := s[n:]
+		if strings.HasPrefix(rest, "code") && (len(rest) == 4 || !isIdentChar(rest[4])) {
+			n += 4
+			continue
+		}
+		if strings.HasPrefix(rest, "commentary") && (len(rest) == 10 || !isIdentChar(rest[10])) {
+			n += 10
+			continue
+		}
+		break
+	}
+	return n
+}
+
+func isIdentChar(c byte) bool {
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_'
+}
+
+func skipJSONObject(value string, toolishOnly bool) (string, bool) {
+	decoder := json.NewDecoder(strings.NewReader(value))
+	var raw json.RawMessage
+	if err := decoder.Decode(&raw); err != nil {
+		return value, false
+	}
+	if toolishOnly {
+		var object map[string]any
+		if err := json.Unmarshal(raw, &object); err != nil || !toolishObject(object) {
+			return value, true
+		}
+	}
+	return value[decoder.InputOffset():], true
+}
+
+func isLeakResidue(token string) bool {
+	if token == ")" || token == "(" || token == ":" || token == "," || token == ";" {
+		return true
+	}
+	trimmed := strings.Trim(token, "():,")
+	switch strings.ToLower(trimmed) {
+	case "code", "commentary", "function", "functions", "content", "recipient", "constrain", "tool", "json":
+		return true
+	}
+	if strings.HasPrefix(token, "recipient=") || strings.HasPrefix(token, "to=") || strings.HasPrefix(token, "functions.") {
+		return true
+	}
+	return false
 }
 
 func nextGarbageToken(value string) (string, string) {

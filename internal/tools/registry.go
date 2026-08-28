@@ -200,20 +200,14 @@ func (r *Registry) executeOne(ctx context.Context, call agent.ToolCall, emit age
 			action, err = spec.preview(call.Arguments)
 		}
 		if err != nil {
-			result := errorResult(call, err, 0)
-			agent.Emit(emit, agent.Event{Kind: agent.EventToolDone, Result: &result})
-			return result
+			return emitFailedTool(emit, call, err)
 		}
 		approved, err := r.approver.Approve(ctx, action)
 		if err != nil {
-			result := errorResult(call, fmt.Errorf("approval failed: %w", err), 0)
-			agent.Emit(emit, agent.Event{Kind: agent.EventToolDone, Result: &result})
-			return result
+			return emitFailedTool(emit, call, fmt.Errorf("approval failed: %w", err))
 		}
 		if !approved {
-			result := errorResult(call, fmt.Errorf("permission denied by user"), 0)
-			agent.Emit(emit, agent.Event{Kind: agent.EventToolDone, Result: &result})
-			return result
+			return emitFailedTool(emit, call, fmt.Errorf("permission denied by user"))
 		}
 	}
 
@@ -243,6 +237,13 @@ func (r *Registry) executeOne(ctx context.Context, call agent.ToolCall, emit age
 		Truncated:  truncated,
 	}
 	agent.Emit(emit, agent.Event{Kind: agent.EventToolDone, Result: &result, Truncated: truncated})
+	return result
+}
+
+func emitFailedTool(emit agent.EmitFunc, call agent.ToolCall, err error) agent.ToolResult {
+	result := errorResult(call, err, 0)
+	agent.Emit(emit, agent.Event{Kind: agent.EventToolStarted, ToolCall: &call})
+	agent.Emit(emit, agent.Event{Kind: agent.EventToolDone, Result: &result})
 	return result
 }
 

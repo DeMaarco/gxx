@@ -59,7 +59,7 @@ func (r *Registry) applyPatchSpec() toolSpec {
 			Description: `Create, update, or delete workspace files in one approved transaction.
 Pass changes as an array of objects:
 - action add: create a new file; content is the full file; fails if the path exists.
-- action update: replace old_text with new_text; old_text must occur exactly once. Multiple updates to the same path apply in order.
+- action update: replace old_text with new_text. Prefer unique old_text. A long unique string (for example a URL) is replaced everywhere it appears. Multiple updates to the same path apply in order.
 - action delete: remove an existing file.
 Do not mix add, update, and delete on the same path. Prefer one apply_patch call for related files.`,
 			ReadOnly: false,
@@ -81,7 +81,7 @@ Do not mix add, update, and delete on the same path. Prefer one apply_patch call
 						},
 						"old_text": map[string]any{
 							"type":        []string{"string", "null"},
-							"description": "Exact text to replace for update, or null otherwise. Must occur once.",
+							"description": "Exact text to replace for update, or null otherwise. Prefer unique text; long unique strings replace every copy.",
 						},
 						"new_text": map[string]any{
 							"type":        []string{"string", "null"},
@@ -265,11 +265,18 @@ func (r *Registry) applyPatchChange(
 			byPath[clean] = work
 			*works = append(*works, work)
 		}
-		count := bytes.Count(work.after, []byte(oldText))
-		if count != 1 {
-			return nil, fmt.Errorf("old_text must occur exactly once in %s; found %d occurrences", clean, count)
+		count, needle := matchOldText(work.after, []byte(oldText))
+		if count == 0 {
+			return nil, fmt.Errorf("old_text not found in %s", clean)
 		}
-		work.after = bytes.Replace(work.after, []byte(oldText), []byte(newText), 1)
+		limit := 1
+		if count > 1 {
+			if !replaceEveryCopy(oldText) {
+				return nil, fmt.Errorf("old_text is ambiguous in %s; found %d occurrences", clean, count)
+			}
+			limit = -1
+		}
+		work.after = bytes.Replace(work.after, needle, alignNewlines(needle, []byte(oldText), []byte(newText)), limit)
 
 	case "delete":
 		if seen {
@@ -284,4 +291,45 @@ func (r *Registry) applyPatchChange(
 		*works = append(*works, work)
 	}
 	return work, nil
+}
+
+func matchOldText(haystack, needle []byte) (int, []byte) {
+	if count := bytes.Count(haystack, needle); count > 0 {
+		return count, needle
+	}
+	if bytes.Contains(needle, []byte("\r\n")) {
+		alt := bytes.ReplaceAll(needle, []byte("\r\n"), []byte("\n"))
+		if count := bytes.Count(haystack, alt); count > 0 {
+			return count, alt
+		}
+	} else if bytes.Contains(needle, []byte("\n")) {
+		alt := bytes.ReplaceAll(needle, []byte("\n"), []byte("\r\n"))
+		if count := bytes.Count(haystack, alt); count > 0 {
+			return count, alt
+		}
+	}
+	return 0, needle
+}
+
+func replaceEveryCopy(oldText string) bool {
+	if len(oldText) >= 32 {
+		return true
+	}
+	if strings.Contains(oldText, "http://") || strings.Contains(oldText, "https://") {
+		return true
+	}
+	return strings.Contains(oldText, "\n")
+}
+
+func alignNewlines(needle, oldText, newText []byte) []byte {
+	if bytes.Equal(needle, oldText) {
+		return newText
+	}
+	if bytes.Contains(needle, []byte("\r\n")) && !bytes.Contains(oldText, []byte("\r\n")) {
+		return bytes.ReplaceAll(newText, []byte("\n"), []byte("\r\n"))
+	}
+	if !bytes.Contains(needle, []byte("\r\n")) && bytes.Contains(oldText, []byte("\r\n")) {
+		return bytes.ReplaceAll(newText, []byte("\r\n"), []byte("\n"))
+	}
+	return newText
 }

@@ -61,19 +61,21 @@ type Renderer struct {
 	now       func() time.Time
 	columns   int
 
-	mu         sync.Mutex
-	sawText    bool
-	textOpen   bool
-	liveOpen   bool
-	liveHeight int
-	cursorHide bool
-	thinking   bool
-	thinkStart time.Time
-	frame      int
-	running    []runningTool
-	pending    pendingDoneGroup
-	heldText   string
-	usage      agent.Usage
+	mu          sync.Mutex
+	sawText     bool
+	textOpen    bool
+	liveOpen    bool
+	liveHeight  int
+	cursorHide  bool
+	thinking    bool
+	thinkStart  time.Time
+	frame       int
+	running     []runningTool
+	pending     pendingDoneGroup
+	heldText    string
+	mdHold      string
+	mdLineStart bool
+	usage       agent.Usage
 
 	animMu   sync.Mutex
 	animStop chan struct{}
@@ -101,6 +103,8 @@ func (r *Renderer) StartTurn() {
 	r.running = nil
 	r.pending = pendingDoneGroup{}
 	r.heldText = ""
+	r.mdHold = ""
+	r.mdLineStart = true
 	r.frame = 0
 	r.liveHeight = 0
 	r.liveOpen = false
@@ -309,24 +313,28 @@ func (r *Renderer) writeToolDoneLocked(line doneLine) {
 	if line.truncated {
 		detail += ", truncated"
 	}
+	var rendered string
 	if line.failed {
-		_, _ = fmt.Fprintf(
-			r.writer,
-			"%s %s  %s: %s\n",
+		rendered = fmt.Sprintf(
+			"%s %s  %s: %s",
 			mark,
 			name,
 			paint(r.color, dim, "("+detail+")"),
 			safeTerminalText(line.detail),
 		)
-		return
+	} else {
+		rendered = fmt.Sprintf(
+			"%s %s  %s",
+			mark,
+			name,
+			paint(r.color, dim, "("+detail+")"),
+		)
 	}
-	_, _ = fmt.Fprintf(
-		r.writer,
-		"%s %s  %s\n",
-		mark,
-		name,
-		paint(r.color, dim, "("+detail+")"),
-	)
+	width := r.termWidth()
+	if width > 1 && visibleWidth(rendered) > width-1 {
+		rendered = truncateVisible(rendered, width-1)
+	}
+	_, _ = fmt.Fprintln(r.writer, rendered)
 }
 
 func (r *Renderer) queueTextLocked(text string) {
@@ -341,12 +349,33 @@ func (r *Renderer) queueTextLocked(text string) {
 
 func (r *Renderer) writeTextLocked(text string) {
 	text = safeTerminalText(text)
-	if text == "" {
+	if text == "" && r.mdHold == "" {
 		return
 	}
-	_, _ = io.WriteString(r.writer, text)
+	emitted, hold, lineStart := renderMarkdown(r.color, r.mdHold+text, r.mdLineStart, false)
+	r.mdHold = hold
+	r.mdLineStart = lineStart
+	if emitted == "" {
+		return
+	}
+	_, _ = io.WriteString(r.writer, emitted)
 	r.sawText = true
-	r.textOpen = !strings.HasSuffix(text, "\n")
+	r.textOpen = !strings.HasSuffix(emitted, "\n")
+}
+
+func (r *Renderer) flushMarkdownLocked() {
+	if r.mdHold == "" {
+		return
+	}
+	emitted, _, lineStart := renderMarkdown(r.color, r.mdHold, r.mdLineStart, true)
+	r.mdHold = ""
+	r.mdLineStart = lineStart
+	if emitted == "" {
+		return
+	}
+	_, _ = io.WriteString(r.writer, emitted)
+	r.sawText = true
+	r.textOpen = !strings.HasSuffix(emitted, "\n")
 }
 
 func (r *Renderer) dropHeldTextLocked() {
@@ -354,8 +383,9 @@ func (r *Renderer) dropHeldTextLocked() {
 	r.heldText = ""
 	if strings.TrimSpace(safe) != "" {
 		r.writeTextLocked(safe)
-		r.endTextLine()
 	}
+	r.flushMarkdownLocked()
+	r.endTextLine()
 }
 
 func (r *Renderer) Finish(answer string) {
@@ -378,6 +408,7 @@ func (r *Renderer) Finish(answer string) {
 			r.writeTextLocked(safe)
 		}
 	}
+	r.flushMarkdownLocked()
 	r.endTextLine()
 	if line := formatTurnUsage(r.color, r.usage); line != "" {
 		_, _ = fmt.Fprintln(r.writer, line)

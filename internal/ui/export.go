@@ -53,6 +53,7 @@ var (
 	FormatCompactTokens = formatCompactTokens
 	FormatTurnUsage     = formatTurnUsage
 	HoldModelText       = holdModelText
+	FormatMarkdown      = formatMarkdown
 	ToolHint            = toolHint
 	VisibleWidth        = visibleWidth
 	CompactRunningLabel = compactRunningLabelForTest

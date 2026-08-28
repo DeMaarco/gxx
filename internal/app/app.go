@@ -37,7 +37,7 @@ import (
 	"gxx/internal/workspace"
 )
 
-var Version = "0.0.6"
+var Version = "0.0.7"
 
 type runtime struct {
 	config    config.Config
