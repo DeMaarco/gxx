@@ -17,6 +17,7 @@ package openai
 import (
 	"encoding/json"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/openai/openai-go/v3/responses"
 
@@ -24,8 +25,10 @@ import (
 )
 
 const (
-	compactNotice        = "Earlier conversation was compacted by gxx to fit the context window. Continue from the remaining history."
-	unansweredToolOutput = "error: tool call was not executed"
+	compactNotice           = "Earlier conversation was compacted by gxx to fit the context window. Continue from the remaining history."
+	unansweredToolOutput    = "error: tool call was not executed"
+	compactSummaryMaxBytes  = 4 * 1024
+	compactSummaryClipRunes = 160
 )
 
 func (p *Provider) AbsorbToolResults(results []agent.ToolResult) {
@@ -113,26 +116,34 @@ func functionCallID(item responses.ResponseInputItemUnionParam) (id string, isCa
 }
 
 func (p *Provider) shouldCompact(userText string) bool {
+	extra := int64(0)
+	if userText != "" {
+		extra = estimateTokens(len(userText))
+	}
+	if p.lastInputTokens > 0 && p.contextTokens > 0 && p.lastInputTokens+extra > p.compactTarget() {
+		return true
+	}
 	if userText == "" {
-		return p.overBudget(p.history)
+		return p.overTarget(p.history)
 	}
 	projected := append([]responses.ResponseInputItemUnionParam(nil), p.history...)
 	projected = append(projected, responses.ResponseInputItemParamOfMessage(
 		userText,
 		responses.EasyInputMessageRoleUser,
 	))
-	return p.overBudget(projected)
+	return p.overTarget(projected)
 }
 
 func (p *Provider) compactLocked(emit agent.EmitFunc) {
 	original := len(p.history)
 	p.history = dropOldReasoning(p.history)
-	if p.overBudget(p.history) {
+	if p.overTarget(p.history) || (p.lastInputTokens > 0 && p.lastInputTokens > p.compactTarget()) {
 		p.history = dropOldTurns(p.history, p.compactTarget(), p.instructions)
 	}
 	if len(p.history) == original {
 		return
 	}
+	p.lastInputTokens = historyTokens(p.history, p.instructions)
 	agent.Emit(emit, agent.Event{
 		Kind: agent.EventNotice,
 		Text: compactNotice,
@@ -173,12 +184,12 @@ func dropOldTurns(
 		return items
 	}
 
-	notice := responses.ResponseInputItemParamOfMessage(
-		compactNotice,
-		responses.EasyInputMessageRoleUser,
-	)
 	best := items
 	for _, start := range users[1:] {
+		notice := responses.ResponseInputItemParamOfMessage(
+			summarizeDropped(items[:start]),
+			responses.EasyInputMessageRoleUser,
+		)
 		candidate := append([]responses.ResponseInputItemUnionParam{notice}, items[start:]...)
 		best = candidate
 		if historyTokens(candidate, instructions) <= target {
@@ -186,6 +197,140 @@ func dropOldTurns(
 		}
 	}
 	return best
+}
+
+func summarizeDropped(items []responses.ResponseInputItemUnionParam) string {
+	var users []string
+	var tools []string
+	seenTool := make(map[string]bool)
+	var errors []string
+	for _, item := range items {
+		if text := userMessageText(item); text != "" {
+			if strings.HasPrefix(text, compactNotice) {
+				continue
+			}
+			users = append(users, clipRunes(text, compactSummaryClipRunes))
+			continue
+		}
+		if name := functionCallName(item); name != "" {
+			if !seenTool[name] {
+				seenTool[name] = true
+				tools = append(tools, name)
+			}
+			continue
+		}
+		if output := functionCallOutput(item); strings.HasPrefix(output, "error:") {
+			errors = append(errors, clipRunes(output, compactSummaryClipRunes))
+		}
+	}
+	users = lastStrings(users, 3)
+	errors = lastStrings(errors, 5)
+
+	var builder strings.Builder
+	builder.WriteString(compactNotice)
+	if len(users) > 0 {
+		builder.WriteString("\nPrior user requests:")
+		for _, user := range users {
+			builder.WriteString("\n- ")
+			builder.WriteString(user)
+		}
+	}
+	if len(tools) > 0 {
+		builder.WriteString("\nTools used: ")
+		builder.WriteString(strings.Join(tools, ", "))
+	}
+	if len(errors) > 0 {
+		builder.WriteString("\nRecent tool errors:")
+		for _, message := range errors {
+			builder.WriteString("\n- ")
+			builder.WriteString(message)
+		}
+	}
+	return clipBytes(builder.String(), compactSummaryMaxBytes)
+}
+
+func userMessageText(item responses.ResponseInputItemUnionParam) string {
+	if itemKind(item) != "user" {
+		return ""
+	}
+	return inputItemText(item)
+}
+
+func functionCallName(item responses.ResponseInputItemUnionParam) string {
+	if item.OfFunctionCall != nil {
+		return item.OfFunctionCall.Name
+	}
+	data, err := json.Marshal(item)
+	if err != nil {
+		return ""
+	}
+	var parsed struct {
+		Type string `json:"type"`
+		Name string `json:"name"`
+	}
+	if json.Unmarshal(data, &parsed) != nil || parsed.Type != "function_call" {
+		return ""
+	}
+	return parsed.Name
+}
+
+func functionCallOutput(item responses.ResponseInputItemUnionParam) string {
+	data, err := json.Marshal(item)
+	if err != nil {
+		return ""
+	}
+	var parsed struct {
+		Type   string `json:"type"`
+		Output string `json:"output"`
+	}
+	if json.Unmarshal(data, &parsed) != nil || parsed.Type != "function_call_output" {
+		return ""
+	}
+	return parsed.Output
+}
+
+func inputItemText(item responses.ResponseInputItemUnionParam) string {
+	data, err := json.Marshal(item)
+	if err != nil {
+		return ""
+	}
+	var parsed struct {
+		Content json.RawMessage `json:"content"`
+	}
+	if json.Unmarshal(data, &parsed) != nil {
+		return ""
+	}
+	var text string
+	if json.Unmarshal(parsed.Content, &text) == nil {
+		return strings.TrimSpace(text)
+	}
+	return ""
+}
+
+func lastStrings(values []string, n int) []string {
+	if len(values) <= n {
+		return values
+	}
+	return values[len(values)-n:]
+}
+
+func clipRunes(value string, limit int) string {
+	if limit <= 0 || utf8.RuneCountInString(value) <= limit {
+		return value
+	}
+	runes := []rune(value)
+	return string(runes[:limit]) + "…"
+}
+
+func clipBytes(value string, limit int) string {
+	if len(value) <= limit {
+		return value
+	}
+	keep := limit
+	for keep > 0 && !utf8.RuneStart(value[keep]) {
+		keep--
+	}
+	return value[:keep]
 }
 
 func userIndexes(items []responses.ResponseInputItemUnionParam) []int {

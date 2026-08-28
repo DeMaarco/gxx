@@ -61,6 +61,12 @@ func TestDropOldTurnsKeepsLatestTurnAndNotice(t *testing.T) {
 	if !strings.Contains(string(first), "compacted") {
 		t.Fatalf("notice = %s", first)
 	}
+	if !strings.Contains(string(first), "Prior user requests") {
+		t.Fatalf("summary = %s, want dropped user prompt", first)
+	}
+	if !strings.Contains(string(first), strings.Repeat("a", 160)) {
+		t.Fatalf("summary = %s, want clipped dropped prompt", first)
+	}
 	tail, _ := json.Marshal(got[len(got)-1])
 	if !strings.Contains(string(tail), "kept answer") {
 		t.Fatalf("tail = %s, want latest assistant turn", tail)
@@ -68,6 +74,17 @@ func TestDropOldTurnsKeepsLatestTurnAndNotice(t *testing.T) {
 	all, _ := json.Marshal(got)
 	if strings.Contains(string(all), strings.Repeat("a", 200)) {
 		t.Fatalf("old turn was kept: %s", all)
+	}
+}
+
+func TestPromptCacheKeyChangesWithInstructions(t *testing.T) {
+	first := openai.PromptCacheKey("gpt-5.6-sol", "one")
+	second := openai.PromptCacheKey("gpt-5.6-sol", "two")
+	if first == second {
+		t.Fatal("cache key ignored instructions")
+	}
+	if !strings.HasPrefix(first, "gxx:gpt-5.6-sol:") {
+		t.Fatalf("cache key = %q, want gxx:model:hash", first)
 	}
 }
 
@@ -80,5 +97,23 @@ func TestUnmatchedCallIDsTracksOpenFunctionCalls(t *testing.T) {
 	open := openai.UnmatchedCallIDs(items)
 	if !open["call_2"] || open["call_1"] || len(open) != 1 {
 		t.Fatalf("open = %#v", open)
+	}
+}
+
+func TestSummarizeDroppedIncludesToolsAndErrors(t *testing.T) {
+	items := []responses.ResponseInputItemUnionParam{
+		responses.ResponseInputItemParamOfMessage("inspect the repo", responses.EasyInputMessageRoleUser),
+		responses.ResponseInputItemParamOfFunctionCall(`{}`, "call_1", "read_file"),
+		responses.ResponseInputItemParamOfFunctionCallOutput("call_1", "error: missing file"),
+	}
+	got := openai.SummarizeDropped(items)
+	if !strings.Contains(got, "inspect the repo") {
+		t.Fatalf("summary = %q, want user prompt", got)
+	}
+	if !strings.Contains(got, "read_file") {
+		t.Fatalf("summary = %q, want tool name", got)
+	}
+	if !strings.Contains(got, "error: missing file") {
+		t.Fatalf("summary = %q, want tool error", got)
 	}
 }

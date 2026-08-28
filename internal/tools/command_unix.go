@@ -72,10 +72,15 @@ func (r *Registry) previewRunCommand(raw json.RawMessage) (approval.Action, erro
 	if err != nil {
 		return approval.Action{}, err
 	}
+	preview := "$ " + args.Command
+	if notes := commandRiskNotes(args.Command); len(notes) > 0 {
+		preview += "\n" + strings.Join(notes, "\n")
+	}
 	return approval.Action{
-		Title:   "Run command in " + r.workspace.Root(),
-		Preview: approval.CapPreview("$ " + args.Command),
-		Kind:    approval.KindCommand,
+		Title:     "Run command in " + r.workspace.Root(),
+		Preview:   approval.CapPreview(preview),
+		Kind:      approval.KindCommand,
+		RepeatKey: args.Command,
 	}, nil
 }
 

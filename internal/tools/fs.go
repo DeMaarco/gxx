@@ -367,6 +367,7 @@ func (r *Registry) readFile(ctx context.Context, raw json.RawMessage) (string, e
 	var output strings.Builder
 	lineNumber := 0
 	written := 0
+	stoppedEarly := false
 	for scanner.Scan() {
 		if err := ctx.Err(); err != nil {
 			return "", err
@@ -376,6 +377,7 @@ func (r *Registry) readFile(ctx context.Context, raw json.RawMessage) (string, e
 			continue
 		}
 		if written >= limit {
+			stoppedEarly = true
 			break
 		}
 		fmt.Fprintf(&output, "%6d|%s\n", lineNumber, scanner.Text())
@@ -387,7 +389,11 @@ func (r *Registry) readFile(ctx context.Context, raw json.RawMessage) (string, e
 	if written == 0 {
 		return fmt.Sprintf("No lines at or after line %d.", offset), nil
 	}
-	return strings.TrimSuffix(output.String(), "\n"), nil
+	body := strings.TrimSuffix(output.String(), "\n")
+	if stoppedEarly {
+		return body + "\n… more lines follow", nil
+	}
+	return fmt.Sprintf("%s\n(end of file, %d lines)", body, lineNumber), nil
 }
 
 func compileSearchMatcher(query string, caseSensitive bool) func(string) bool {

@@ -100,3 +100,30 @@ func TestSystemPromptPlanModeUsesReadOnlyInstructions(t *testing.T) {
 		t.Fatalf("prompt = %q, want project instructions", prompt)
 	}
 }
+
+func TestSystemPromptReloadsUpdatedAgentsFile(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "AGENTS.md"), []byte("First instructions."), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ws, err := workspace.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ws.Close()
+
+	first := agent.SystemPrompt(ws, false)
+	if !strings.Contains(first, "First instructions.") {
+		t.Fatalf("first prompt = %q", first)
+	}
+	if err := os.WriteFile(filepath.Join(root, "AGENTS.md"), []byte("Updated instructions."), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	second := agent.SystemPrompt(ws, false)
+	if !strings.Contains(second, "Updated instructions.") {
+		t.Fatalf("second prompt = %q, want reloaded AGENTS.md", second)
+	}
+	if strings.Contains(second, "First instructions.") {
+		t.Fatalf("second prompt still had stale instructions: %q", second)
+	}
+}

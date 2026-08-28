@@ -12,7 +12,7 @@
 **A small coding agent for the terminal.**
 
 Open a repo, type what you want, and it lists, searches, reads,
-patches, and runs commands — in that folder only.
+inspects git, patches, and runs commands — in that folder only.
 
 [Install](#install) · [Quick start](#quick-start) · [REPL](#repl) · [Permissions](#permissions)
 
@@ -29,7 +29,7 @@ Inspired by [`fx`](https://github.com/vercel-labs/fx), but narrower on purpose:
 **one provider** (OpenAI), **one workspace**, **no TUI**. Just a prompt.
 
 ```text
-◆ gxx  v0.0.8
+◆ gxx  v0.0.9
 >
 gpt-5.6-sol · ask · medium · 272k · 0%
 ```
@@ -42,8 +42,9 @@ The status line is model · permission mode · effort · context size · window 
 | | What you get |
 | --- | --- |
 | **Workspace-bound** | The directory you start in is the whole world. No traversal, no outside symlinks. |
-| **Ask before it writes** | Default `ask` mode previews file edits and shell commands until you approve. |
+| **Ask before it writes** | Default `ask` mode previews file edits and shell commands until you approve. Type `a-xxxx` to allow that exact command for the rest of the session. |
 | **Plan mode** | `Shift+Tab` for a read-only pass: inspect and design, no writes and no shell. |
+| **Git inspect** | `git_status`, `git_diff`, and `git_log` are read-only and stay inside the workspace. |
 | **One-shot CLI** | `gxx ask` for scripts and pipes. `--json` when you want a machine-readable result. |
 | **Secret-aware** | `.env`, keys, and credential paths stay blocked. Requests go out with `store:false`. |
 
@@ -65,7 +66,7 @@ gxx version
 Pin a release or another directory:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/DeMaarco/gxx/main/install.sh | sh -s -- --version v0.0.8
+curl -fsSL https://raw.githubusercontent.com/DeMaarco/gxx/main/install.sh | sh -s -- --version v0.0.9
 curl -fsSL https://raw.githubusercontent.com/DeMaarco/gxx/main/install.sh | sh -s -- --dir /usr/local/bin
 ```
 
@@ -88,12 +89,12 @@ echo "what does main.go do?" | gxx ask
 gxx usage
 ```
 
-Drop an `AGENTS.md` in the project root if you want extra instructions loaded into the session.
+Drop an `AGENTS.md` in the project root if you want extra instructions loaded into the session. It is re-read at the start of every turn and on `/clear`.
 
 ## REPL
 
 ```text
-◆ gxx  v0.0.8     badge and version
+◆ gxx  v0.0.9     badge and version
 >                 type here  ·  becomes  > plan  in plan mode
 gpt-5.6-sol · ask · medium · 272k · 0%
 ```
@@ -136,12 +137,12 @@ Reads always run. Writes and shell commands follow the mode, unless plan is on.
 
 | Mode | Files | Shell |
 | --- | --- | --- |
-| `ask` | Preview + `y-xxxx` | Preview + `y-xxxx` |
-| `auto-writes` | Apply | Preview + `y-xxxx` |
+| `ask` | Preview + `y-xxxx` | Preview + `y-xxxx`, or `a-xxxx` to allow that exact command for the session |
+| `auto-writes` | Apply | Preview + `y-xxxx` / `a-xxxx` |
 | `auto` | Apply | Apply |
 
 Piped `gxx ask` stays on `ask` and denies mutations unless you pass `--permission`.
-Commands are not OS-sandboxed — review them in `ask`.
+Commands are not OS-sandboxed — review them in `ask`. Changing `/mode` clears the session command allowlist.
 
 ## Privacy
 

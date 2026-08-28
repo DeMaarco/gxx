@@ -24,6 +24,7 @@ var (
 	CompactDiff          = compactDiff
 	SanitizedEnvironment = sanitizedEnvironment
 	DefaultGoCache       = defaultGoCache
+	CommandRiskNotes     = commandRiskNotes
 )
 
 type IgnoreMatcher = ignoreMatcher

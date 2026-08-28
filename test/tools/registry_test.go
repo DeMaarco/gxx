@@ -41,17 +41,17 @@ type staticApprover struct {
 	actions  []approval.Action
 }
 
-type approverFunc func(context.Context, approval.Action) (bool, error)
+type approverFunc func(context.Context, approval.Action) (approval.Decision, error)
 
-func (f approverFunc) Approve(ctx context.Context, action approval.Action) (bool, error) {
+func (f approverFunc) Approve(ctx context.Context, action approval.Action) (approval.Decision, error) {
 	return f(ctx, action)
 }
 
-func (a *staticApprover) Approve(_ context.Context, action approval.Action) (bool, error) {
+func (a *staticApprover) Approve(_ context.Context, action approval.Action) (approval.Decision, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.actions = append(a.actions, action)
-	return a.approved, nil
+	return approval.Decision{Approved: a.approved}, nil
 }
 
 func TestMissingPathErrorsNameThePathNotTheSyscall(t *testing.T) {
@@ -241,6 +241,9 @@ func TestReadToolsReturnUsefulBoundedResults(t *testing.T) {
 	if !strings.Contains(results[2].Output, "2|second line") {
 		t.Fatalf("read output = %q", results[2].Output)
 	}
+	if !strings.Contains(results[2].Output, "(end of file, 2 lines)") {
+		t.Fatalf("read output = %q, want end of file", results[2].Output)
+	}
 }
 
 func TestMutationRequiresApproval(t *testing.T) {
@@ -285,13 +288,13 @@ func TestMutationDoesNotStartBeforeApproval(t *testing.T) {
 	emit := func(event agent.Event) {
 		events = append(events, event)
 	}
-	approver := approverFunc(func(_ context.Context, _ approval.Action) (bool, error) {
+	approver := approverFunc(func(_ context.Context, _ approval.Action) (approval.Decision, error) {
 		for _, event := range events {
 			if event.Kind == agent.EventToolStarted {
 				t.Fatal("tool started before approval")
 			}
 		}
-		return true, nil
+		return approval.Decision{Approved: true}, nil
 	})
 	registry := newTestRegistry(t, root, approver, tools.Options{
 		MaxResultBytes:  4096,
@@ -419,11 +422,11 @@ func TestEditAbortsIfFileChangesAfterPreview(t *testing.T) {
 	root := t.TempDir()
 	target := filepath.Join(root, "file.txt")
 	writeTestFile(t, root, "file.txt", "before\n")
-	approver := approverFunc(func(_ context.Context, _ approval.Action) (bool, error) {
+	approver := approverFunc(func(_ context.Context, _ approval.Action) (approval.Decision, error) {
 		if err := os.WriteFile(target, []byte("external change\n"), 0o644); err != nil {
-			return false, err
+			return approval.Decision{}, err
 		}
-		return true, nil
+		return approval.Decision{Approved: true}, nil
 	})
 	registry := newTestRegistry(t, root, approver, tools.Options{
 		MaxResultBytes:  4096,
@@ -673,11 +676,11 @@ func TestApplyPatchAbortsAllFilesChangedAfterApprovalPreview(t *testing.T) {
 	first := filepath.Join(root, "first.txt")
 	writeTestFile(t, root, "first.txt", "one\n")
 	writeTestFile(t, root, "second.txt", "two\n")
-	approver := approverFunc(func(_ context.Context, _ approval.Action) (bool, error) {
+	approver := approverFunc(func(_ context.Context, _ approval.Action) (approval.Decision, error) {
 		if err := os.WriteFile(first, []byte("external\n"), 0o644); err != nil {
-			return false, err
+			return approval.Decision{}, err
 		}
-		return true, nil
+		return approval.Decision{Approved: true}, nil
 	})
 	registry := newTestRegistry(t, root, approver, tools.Options{
 		MaxResultBytes:  4096,
@@ -1084,6 +1087,41 @@ func TestListFilesDoesNotSkipVendorByDefault(t *testing.T) {
 	}
 	if !strings.Contains(result.Output, "vendor/pkg.go") {
 		t.Fatalf("list = %q, want vendor/pkg.go", result.Output)
+	}
+}
+
+func TestReadFileReportsEndOfFileAndMoreLines(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, root, "notes.txt", "one\ntwo\nthree\n")
+	registry := newTestRegistry(t, root, &staticApprover{}, tools.Options{
+		MaxResultBytes:  4096,
+		MaxSearchResult: 10,
+		ParallelReads:   1,
+		CommandTimeout:  time.Second,
+	})
+
+	partial := registry.Execute(context.Background(), []agent.ToolCall{
+		toolCall("read", "read_file", map[string]any{
+			"path": "notes.txt", "offset_line": 1, "limit_lines": 1,
+		}),
+	}, nil)[0]
+	if partial.IsError {
+		t.Fatalf("partial read failed: %s", partial.Output)
+	}
+	if !strings.Contains(partial.Output, "… more lines follow") {
+		t.Fatalf("partial = %q, want more lines", partial.Output)
+	}
+
+	full := registry.Execute(context.Background(), []agent.ToolCall{
+		toolCall("read", "read_file", map[string]any{
+			"path": "notes.txt", "offset_line": 1, "limit_lines": 10,
+		}),
+	}, nil)[0]
+	if full.IsError {
+		t.Fatalf("full read failed: %s", full.Output)
+	}
+	if !strings.Contains(full.Output, "(end of file, 3 lines)") {
+		t.Fatalf("full = %q, want end of file", full.Output)
 	}
 }
 

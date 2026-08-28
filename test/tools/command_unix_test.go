@@ -296,6 +296,9 @@ func TestRunCommandReportsCommandKind(t *testing.T) {
 	if len(approver.actions) != 1 || approver.actions[0].Kind != approval.KindCommand {
 		t.Fatalf("approval actions = %#v", approver.actions)
 	}
+	if approver.actions[0].RepeatKey != "true" {
+		t.Fatalf("RepeatKey = %q, want true", approver.actions[0].RepeatKey)
+	}
 }
 
 func TestAutoWritesStillAsksForCommands(t *testing.T) {
@@ -342,5 +345,30 @@ func TestAutoRunsCommandsWithoutPrompt(t *testing.T) {
 	}
 	if len(inner.actions) != 0 {
 		t.Fatalf("auto prompted for a command: %#v", inner.actions)
+	}
+}
+
+func TestRunCommandPreviewWarnsOnSensitivePath(t *testing.T) {
+	root := t.TempDir()
+	approver := &staticApprover{approved: false}
+	registry := newTestRegistry(t, root, approver, tools.Options{
+		MaxResultBytes:  4096,
+		MaxSearchResult: 10,
+		ParallelReads:   1,
+		CommandTimeout:  time.Second,
+	})
+	_ = registry.Execute(context.Background(), []agent.ToolCall{
+		toolCall("command", "run_command", map[string]any{
+			"command": "cat .env", "timeout_seconds": nil,
+		}),
+	}, nil)
+	if len(approver.actions) != 1 {
+		t.Fatalf("actions = %#v", approver.actions)
+	}
+	if !strings.Contains(approver.actions[0].Preview, "sensitive path") {
+		t.Fatalf("preview = %q, want sensitive path warning", approver.actions[0].Preview)
+	}
+	if approver.actions[0].RepeatKey != "cat .env" {
+		t.Fatalf("RepeatKey = %q", approver.actions[0].RepeatKey)
 	}
 }

@@ -35,23 +35,24 @@ import (
 const maxPromptBytes = 1024 * 1024
 
 type REPLSettings struct {
-	Version          string
-	Model            string
-	PermissionMode   string
-	Effort           string
-	Context          string
-	Fast             bool
-	Plan             bool
-	Workspace        string
-	Color            bool
-	Stdin            *os.File
-	APIKeyConfigured bool
-	ReadAPIKey       func(context.Context) (string, error)
-	SaveAPIKey       func(string) (string, error)
-	FetchUsage       func(context.Context) (agent.UsageReport, error)
-	FetchContext     func() agent.ContextUsage
-	SyncSession      func(REPLSettings) error
-	SetPlan          func(bool) error
+	Version             string
+	Model               string
+	PermissionMode      string
+	Effort              string
+	Context             string
+	Fast                bool
+	Plan                bool
+	Workspace           string
+	Color               bool
+	Stdin               *os.File
+	APIKeyConfigured    bool
+	ReadAPIKey          func(context.Context) (string, error)
+	SaveAPIKey          func(string) (string, error)
+	FetchUsage          func(context.Context) (agent.UsageReport, error)
+	FetchContext        func() agent.ContextUsage
+	RefreshInstructions func()
+	SyncSession         func(REPLSettings) error
+	SetPlan             func(bool) error
 }
 
 type Renderer struct {
@@ -510,6 +511,9 @@ func RunREPL(
 			case "/exit":
 				return nil
 			case "/clear":
+				if settings.RefreshInstructions != nil {
+					settings.RefreshInstructions()
+				}
 				loop.Reset()
 				fmt.Fprintln(writer, paint(settings.Color, dim, "Conversation cleared."))
 				fmt.Fprintln(writer)
@@ -554,6 +558,9 @@ func RunREPL(
 		}
 
 		turnCtx, finishTurn := turns.start(sessionCtx)
+		if settings.RefreshInstructions != nil {
+			settings.RefreshInstructions()
+		}
 		renderer.StartTurn()
 		result, err := loop.Run(turnCtx, prompt, renderer.Event)
 		renderer.Finish(result.Answer)

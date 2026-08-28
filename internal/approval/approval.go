@@ -39,13 +39,20 @@ const (
 )
 
 type Action struct {
-	Title   string
-	Preview string
-	Kind    Kind
+	Title     string
+	Preview   string
+	Kind      Kind
+	RepeatKey string
+}
+
+// Decision is the result of an approval prompt.
+type Decision struct {
+	Approved bool
+	Remember bool // a-xxxx: remember RepeatKey for this session
 }
 
 type Approver interface {
-	Approve(context.Context, Action) (bool, error)
+	Approve(context.Context, Action) (Decision, error)
 }
 
 // Prompt asks for explicit y/N approval. Non-interactive instances deny.
@@ -71,15 +78,15 @@ func (p *Prompt) SetFile(file *os.File) {
 	p.file = file
 }
 
-func (p *Prompt) Approve(ctx context.Context, action Action) (bool, error) {
+func (p *Prompt) Approve(ctx context.Context, action Action) (Decision, error) {
 	if !p.interactive {
-		return false, nil
+		return Decision{}, nil
 	}
 	if p.reader == nil || p.writer == nil {
-		return false, nil
+		return Decision{}, nil
 	}
 	if err := ctx.Err(); err != nil {
-		return false, err
+		return Decision{}, err
 	}
 
 	p.mu.Lock()
@@ -87,36 +94,55 @@ func (p *Prompt) Approve(ctx context.Context, action Action) (bool, error) {
 
 	if buffered := p.reader.Buffered(); buffered > 0 {
 		if _, err := p.reader.Discard(buffered); err != nil {
-			return false, fmt.Errorf("discard stale terminal input: %w", err)
+			return Decision{}, fmt.Errorf("discard stale terminal input: %w", err)
 		}
 	}
 	code, err := p.code()
 	if err != nil {
-		return false, fmt.Errorf("create approval challenge: %w", err)
+		return Decision{}, fmt.Errorf("create approval challenge: %w", err)
 	}
 	title := safeDisplay(action.Title)
 	preview := displayPreview(action.Preview)
 	if strings.TrimSpace(preview) != "" {
 		if _, err := fmt.Fprintf(p.writer, "\n%s\n%s\n", title, preview); err != nil {
-			return false, err
+			return Decision{}, err
 		}
 	} else if _, err := fmt.Fprintf(p.writer, "\n%s\n", title); err != nil {
-		return false, err
+		return Decision{}, err
 	}
-	if _, err := fmt.Fprintf(
+	if action.RepeatKey != "" {
+		if _, err := fmt.Fprintf(
+			p.writer,
+			"Approve? Type y-%s to approve, a-%s to allow this command for the session [default N]: ",
+			code,
+			code,
+		); err != nil {
+			return Decision{}, err
+		}
+	} else if _, err := fmt.Fprintf(
 		p.writer,
 		"Approve? Type y-%s to approve [default N]: ",
 		code,
 	); err != nil {
-		return false, err
+		return Decision{}, err
 	}
 
 	answer, err := readLineContext(ctx, p.reader, p.file)
 	if err != nil && err != io.EOF {
-		return false, err
+		return Decision{}, err
 	}
 	answer = strings.ToLower(strings.TrimSpace(answer))
-	return answer == "y-"+code, nil
+	switch answer {
+	case "y-" + code:
+		return Decision{Approved: true}, nil
+	case "a-" + code:
+		if action.RepeatKey == "" {
+			return Decision{}, nil
+		}
+		return Decision{Approved: true, Remember: true}, nil
+	default:
+		return Decision{}, nil
+	}
 }
 
 func readLineContext(ctx context.Context, reader *bufio.Reader, file *os.File) (string, error) {

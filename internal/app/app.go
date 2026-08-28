@@ -37,7 +37,7 @@ import (
 	"gxx/internal/workspace"
 )
 
-var Version = "0.0.8"
+var Version = "0.0.9"
 
 type runtime struct {
 	config    config.Config
@@ -404,6 +404,13 @@ func replSettings(rt *runtime, stdin io.Reader, stdout io.Writer) ui.REPLSetting
 		},
 		FetchContext: func() agent.ContextUsage {
 			return rt.provider.ContextSnapshot()
+		},
+		RefreshInstructions: func() {
+			plan := false
+			if rt.registry != nil {
+				plan = rt.registry.Plan()
+			}
+			rt.provider.SetInstructions(agent.SystemPrompt(rt.workspace, plan))
 		},
 		SetPlan: func(plan bool) error {
 			rt.provider.SetInstructions(agent.SystemPrompt(rt.workspace, plan))

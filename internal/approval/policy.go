@@ -24,9 +24,10 @@ import (
 // Policy auto-approves actions allowed by the current permission mode and
 // otherwise defers to an inner approver.
 type Policy struct {
-	mu    sync.Mutex
-	mode  string
-	inner Approver
+	mu         sync.Mutex
+	mode       string
+	inner      Approver
+	remembered map[string]struct{}
 }
 
 func NewPolicy(mode string, inner Approver) *Policy {
@@ -34,7 +35,7 @@ func NewPolicy(mode string, inner Approver) *Policy {
 	if err != nil {
 		canonical = config.PermissionAsk
 	}
-	return &Policy{mode: canonical, inner: inner}
+	return &Policy{mode: canonical, inner: inner, remembered: make(map[string]struct{})}
 }
 
 func (p *Policy) Mode() string {
@@ -50,27 +51,43 @@ func (p *Policy) SetMode(mode string) error {
 	}
 	p.mu.Lock()
 	p.mode = canonical
+	p.remembered = make(map[string]struct{})
 	p.mu.Unlock()
 	return nil
 }
 
-func (p *Policy) Approve(ctx context.Context, action Action) (bool, error) {
+func (p *Policy) Approve(ctx context.Context, action Action) (Decision, error) {
 	if err := ctx.Err(); err != nil {
-		return false, err
+		return Decision{}, err
 	}
 
 	p.mu.Lock()
+	if action.RepeatKey != "" {
+		if _, ok := p.remembered[action.RepeatKey]; ok {
+			p.mu.Unlock()
+			return Decision{Approved: true}, nil
+		}
+	}
 	mode := p.mode
 	inner := p.inner
 	p.mu.Unlock()
 
 	if autoApproved(mode, action.Kind) {
-		return true, nil
+		return Decision{Approved: true}, nil
 	}
 	if inner == nil {
-		return false, nil
+		return Decision{}, nil
 	}
-	return inner.Approve(ctx, action)
+	decision, err := inner.Approve(ctx, action)
+	if err != nil {
+		return decision, err
+	}
+	if decision.Remember && action.RepeatKey != "" {
+		p.mu.Lock()
+		p.remembered[action.RepeatKey] = struct{}{}
+		p.mu.Unlock()
+	}
+	return decision, nil
 }
 
 func autoApproved(mode string, kind Kind) bool {

@@ -66,6 +66,13 @@ func (p *Provider) overBudget(items []responses.ResponseInputItemUnionParam) boo
 	return historyTokens(items, p.instructions) > int64(p.contextTokens)
 }
 
+func (p *Provider) overTarget(items []responses.ResponseInputItemUnionParam) bool {
+	if p.contextTokens <= 0 {
+		return len(items) > fallbackHistoryItems
+	}
+	return historyTokens(items, p.instructions) > p.compactTarget()
+}
+
 func itemKind(item responses.ResponseInputItemUnionParam) string {
 	switch {
 	case item.OfMessage != nil:

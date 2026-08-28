@@ -16,6 +16,8 @@ package openai
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -55,6 +57,7 @@ type Provider struct {
 	sessionRequests int64
 	rateLimit       agent.RateLimit
 	contextUsage    agent.ContextUsage
+	lastInputTokens int64
 	httpClient      *http.Client
 	baseURL         string
 }
@@ -172,27 +175,30 @@ func (p *Provider) Respond(
 	p.refreshContextLocked()
 	p.mu.Unlock()
 
-	requestContext, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
-	var raw *http.Response
-	stream := client.Responses.NewStreaming(requestContext, params, option.WithResponseInto(&raw))
-	defer stream.Close()
-
-	var completed *responses.Response
-	var streamError error
-	for stream.Next() {
-		event := stream.Current()
-		switch event.Type {
-		case "response.output_text.delta":
-			agent.Emit(emit, agent.Event{Kind: agent.EventTextDelta, Text: event.Delta})
-		case "response.refusal.delta":
-			agent.Emit(emit, agent.Event{Kind: agent.EventTextDelta, Text: event.Delta})
-		case "response.completed", "response.failed", "response.incomplete":
-			response := event.Response
-			completed = &response
-		case "error":
-			streamError = fmt.Errorf("OpenAI stream error: %s", event.Message)
+	var (
+		completed *responses.Response
+		raw       *http.Response
+		lastErr   error
+	)
+	for attempt := 0; attempt < maxAPIAttempts; attempt++ {
+		if attempt > 0 {
+			delay := retryDelay(attempt, raw)
+			agent.Emit(emit, agent.Event{
+				Kind: agent.EventNotice,
+				Text: "Retrying OpenAI request…",
+			})
+			if err := sleepContext(ctx, delay); err != nil {
+				return result, err
+			}
+		}
+		requestContext, cancel := context.WithTimeout(ctx, timeout)
+		completed, raw, lastErr = streamResponse(requestContext, client, params, emit)
+		cancel()
+		if lastErr == nil {
+			break
+		}
+		if !retryable(lastErr, ctx, raw) {
+			break
 		}
 	}
 
@@ -202,17 +208,8 @@ func (p *Provider) Respond(
 	if raw != nil {
 		p.rateLimit = parseRateLimit(raw.Header)
 	}
-	if err := stream.Err(); err != nil {
-		return result, err
-	}
-	if streamError != nil {
-		return result, streamError
-	}
-	if completed == nil {
-		return result, errors.New("OpenAI stream ended without a completed response")
-	}
-	if completed.Status != responses.ResponseStatusCompleted {
-		return result, responseStatusError(*completed)
+	if lastErr != nil {
+		return result, lastErr
 	}
 
 	outputItems := make([]responses.ResponseInputItemUnionParam, 0, len(completed.Output))
@@ -244,6 +241,7 @@ func (p *Provider) Respond(
 		p.history = append(staged, outputItems...)
 		p.session.Add(result.Usage)
 		p.sessionRequests++
+		p.lastInputTokens = result.Usage.InputTokens
 	}
 	return result, nil
 }
@@ -258,8 +256,8 @@ func (p *Provider) requestParamsLocked(
 		Instructions:      openaisdk.String(p.instructions),
 		Store:             openaisdk.Bool(false),
 		ParallelToolCalls: openaisdk.Bool(true),
-		Truncation:        responses.ResponseNewParamsTruncationAuto,
-		PromptCacheKey:    openaisdk.String("gxx"),
+		Truncation:        responses.ResponseNewParamsTruncationDisabled,
+		PromptCacheKey:    openaisdk.String(promptCacheKey(p.model, p.instructions)),
 		PromptCacheOptions: responses.ResponseNewParamsPromptCacheOptions{
 			Mode: "implicit",
 			Ttl:  "30m",
@@ -286,6 +284,11 @@ func (p *Provider) requestParamsLocked(
 	return params
 }
 
+func promptCacheKey(model, instructions string) string {
+	sum := sha256.Sum256([]byte(instructions))
+	return fmt.Sprintf("gxx:%s:%s", model, hex.EncodeToString(sum[:4]))
+}
+
 // SetAPIKey replaces the in-memory credential and clears provider history.
 func (p *Provider) SetAPIKey(apiKey string) error {
 	apiKey = strings.TrimSpace(apiKey)
@@ -301,6 +304,7 @@ func (p *Provider) SetAPIKey(apiKey string) error {
 	p.session = agent.Usage{}
 	p.sessionRequests = 0
 	p.rateLimit = agent.RateLimit{}
+	p.lastInputTokens = 0
 	p.refreshContextLocked()
 	return nil
 }
@@ -339,6 +343,7 @@ func (p *Provider) Reset() {
 	defer p.mu.Unlock()
 	p.generation++
 	p.history = nil
+	p.lastInputTokens = 0
 	p.refreshContextLocked()
 }
 

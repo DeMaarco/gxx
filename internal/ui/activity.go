@@ -53,6 +53,12 @@ func toolVerb(name string) string {
 		return "searching"
 	case "read_file":
 		return "reading"
+	case "git_status":
+		return "git status"
+	case "git_diff":
+		return "diffing"
+	case "git_log":
+		return "git log"
 	case "apply_patch":
 		return "writing"
 	case "run_command":

@@ -26,6 +26,7 @@ import (
 var (
 	DropOldReasoning  = dropOldReasoning
 	DropOldTurns      = dropOldTurns
+	SummarizeDropped  = summarizeDropped
 	UnmatchedCallIDs  = unmatchedCallIDs
 	OutputItemParam   = outputItemParam
 	ResponseText      = responseText
@@ -33,6 +34,8 @@ var (
 	FetchAccountUsage = fetchAccountUsage
 	ParseAPIError     = parseAPIError
 	ParseRateLimit    = parseRateLimit
+	Retryable         = retryable
+	PromptCacheKey    = promptCacheKey
 )
 
 func (p *Provider) SetHistory(items []responses.ResponseInputItemUnionParam) {
@@ -65,6 +68,10 @@ func (p *Provider) ContextTokens() int {
 
 func (p *Provider) SetContextTokens(n int) {
 	p.contextTokens = n
+}
+
+func (p *Provider) SetLastInputTokens(n int64) {
+	p.lastInputTokens = n
 }
 
 func (p *Provider) SessionUsage() agent.Usage {

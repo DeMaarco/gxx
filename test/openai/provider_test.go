@@ -266,8 +266,8 @@ func TestProviderStreamsAndResendsStatelessHistory(t *testing.T) {
 	if !strings.Contains(string(firstJSON), `"effort":"medium"`) {
 		t.Fatalf("first request = %s, want default reasoning effort", firstJSON)
 	}
-	if !strings.Contains(string(firstJSON), `"prompt_cache_key":"gxx"`) {
-		t.Fatalf("first request = %s, want prompt cache key", firstJSON)
+	if !strings.Contains(string(firstJSON), `"prompt_cache_key":"gxx:gpt-5.6:`) {
+		t.Fatalf("first request = %s, want namespaced prompt cache key", firstJSON)
 	}
 	if !strings.Contains(string(firstJSON), `"ttl":"30m"`) {
 		t.Fatalf("first request = %s, want prompt cache ttl", firstJSON)
@@ -294,7 +294,8 @@ func TestProviderRetainsToolOutputsAfterFailedFollowUp(t *testing.T) {
 		_ = json.Unmarshal(body, &decoded)
 		requests = append(requests, decoded)
 
-		if len(requests) == 2 {
+		if len(requests) >= 2 && len(requests) <= 4 {
+			writer.Header().Set("Retry-After", "0")
 			http.Error(writer, "temporary failure", http.StatusInternalServerError)
 			return
 		}
@@ -366,7 +367,7 @@ func TestProviderRetainsToolOutputsAfterFailedFollowUp(t *testing.T) {
 	if third.Text != "Recovered." {
 		t.Fatalf("third response = %+v", third)
 	}
-	thirdInput, _ := json.Marshal(requests[2]["input"])
+	thirdInput, _ := json.Marshal(requests[len(requests)-1]["input"])
 	for _, expected := range []string{"function_call_output", "contents", "continue"} {
 		if !strings.Contains(string(thirdInput), expected) {
 			t.Fatalf("third input = %s, want %q", thirdInput, expected)
@@ -381,7 +382,8 @@ func TestProviderRetainsUserMessageAfterTransportFailure(t *testing.T) {
 		var decoded map[string]any
 		_ = json.Unmarshal(body, &decoded)
 		requests = append(requests, decoded)
-		if len(requests) == 1 {
+		if len(requests) <= 3 {
+			writer.Header().Set("Retry-After", "0")
 			http.Error(writer, "temporary failure", http.StatusInternalServerError)
 			return
 		}
@@ -424,7 +426,7 @@ func TestProviderRetainsUserMessageAfterTransportFailure(t *testing.T) {
 	); err != nil {
 		t.Fatalf("second Respond() error = %v", err)
 	}
-	secondInput, _ := json.Marshal(requests[1]["input"])
+	secondInput, _ := json.Marshal(requests[len(requests)-1]["input"])
 	for _, expected := range []string{"original request", "continue"} {
 		if !strings.Contains(string(secondInput), expected) {
 			t.Fatalf("second input = %s, want %q", secondInput, expected)
@@ -774,6 +776,71 @@ func TestProviderCompactsInsideToolLoop(t *testing.T) {
 	// Compaction must not orphan the output of a call it dropped.
 	if strings.Contains(string(input), "call-1") && !strings.Contains(string(input), "function_call\"") {
 		t.Fatalf("input = %s, kept a tool output without its call", input)
+	}
+}
+
+func TestProviderDisablesAPITruncation(t *testing.T) {
+	var request map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, httpRequest *http.Request) {
+		body, _ := io.ReadAll(httpRequest.Body)
+		_ = json.Unmarshal(body, &request)
+		writeCompletedText(t, writer, "ok")
+	}))
+	defer server.Close()
+
+	provider := testStreamingProvider(t, server, "instructions")
+	if _, err := provider.Respond(
+		context.Background(),
+		agent.ModelInput{UserText: "hello"},
+		nil,
+		nil,
+	); err != nil {
+		t.Fatalf("Respond() error = %v", err)
+	}
+	if request["truncation"] != "disabled" {
+		t.Fatalf("truncation = %#v, want disabled", request["truncation"])
+	}
+}
+
+func TestProviderCompactsUsingLastInputTokens(t *testing.T) {
+	var request map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, httpRequest *http.Request) {
+		body, _ := io.ReadAll(httpRequest.Body)
+		_ = json.Unmarshal(body, &request)
+		writeCompletedText(t, writer, "ok")
+	}))
+	defer server.Close()
+
+	provider := testStreamingProvider(t, server, "inst")
+	provider.SetContextTokens(90)
+	oldUser := "remember this goal"
+	provider.SetHistory([]responses.ResponseInputItemUnionParam{
+		responses.ResponseInputItemParamOfMessage(oldUser, responses.EasyInputMessageRoleUser),
+		responses.ResponseInputItemParamOfMessage("old answer", responses.EasyInputMessageRoleAssistant),
+		responses.ResponseInputItemParamOfMessage("recent question", responses.EasyInputMessageRoleUser),
+		responses.ResponseInputItemParamOfMessage("recent answer", responses.EasyInputMessageRoleAssistant),
+	})
+	provider.SetLastInputTokens(80)
+
+	var notices []string
+	if _, err := provider.Respond(
+		context.Background(),
+		agent.ModelInput{UserText: "continue"},
+		nil,
+		func(event agent.Event) {
+			if event.Kind == agent.EventNotice {
+				notices = append(notices, event.Text)
+			}
+		},
+	); err != nil {
+		t.Fatalf("Respond() error = %v", err)
+	}
+	input, _ := json.Marshal(request["input"])
+	if strings.Contains(string(input), oldUser) && !strings.Contains(string(input), "Prior user requests") {
+		t.Fatalf("input = %s, want usage-driven compact of the old turn", input)
+	}
+	if len(notices) != 1 || !strings.Contains(notices[0], "compacted") {
+		t.Fatalf("notices = %#v, want compaction from last input tokens", notices)
 	}
 }
 

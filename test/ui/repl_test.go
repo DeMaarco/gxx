@@ -583,7 +583,7 @@ func TestRunREPLAppliesModeCommand(t *testing.T) {
 	}
 	text := output.String()
 	for _, expected := range []string{
-		"permission ask · confirm every file change and command",
+		"permission ask · confirm every file change and command; a-xxxx allows a command for the session",
 		"* ask",
 		"auto-writes",
 		"permission auto-writes · file changes run without confirmation; commands still ask",

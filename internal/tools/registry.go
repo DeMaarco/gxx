@@ -72,6 +72,9 @@ func NewRegistry(ws *workspace.Workspace, approver approval.Approver, options Op
 		r.listFilesSpec(),
 		r.searchFilesSpec(),
 		r.readFileSpec(),
+		r.gitStatusSpec(),
+		r.gitDiffSpec(),
+		r.gitLogSpec(),
 		r.applyPatchSpec(),
 		r.runCommandSpec(),
 	} {
@@ -84,11 +87,18 @@ func (r *Registry) SetPlan(plan bool) {
 	r.plan.Store(plan)
 }
 
+func (r *Registry) Plan() bool {
+	return r.plan.Load()
+}
+
 func (r *Registry) Definitions() []agent.ToolDefinition {
 	order := []string{
 		"list_files",
 		"search_files",
 		"read_file",
+		"git_status",
+		"git_diff",
+		"git_log",
 		"apply_patch",
 		"run_command",
 	}
@@ -203,11 +213,11 @@ func (r *Registry) executeOne(ctx context.Context, call agent.ToolCall, emit age
 		if err != nil {
 			return emitFailedTool(emit, call, err)
 		}
-		approved, err := r.approver.Approve(ctx, action)
+		decision, err := r.approver.Approve(ctx, action)
 		if err != nil {
 			return emitFailedTool(emit, call, fmt.Errorf("approval failed: %w", err))
 		}
-		if !approved {
+		if !decision.Approved {
 			return emitFailedTool(emit, call, fmt.Errorf("permission denied by user"))
 		}
 	}
