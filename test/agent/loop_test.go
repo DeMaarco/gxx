@@ -163,8 +163,13 @@ func TestLoopReservesLastStepForToolFreeAnswer(t *testing.T) {
 	if _, err := loop.Run(context.Background(), "question", nil); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if got := model.definitionCount; len(got) != 2 || got[0] != 1 || got[1] != 0 {
-		t.Fatalf("definition counts = %v, want [1 0]", got)
+	if len(model.inputs) != 2 || model.inputs[0].FinalStep || !model.inputs[1].FinalStep {
+		t.Fatalf("final step flags = %#v, want [false true]", model.inputs)
+	}
+	// Withdrawing the tools on the last step is what makes models write the
+	// call syntax into the message instead of calling anything.
+	if got := model.definitionCount; len(got) != 2 || got[0] != 1 || got[1] != 1 {
+		t.Fatalf("definition counts = %v, want [1 1]", got)
 	}
 }
 

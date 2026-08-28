@@ -526,10 +526,7 @@ func toolHint(raw json.RawMessage) string {
 		if value == "" {
 			continue
 		}
-		if len(value) > 48 {
-			value = value[:48] + "…"
-		}
-		return safeTerminalText(value)
+		return safeTerminalText(truncateRunes(value, maxHintRunes))
 	}
 	if rawChanges, ok := arguments["changes"].([]any); ok && len(rawChanges) > 0 {
 		seen := map[string]struct{}{}
@@ -557,10 +554,7 @@ func toolHint(raw json.RawMessage) string {
 		if len(paths) > 1 {
 			value = fmt.Sprintf("%s · %d files", value, len(paths))
 		}
-		if len(value) > 48 {
-			value = value[:48] + "…"
-		}
-		return safeTerminalText(value)
+		return safeTerminalText(truncateRunes(value, maxHintRunes))
 	}
 	return ""
 }

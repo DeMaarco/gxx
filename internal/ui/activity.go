@@ -24,6 +24,10 @@ import (
 
 const (
 	maxLiveDetails = 5
+	maxHintRunes   = 48
+	maxDetailRunes = 180
+	// exitCodeLabel mirrors tools.ExitCodeLabel.
+	exitCodeLabel = "exit code"
 )
 
 type activityKind byte
@@ -205,9 +209,21 @@ func resultDetailLines(result *agent.ToolResult) []activityLine {
 		return searchDetailLines(result.Output)
 	case "list_files":
 		return listDetailLines(result.Output)
+	case "run_command":
+		return commandDetailLines(result.Output)
 	default:
 		return nil
 	}
+}
+
+// commandDetailLines surfaces the exit code that internal/tools puts on the
+// first line of a command that ran but did not succeed.
+func commandDetailLines(output string) []activityLine {
+	header, _, _ := strings.Cut(strings.TrimSpace(output), "\n")
+	if !strings.HasPrefix(header, exitCodeLabel+" ") {
+		return nil
+	}
+	return []activityLine{{kind: activityContext, text: strings.TrimSpace(header)}}
 }
 
 func searchDetailLines(output string) []activityLine {

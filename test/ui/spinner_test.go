@@ -19,11 +19,59 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"gxx/internal/ui"
 
 	"gxx/internal/agent"
+	"gxx/internal/tools"
 )
+
+func TestToolHintCutsOnCharacterBoundaries(t *testing.T) {
+	path := "documentación/" + strings.Repeat("é", 60) + ".ts"
+	hint := ui.ToolHint([]byte(`{"path":"` + path + `"}`))
+	if !utf8.ValidString(hint) {
+		t.Fatalf("hint = %q, want valid UTF-8", hint)
+	}
+	if !strings.HasSuffix(hint, "…") {
+		t.Fatalf("hint = %q, want an ellipsis", hint)
+	}
+	if got := utf8.RuneCountInString(hint); got != 49 {
+		t.Fatalf("hint = %q has %d runes, want 48 plus the ellipsis", hint, got)
+	}
+}
+
+func TestRendererShowsCommandExitCode(t *testing.T) {
+	var output bytes.Buffer
+	renderer := ui.NewRenderer(&output)
+	renderer.SetLive(true)
+	renderer.SetSpinEvery(0)
+
+	renderer.StartTurn()
+	renderer.Event(agent.Event{
+		Kind:     agent.EventToolStarted,
+		ToolCall: &agent.ToolCall{ID: "c1", Name: "run_command", Arguments: []byte(`{"command":"bun --check app.js"}`)},
+	})
+	renderer.Event(agent.Event{
+		Kind: agent.EventToolDone,
+		Result: &agent.ToolResult{
+			CallID: "c1", Name: "run_command", DurationMS: 84,
+			// The label has to match what internal/tools writes.
+			Output: tools.ExitCodeLabel + " 1\n1 | document.documentElement",
+		},
+	})
+	renderer.Finish("")
+	text := output.String()
+	if !strings.Contains(text, "✓ run_command  bun --check app.js  (84ms)") {
+		t.Fatalf("command line = %q, want a successful tool call", text)
+	}
+	if !strings.Contains(text, tools.ExitCodeLabel+" 1") {
+		t.Fatalf("command line = %q, want the exit code surfaced", text)
+	}
+	if strings.Contains(text, "document.documentElement") {
+		t.Fatalf("command line = %q, want the code not the output body", text)
+	}
+}
 
 func TestLiveLineShowsTokens(t *testing.T) {
 	got := ui.LiveLine(false, 0, "thinking", 400*time.Millisecond, agent.Usage{TotalTokens: 12400}, 80)

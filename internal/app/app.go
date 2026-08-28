@@ -37,7 +37,7 @@ import (
 	"gxx/internal/workspace"
 )
 
-var Version = "0.0.7"
+var Version = "0.0.8"
 
 type runtime struct {
 	config    config.Config
@@ -544,7 +544,7 @@ func printCommonFlags(writer io.Writer) {
 	fmt.Fprintln(writer, "  --context string        Context window size (default: GXX_CONTEXT, config.json, or 272k)")
 	fmt.Fprintln(writer, "  --permission string     Permission mode (default: GXX_PERMISSION, config.json, or ask)")
 	fmt.Fprintln(writer, "  --fast                  Use OpenAI fast service tier")
-	fmt.Fprintln(writer, "  --max-steps int         Maximum model steps (default: 12)")
+	fmt.Fprintln(writer, "  --max-steps int         Maximum model steps (default: 40)")
 	fmt.Fprintln(writer, "  --command-timeout dur   Maximum command duration (default: 2m)")
 	fmt.Fprintln(writer, "  --api-timeout dur       Timeout per OpenAI response (default: 10m)")
 }

@@ -17,12 +17,15 @@ package tools_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"gxx/internal/tools"
 
@@ -49,6 +52,76 @@ func (a *staticApprover) Approve(_ context.Context, action approval.Action) (boo
 	defer a.mu.Unlock()
 	a.actions = append(a.actions, action)
 	return a.approved, nil
+}
+
+func TestMissingPathErrorsNameThePathNotTheSyscall(t *testing.T) {
+	registry := newTestRegistry(t, t.TempDir(), &staticApprover{}, tools.Options{
+		MaxResultBytes:  4096,
+		MaxSearchResult: 10,
+		ParallelReads:   1,
+		CommandTimeout:  time.Second,
+	})
+	result := registry.Execute(context.Background(), []agent.ToolCall{
+		toolCall("list", "list_files", map[string]any{"path": "assets", "max_depth": nil}),
+	}, nil)[0]
+
+	if !result.IsError {
+		t.Fatalf("listing a missing directory succeeded: %q", result.Output)
+	}
+	// os.Root names its own syscall, so this used to read "statat assets".
+	for _, leaked := range []string{"statat", "openat", "lstatat"} {
+		if strings.Contains(result.Output, leaked) {
+			t.Fatalf("output = %q, want no syscall name", result.Output)
+		}
+	}
+	if !strings.Contains(result.Output, "assets: no such file or directory") {
+		t.Fatalf("output = %q, want the path and a plain reason", result.Output)
+	}
+}
+
+func TestLongMatchesAreCutOnCharacterBoundaries(t *testing.T) {
+	root := t.TempDir()
+	// Byte 300 of this line falls inside the second byte of an accented
+	// character, which is where the search result limit lands.
+	line := "x" + strings.Repeat("é", 200)
+	if err := os.WriteFile(filepath.Join(root, "acentos.txt"), []byte(line+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	registry := newTestRegistry(t, root, &staticApprover{}, tools.Options{
+		MaxResultBytes:  4096,
+		MaxSearchResult: 10,
+		ParallelReads:   1,
+		CommandTimeout:  time.Second,
+	})
+
+	result := registry.Execute(context.Background(), []agent.ToolCall{
+		toolCall("search", "search_files", map[string]any{
+			"query": "x", "path": nil, "glob": nil, "max_results": nil, "case_sensitive": nil,
+		}),
+	}, nil)[0]
+	if result.IsError {
+		t.Fatalf("search failed: %s", result.Output)
+	}
+	if !utf8.ValidString(result.Output) {
+		t.Fatalf("output = %q, want valid UTF-8 after truncation", result.Output)
+	}
+}
+
+func TestDescribeKeepsErrorIdentity(t *testing.T) {
+	root := t.TempDir()
+	space, err := workspace.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer space.Close()
+
+	_, err = space.Stat("missing/deep")
+	if err == nil {
+		t.Fatal("Stat() on a missing path succeeded")
+	}
+	if !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("err = %v, want it to still match fs.ErrNotExist", err)
+	}
 }
 
 func TestToolSchemasRequireEveryProperty(t *testing.T) {

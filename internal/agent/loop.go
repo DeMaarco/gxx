@@ -54,13 +54,10 @@ func (l *Loop) Run(ctx context.Context, prompt string, emit EmitFunc) (Result, e
 			return result, err
 		}
 
-		availableTools := definitions
-		if step == l.MaxSteps {
-			// Reserve the final model step for a tool-free answer so every
-			// executed function call has a matching output in provider history.
-			availableTools = nil
-		}
-		response, err := l.Model.Respond(ctx, input, availableTools, emit)
+		// Reserve the final model step for a tool-free answer so every
+		// executed function call has a matching output in provider history.
+		input.FinalStep = step == l.MaxSteps
+		response, err := l.Model.Respond(ctx, input, definitions, emit)
 		if err != nil {
 			return result, fmt.Errorf("model response: %w", err)
 		}

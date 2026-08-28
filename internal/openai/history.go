@@ -113,6 +113,9 @@ func functionCallID(item responses.ResponseInputItemUnionParam) (id string, isCa
 }
 
 func (p *Provider) shouldCompact(userText string) bool {
+	if userText == "" {
+		return p.overBudget(p.history)
+	}
 	projected := append([]responses.ResponseInputItemUnionParam(nil), p.history...)
 	projected = append(projected, responses.ResponseInputItemParamOfMessage(
 		userText,

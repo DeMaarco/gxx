@@ -26,6 +26,7 @@ import (
 	"sync"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"gxx/internal/agent"
 	"gxx/internal/config"
@@ -61,21 +62,21 @@ type Renderer struct {
 	now       func() time.Time
 	columns   int
 
-	mu          sync.Mutex
-	sawText     bool
-	textOpen    bool
-	liveOpen    bool
-	liveHeight  int
-	cursorHide  bool
-	thinking    bool
-	thinkStart  time.Time
-	frame       int
-	running     []runningTool
-	pending     pendingDoneGroup
-	heldText    string
-	mdHold      string
-	mdLineStart bool
-	usage       agent.Usage
+	mu         sync.Mutex
+	sawText    bool
+	textOpen   bool
+	liveOpen   bool
+	liveHeight int
+	cursorHide bool
+	thinking   bool
+	thinkStart time.Time
+	frame      int
+	running    []runningTool
+	pending    pendingDoneGroup
+	heldText   string
+	runeHold   string
+	md         markdownState
+	usage      agent.Usage
 
 	animMu   sync.Mutex
 	animStop chan struct{}
@@ -103,8 +104,8 @@ func (r *Renderer) StartTurn() {
 	r.running = nil
 	r.pending = pendingDoneGroup{}
 	r.heldText = ""
-	r.mdHold = ""
-	r.mdLineStart = true
+	r.runeHold = ""
+	r.md = newMarkdownState()
 	r.frame = 0
 	r.liveHeight = 0
 	r.liveOpen = false
@@ -348,28 +349,39 @@ func (r *Renderer) queueTextLocked(text string) {
 }
 
 func (r *Renderer) writeTextLocked(text string) {
-	text = safeTerminalText(text)
-	if text == "" && r.mdHold == "" {
+	text, r.runeHold = splitRunes(r.runeHold + text)
+	if text == "" && r.md.hold == "" {
 		return
 	}
-	emitted, hold, lineStart := renderMarkdown(r.color, r.mdHold+text, r.mdLineStart, false)
-	r.mdHold = hold
-	r.mdLineStart = lineStart
-	if emitted == "" {
-		return
-	}
-	_, _ = io.WriteString(r.writer, emitted)
-	r.sawText = true
-	r.textOpen = !strings.HasSuffix(emitted, "\n")
+	r.emitMarkdownLocked(renderMarkdown(r.color, &r.md, safeTerminalText(text), false))
 }
 
 func (r *Renderer) flushMarkdownLocked() {
-	if r.mdHold == "" {
+	tail := r.runeHold
+	r.runeHold = ""
+	if tail == "" && r.md.hold == "" {
 		return
 	}
-	emitted, _, lineStart := renderMarkdown(r.color, r.mdHold, r.mdLineStart, true)
-	r.mdHold = ""
-	r.mdLineStart = lineStart
+	r.emitMarkdownLocked(renderMarkdown(r.color, &r.md, safeTerminalText(tail), true))
+}
+
+// splitRunes holds back a trailing incomplete UTF-8 sequence. Sanitizing half
+// a rune turns an accented character into two escape sequences, and a delta
+// boundary can land anywhere.
+func splitRunes(value string) (complete, partial string) {
+	for i := len(value) - 1; i >= 0 && len(value)-i < utf8.UTFMax; i-- {
+		if !utf8.RuneStart(value[i]) {
+			continue
+		}
+		if character, size := utf8.DecodeRuneInString(value[i:]); character == utf8.RuneError && size == 1 {
+			return value[:i], value[i:]
+		}
+		return value, ""
+	}
+	return value, ""
+}
+
+func (r *Renderer) emitMarkdownLocked(emitted string) {
 	if emitted == "" {
 		return
 	}
@@ -830,10 +842,23 @@ func readLine(ctx context.Context, reader *bufio.Reader, file *os.File) (string,
 
 func firstLine(value string) string {
 	line, _, _ := strings.Cut(value, "\n")
-	if len(line) > 180 {
-		line = line[:180] + "…"
+	return safeTerminalText(truncateRunes(line, maxDetailRunes))
+}
+
+// truncateRunes shortens value to at most limit characters. Slicing by bytes
+// splits accented characters in paths, commands, and error messages.
+func truncateRunes(value string, limit int) string {
+	if utf8.RuneCountInString(value) <= limit {
+		return value
 	}
-	return safeTerminalText(line)
+	count := 0
+	for index := range value {
+		if count == limit {
+			return value[:index] + "…"
+		}
+		count++
+	}
+	return value
 }
 
 func safeTerminalText(value string) string {

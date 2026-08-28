@@ -121,6 +121,78 @@ func TestRunCommandKeepsHomeAndScrubsSecrets(t *testing.T) {
 	}
 }
 
+func TestRunCommandReportsNonZeroExitAsResult(t *testing.T) {
+	root := t.TempDir()
+	registry := newTestRegistry(t, root, &staticApprover{approved: true}, tools.Options{
+		MaxResultBytes:  4096,
+		MaxSearchResult: 10,
+		ParallelReads:   1,
+		CommandTimeout:  time.Second,
+	})
+
+	result := registry.Execute(context.Background(), []agent.ToolCall{
+		toolCall("command", "run_command", map[string]any{
+			"command":         "printf 'syntax error on line 1\\n' >&2; exit 3",
+			"timeout_seconds": nil,
+		}),
+	}, nil)[0]
+
+	// A command that runs and fails is an answer, not a broken tool.
+	if result.IsError {
+		t.Fatalf("non-zero exit reported as a tool error: %q", result.Output)
+	}
+	if !strings.HasPrefix(result.Output, tools.ExitCodeLabel+" 3") {
+		t.Fatalf("output = %q, want an %q header", result.Output, tools.ExitCodeLabel)
+	}
+	if !strings.Contains(result.Output, "syntax error on line 1") {
+		t.Fatalf("output = %q, want the command output preserved", result.Output)
+	}
+}
+
+func TestRunCommandReportsMissingInterpreter(t *testing.T) {
+	root := t.TempDir()
+	registry := newTestRegistry(t, root, &staticApprover{approved: true}, tools.Options{
+		MaxResultBytes:  4096,
+		MaxSearchResult: 10,
+		ParallelReads:   1,
+		CommandTimeout:  time.Second,
+	})
+
+	result := registry.Execute(context.Background(), []agent.ToolCall{
+		toolCall("command", "run_command", map[string]any{
+			"command":         "gxx-no-such-binary --check",
+			"timeout_seconds": nil,
+		}),
+	}, nil)[0]
+
+	if result.IsError {
+		t.Fatalf("missing binary reported as a tool error: %q", result.Output)
+	}
+	if !strings.HasPrefix(result.Output, tools.ExitCodeLabel+" 127") {
+		t.Fatalf("output = %q, want exit code 127", result.Output)
+	}
+}
+
+func TestRunCommandKeepsExitCodeWhenCommandIsSilent(t *testing.T) {
+	root := t.TempDir()
+	registry := newTestRegistry(t, root, &staticApprover{approved: true}, tools.Options{
+		MaxResultBytes:  4096,
+		MaxSearchResult: 10,
+		ParallelReads:   1,
+		CommandTimeout:  time.Second,
+	})
+
+	result := registry.Execute(context.Background(), []agent.ToolCall{
+		toolCall("command", "run_command", map[string]any{
+			"command": "exit 1", "timeout_seconds": nil,
+		}),
+	}, nil)[0]
+
+	if result.IsError || !strings.HasPrefix(result.Output, tools.ExitCodeLabel+" 1") {
+		t.Fatalf("result = %+v, want a silent failure to still report its code", result)
+	}
+}
+
 func TestRunCommandHonorsTimeout(t *testing.T) {
 	root := t.TempDir()
 	registry := newTestRegistry(t, root, &staticApprover{approved: true}, tools.Options{

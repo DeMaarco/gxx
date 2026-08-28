@@ -634,6 +634,54 @@ func TestProviderClosesOpenToolCallsBeforeNewUserMessage(t *testing.T) {
 	}
 }
 
+func TestFinalStepKeepsToolsAndForbidsCalls(t *testing.T) {
+	var request map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, httpRequest *http.Request) {
+		body, _ := io.ReadAll(httpRequest.Body)
+		_ = json.Unmarshal(body, &request)
+		writeCompletedText(t, writer, "ok")
+	}))
+	defer server.Close()
+
+	definitions := []agent.ToolDefinition{{
+		Name:        "run_command",
+		Description: "Run a shell command",
+		Parameters: map[string]any{
+			"type":                 "object",
+			"properties":           map[string]any{"command": map[string]any{"type": "string"}},
+			"required":             []string{"command"},
+			"additionalProperties": false,
+		},
+	}}
+	provider := testStreamingProvider(t, server, "instructions")
+	if _, err := provider.Respond(
+		context.Background(),
+		agent.ModelInput{UserText: "review the project", FinalStep: true},
+		definitions,
+		nil,
+	); err != nil {
+		t.Fatalf("Respond() error = %v", err)
+	}
+
+	data, _ := json.Marshal(request)
+	if !strings.Contains(string(data), `"tool_choice":"none"`) {
+		t.Fatalf("request = %s, want tool_choice none", data)
+	}
+	// The tool namespace has to stay declared. A model that has been calling
+	// tools and suddenly finds none writes "to=functions.run_command" into
+	// the answer instead.
+	tools, _ := json.Marshal(request["tools"])
+	if !strings.Contains(string(tools), `"name":"run_command"`) {
+		t.Fatalf("tools = %s, want the definitions to survive the final step", tools)
+	}
+}
+
+func TestToolParamsOmitsEmptyToolList(t *testing.T) {
+	if params := openai.ToolParams(nil); params != nil {
+		t.Fatalf("ToolParams(nil) = %#v, want nil so the field is omitted", params)
+	}
+}
+
 func TestProviderCompactsHistoryInsteadOfWiping(t *testing.T) {
 	var request map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, httpRequest *http.Request) {
@@ -678,6 +726,54 @@ func TestProviderCompactsHistoryInsteadOfWiping(t *testing.T) {
 	}
 	if len(notices) != 1 || !strings.Contains(notices[0], "compacted") {
 		t.Fatalf("notices = %#v", notices)
+	}
+}
+
+func TestProviderCompactsInsideToolLoop(t *testing.T) {
+	var request map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, httpRequest *http.Request) {
+		body, _ := io.ReadAll(httpRequest.Body)
+		_ = json.Unmarshal(body, &request)
+		writeCompletedText(t, writer, "ok")
+	}))
+	defer server.Close()
+
+	provider := testStreamingProvider(t, server, "inst")
+	provider.SetContextTokens(80)
+	oldUser := strings.Repeat("old-turn-", 40)
+	provider.SetHistory([]responses.ResponseInputItemUnionParam{
+		responses.ResponseInputItemParamOfMessage(oldUser, responses.EasyInputMessageRoleUser),
+		responses.ResponseInputItemParamOfMessage("old answer", responses.EasyInputMessageRoleAssistant),
+		responses.ResponseInputItemParamOfMessage("recent question", responses.EasyInputMessageRoleUser),
+		responses.ResponseInputItemParamOfFunctionCall("{}", "call-1", "run_command"),
+	})
+
+	var notices []string
+	// No user text: this is the step that follows a tool call, which is where
+	// a long loop used to grow the history past the window unchecked.
+	if _, err := provider.Respond(
+		context.Background(),
+		agent.ModelInput{ToolResults: []agent.ToolResult{{CallID: "call-1", Name: "run_command", Output: "done"}}},
+		nil,
+		func(event agent.Event) {
+			if event.Kind == agent.EventNotice {
+				notices = append(notices, event.Text)
+			}
+		},
+	); err != nil {
+		t.Fatalf("Respond() error = %v", err)
+	}
+
+	input, _ := json.Marshal(request["input"])
+	if strings.Contains(string(input), oldUser) {
+		t.Fatalf("input = %s, want the old turn compacted away", input)
+	}
+	if len(notices) != 1 || !strings.Contains(notices[0], "compacted") {
+		t.Fatalf("notices = %#v, want one compaction notice", notices)
+	}
+	// Compaction must not orphan the output of a call it dropped.
+	if strings.Contains(string(input), "call-1") && !strings.Contains(string(input), "function_call\"") {
+		t.Fatalf("input = %s, kept a tool output without its call", input)
 	}
 }
 

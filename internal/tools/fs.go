@@ -31,6 +31,7 @@ import (
 	"strings"
 
 	"gxx/internal/agent"
+	"gxx/internal/workspace"
 )
 
 const (
@@ -156,7 +157,7 @@ func (r *Registry) listFiles(ctx context.Context, raw json.RawMessage) (string, 
 	var entries []string
 	err = iofs.WalkDir(r.workspace.FS(), root, func(current string, entry iofs.DirEntry, walkErr error) error {
 		if walkErr != nil {
-			return walkErr
+			return workspace.Describe(current, walkErr)
 		}
 		if err := ctx.Err(); err != nil {
 			return err
@@ -280,7 +281,7 @@ func (r *Registry) searchFiles(ctx context.Context, raw json.RawMessage) (string
 	} else if info.IsDir() {
 		err = iofs.WalkDir(r.workspace.FS(), target, func(current string, entry iofs.DirEntry, walkErr error) error {
 			if walkErr != nil {
-				return walkErr
+				return workspace.Describe(current, walkErr)
 			}
 			if err := ctx.Err(); err != nil {
 				return err
@@ -464,7 +465,7 @@ func truncateLine(value string, limit int) string {
 	if len(value) <= limit {
 		return value
 	}
-	return value[:limit] + "…"
+	return cutAtRune(value, limit) + "…"
 }
 
 func isSensitivePath(value string) bool {

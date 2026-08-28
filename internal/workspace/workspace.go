@@ -93,7 +93,8 @@ func (w *Workspace) Stat(path string) (os.FileInfo, error) {
 	if err := w.rejectSymlinkComponents(clean, false); err != nil {
 		return nil, err
 	}
-	return w.guard.Stat(clean)
+	info, err := w.guard.Stat(clean)
+	return info, Describe(path, err)
 }
 
 func (w *Workspace) Lstat(path string) (os.FileInfo, error) {
@@ -101,7 +102,42 @@ func (w *Workspace) Lstat(path string) (os.FileInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	return w.guard.Lstat(clean)
+	info, err := w.guard.Lstat(clean)
+	return info, Describe(path, err)
+}
+
+// pathError reports a filesystem failure without the syscall name. os.Root
+// builds its errors with the raw operation it used, so an unreadable directory
+// surfaces to the model as "statat assets" rather than the path it asked for.
+type pathError struct {
+	message string
+	cause   error
+}
+
+func (e *pathError) Error() string { return e.message }
+func (e *pathError) Unwrap() error { return e.cause }
+
+// Describe rewrites a filesystem error in terms of the path the caller used.
+// The original is still wrapped, so errors.Is keeps matching fs.ErrNotExist and
+// friends.
+func Describe(path string, err error) error {
+	if err == nil {
+		return nil
+	}
+	var target *fs.PathError
+	if !errors.As(err, &target) {
+		return err
+	}
+	reason := target.Err.Error()
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		reason = "no such file or directory"
+	case errors.Is(err, fs.ErrPermission):
+		reason = "permission denied"
+	case errors.Is(err, fs.ErrExist):
+		reason = "already exists"
+	}
+	return &pathError{message: fmt.Sprintf("%s: %s", path, reason), cause: err}
 }
 
 // OpenRegular opens a bounded regular file through os.Root. O_NONBLOCK keeps
@@ -116,12 +152,12 @@ func (w *Workspace) OpenRegular(path string, maxBytes int64) (*os.File, error) {
 	}
 	file, err := w.guard.OpenFile(clean, os.O_RDONLY|syscall.O_NONBLOCK|syscall.O_NOFOLLOW, 0)
 	if err != nil {
-		return nil, err
+		return nil, Describe(path, err)
 	}
 	info, err := file.Stat()
 	if err != nil {
 		_ = file.Close()
-		return nil, err
+		return nil, Describe(path, err)
 	}
 	if !info.Mode().IsRegular() {
 		_ = file.Close()
@@ -166,7 +202,7 @@ func (w *Workspace) AtomicWrite(path string, data []byte) error {
 
 	parent := filepath.Dir(target)
 	if err := w.guard.MkdirAll(parent, 0o755); err != nil {
-		return fmt.Errorf("create parent directories: %w", err)
+		return fmt.Errorf("create parent directories: %w", Describe(parent, err))
 	}
 
 	mode := os.FileMode(0o644)
@@ -179,7 +215,7 @@ func (w *Workspace) AtomicWrite(path string, data []byte) error {
 		}
 		mode = info.Mode().Perm()
 	} else if !errors.Is(statErr, os.ErrNotExist) {
-		return fmt.Errorf("stat target: %w", statErr)
+		return fmt.Errorf("stat target: %w", Describe(path, statErr))
 	}
 
 	tempPath, temp, err := w.createTemp(parent, mode)
@@ -205,7 +241,7 @@ func (w *Workspace) AtomicWrite(path string, data []byte) error {
 	}
 	if err := w.guard.Rename(tempPath, target); err != nil {
 		cleanup()
-		return fmt.Errorf("replace file: %w", err)
+		return fmt.Errorf("replace file: %w", Describe(path, err))
 	}
 	return nil
 }
@@ -225,7 +261,7 @@ func (w *Workspace) rejectSymlinkComponents(path string, allowMissing bool) erro
 			if allowMissing && errors.Is(err, os.ErrNotExist) {
 				return nil
 			}
-			return err
+			return Describe(current, err)
 		}
 		if info.Mode()&os.ModeSymlink != 0 {
 			return fmt.Errorf("refusing path with symlink component: %s", current)

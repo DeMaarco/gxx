@@ -34,12 +34,18 @@ import (
 	"gxx/internal/approval"
 )
 
+// exitCodeLabel prefixes the result of a command that ran but exited non-zero.
+// internal/ui matches it to show the code on the tool line.
+const exitCodeLabel = "exit code"
+
 func (r *Registry) runCommandSpec() toolSpec {
 	return toolSpec{
 		definition: agent.ToolDefinition{
-			Name:        "run_command",
-			Description: "Run a shell command in the workspace with a finite timeout and sanitized environment. Requires user approval.",
-			ReadOnly:    false,
+			Name: "run_command",
+			Description: "Run a shell command in the workspace with a finite timeout and sanitized environment. Requires user approval. " +
+				"A command that exits non-zero is a normal result, returned as \"exit code N\" followed by its output; only a command that could not be started or that timed out is a tool error. " +
+				"Commands run under /bin/sh, which is neither a login nor an interactive shell, so interpreters installed through version managers such as nvm are not on PATH.",
+			ReadOnly: false,
 			Parameters: objectSchema(map[string]any{
 				"command": map[string]any{
 					"type":        "string",
@@ -107,13 +113,17 @@ func (r *Registry) runCommand(ctx context.Context, raw json.RawMessage) (string,
 		// remain in its process group, so terminate the group before returning.
 		_ = syscall.Kill(-command.Process.Pid, syscall.SIGKILL)
 		text := output.String()
-		if err != nil {
+		if err == nil {
+			if strings.TrimSpace(text) == "" {
+				return "Command completed successfully.", nil
+			}
+			return text, nil
+		}
+		var exitError *exec.ExitError
+		if !errors.As(err, &exitError) {
 			return text, fmt.Errorf("command failed: %w", err)
 		}
-		if strings.TrimSpace(text) == "" {
-			return "Command completed successfully.", nil
-		}
-		return text, nil
+		return reportExit(exitError, text), nil
 	case <-commandContext.Done():
 		_ = syscall.Kill(-command.Process.Pid, syscall.SIGKILL)
 		<-waited
@@ -122,6 +132,22 @@ func (r *Registry) runCommand(ctx context.Context, raw json.RawMessage) (string,
 		}
 		return output.String(), commandContext.Err()
 	}
+}
+
+// reportExit describes a process that ran to completion but exited non-zero.
+// That is an answer, not a tool failure. Reporting it as an error tells the
+// model the same thing a crashed tool would, and leaves the exit code behind
+// the first line of output where the renderer drops it.
+func reportExit(exitError *exec.ExitError, text string) string {
+	code := exitError.ExitCode()
+	header := fmt.Sprintf("%s %d", exitCodeLabel, code)
+	if status, ok := exitError.Sys().(syscall.WaitStatus); ok && status.Signaled() {
+		header = fmt.Sprintf("%s %d (%s)", exitCodeLabel, 128+int(status.Signal()), status.Signal())
+	}
+	if strings.TrimSpace(text) == "" {
+		return header + "\nCommand produced no output."
+	}
+	return header + "\n" + text
 }
 
 func (r *Registry) parseCommandArgs(raw json.RawMessage) (runCommandArgs, time.Duration, error) {

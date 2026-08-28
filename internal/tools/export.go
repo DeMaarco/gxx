@@ -17,6 +17,7 @@ package tools
 const (
 	MaxToolCallsPerBatch  = maxToolCallsPerBatch
 	DefaultIgnorePatterns = defaultIgnorePatterns
+	ExitCodeLabel         = exitCodeLabel
 )
 
 var (

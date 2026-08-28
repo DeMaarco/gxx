@@ -23,9 +23,11 @@ import (
 const (
 	ClearLine     = clearLine
 	ColorBold     = bold
+	ColorDim      = dim
 	ColorRed      = red
 	ColorGreen    = green
 	ColorYellow   = yellow
+	ColorCyan     = cyan
 	KeyRune       = keyRune
 	KeyEnter      = keyEnter
 	KeyTab        = keyTab

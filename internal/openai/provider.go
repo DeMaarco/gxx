@@ -145,9 +145,15 @@ func (p *Provider) Respond(
 				Text: "Closed unanswered tool calls from the previous turn.",
 			})
 		}
-		if p.shouldCompact(input.UserText) {
-			p.compactLocked(emit)
-		}
+	}
+	// A long tool loop can outgrow the window without the user typing again,
+	// so compaction cannot wait for the next prompt. Dropping whole turns only
+	// ever cuts at a user message, which never separates a call from its
+	// output.
+	if p.shouldCompact(input.UserText) {
+		p.compactLocked(emit)
+	}
+	if hasUserText {
 		p.history = append(p.history, responses.ResponseInputItemParamOfMessage(
 			input.UserText,
 			responses.EasyInputMessageRoleUser,
@@ -161,7 +167,7 @@ func (p *Provider) Respond(
 	staged := append([]responses.ResponseInputItemUnionParam(nil), p.history...)
 	generation := p.generation
 	timeout := p.timeout
-	params := p.requestParamsLocked(staged, definitions)
+	params := p.requestParamsLocked(staged, definitions, input.FinalStep)
 	client := p.client
 	p.refreshContextLocked()
 	p.mu.Unlock()
@@ -245,6 +251,7 @@ func (p *Provider) Respond(
 func (p *Provider) requestParamsLocked(
 	staged []responses.ResponseInputItemUnionParam,
 	definitions []agent.ToolDefinition,
+	finalStep bool,
 ) responses.ResponseNewParams {
 	params := responses.ResponseNewParams{
 		Model:             shared.ResponsesModel(p.model),
@@ -267,6 +274,11 @@ func (p *Provider) requestParamsLocked(
 			OfInputItemList: staged,
 		},
 		Tools: toolParams(definitions),
+	}
+	if finalStep {
+		params.ToolChoice = responses.ResponseNewParamsToolChoiceUnion{
+			OfToolChoiceMode: openaisdk.Opt(responses.ToolChoiceOptionsNone),
+		}
 	}
 	if p.fast {
 		params.ServiceTier = responses.ResponseNewParamsServiceTierFast
@@ -331,6 +343,11 @@ func (p *Provider) Reset() {
 }
 
 func toolParams(definitions []agent.ToolDefinition) []responses.ToolUnionParam {
+	if len(definitions) == 0 {
+		// An empty slice serializes to "tools": [], which withdraws the tool
+		// namespace. Omit the field instead.
+		return nil
+	}
 	params := make([]responses.ToolUnionParam, 0, len(definitions))
 	for _, definition := range definitions {
 		function := responses.FunctionToolParam{

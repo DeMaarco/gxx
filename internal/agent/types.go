@@ -153,6 +153,11 @@ func ContextPercent(used, window int64) int {
 type ModelInput struct {
 	UserText    string
 	ToolResults []ToolResult
+	// FinalStep asks for a tool-free answer. Providers must keep the tool
+	// definitions in the request and forbid calls instead: withdrawing the
+	// tools mid-conversation makes models write the call syntax as message
+	// text.
+	FinalStep bool
 }
 
 type ModelResponse struct {

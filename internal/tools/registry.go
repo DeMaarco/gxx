@@ -22,6 +22,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"gxx/internal/agent"
 	"gxx/internal/approval"
@@ -268,7 +269,20 @@ func truncate(value string, limit int) (string, bool) {
 	}
 	const marker = "\n… output truncated by gxx"
 	keep := max(limit-len(marker), 0)
-	return value[:keep] + marker, true
+	return cutAtRune(value, keep) + marker, true
+}
+
+// cutAtRune trims value to at most limit bytes, backing up to a character
+// boundary. Cutting mid-rune leaves the model reading a replacement character
+// where a source file had an accent.
+func cutAtRune(value string, limit int) string {
+	if len(value) <= limit {
+		return value
+	}
+	for limit > 0 && !utf8.RuneStart(value[limit]) {
+		limit--
+	}
+	return value[:limit]
 }
 
 func sanitize(value string) string {
