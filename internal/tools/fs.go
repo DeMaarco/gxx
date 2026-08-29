@@ -24,7 +24,6 @@ import (
 	"io"
 	iofs "io/fs"
 	"os"
-	pathpkg "path"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -49,7 +48,7 @@ func (r *Registry) listFilesSpec() toolSpec {
 	return toolSpec{
 		definition: agent.ToolDefinition{
 			Name:        "list_files",
-			Description: "List files and directories under a workspace-relative path. Default dependency directories, .gitignore, and .gxxignore patterns are skipped.",
+			Description: "List files and directories under a workspace-relative path. Default dependency directories, .gitignore, .gxxignore patterns, and sensitive paths are skipped.",
 			ReadOnly:    true,
 			Parameters: objectSchema(map[string]any{
 				"path": map[string]any{
@@ -144,6 +143,9 @@ func (r *Registry) listFiles(ctx context.Context, raw json.RawMessage) (string, 
 	if err != nil {
 		return "", err
 	}
+	if isSensitivePath(root) {
+		return "", refuseSensitive("list", path)
+	}
 	info, err := r.workspace.Stat(root)
 	if err != nil {
 		return "", err
@@ -155,6 +157,7 @@ func (r *Registry) listFiles(ctx context.Context, raw json.RawMessage) (string, 
 	matcher := r.ignoreForWalk(root)
 	reportProgressNow(ctx, root)
 	var entries []string
+	omitted := 0
 	err = iofs.WalkDir(r.workspace.FS(), root, func(current string, entry iofs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return workspace.Describe(current, walkErr)
@@ -166,11 +169,10 @@ func (r *Registry) listFiles(ctx context.Context, raw json.RawMessage) (string, 
 			return nil
 		}
 
-		relativeToRoot, err := filepath.Rel(root, current)
+		currentDepth, err := walkDepth(root, current)
 		if err != nil {
 			return err
 		}
-		currentDepth := strings.Count(relativeToRoot, "/") + 1
 		r.loadNestedIgnore(matcher, current, entry, root)
 		ignored := matcher.ignores(current, entry.IsDir())
 		if ignored && entry.IsDir() && !matcher.hasNegation {
@@ -183,6 +185,13 @@ func (r *Registry) listFiles(ctx context.Context, raw json.RawMessage) (string, 
 			return nil
 		}
 		if ignored {
+			return nil
+		}
+		if isSensitivePath(current) {
+			omitted++
+			if entry.IsDir() {
+				return iofs.SkipDir
+			}
 			return nil
 		}
 		if entry.Type()&os.ModeSymlink != 0 {
@@ -206,12 +215,32 @@ func (r *Registry) listFiles(ctx context.Context, raw json.RawMessage) (string, 
 		return "", err
 	}
 	if len(entries) == 0 {
+		if omitted > 0 {
+			return omittedSensitiveNotice(omitted), nil
+		}
 		return "No files found.", nil
 	}
 	if len(entries) == maxListEntries {
 		entries = append(entries, "… file list limited by gxx")
 	}
+	if omitted > 0 {
+		entries = append(entries, omittedSensitiveNotice(omitted))
+	}
 	return strings.Join(entries, "\n"), nil
+}
+
+// walkDepth is 1 for a direct child of root. Paths are slash-normalized so
+// max_depth works on Windows, where filepath.Rel returns backslashes.
+func walkDepth(root, current string) (int, error) {
+	relative, err := filepath.Rel(filepath.FromSlash(root), filepath.FromSlash(current))
+	if err != nil {
+		return 0, err
+	}
+	relative = filepath.ToSlash(relative)
+	if relative == "" || relative == "." {
+		return 0, nil
+	}
+	return strings.Count(relative, "/") + 1, nil
 }
 
 type searchFilesArgs struct {
@@ -270,7 +299,7 @@ func (r *Registry) searchFiles(ctx context.Context, raw json.RawMessage) (string
 	}
 	if info.Mode().IsRegular() {
 		if isSensitivePath(target) {
-			return "", fmt.Errorf("refusing to search sensitive path: %s", path)
+			return "", refuseSensitive("search", path)
 		}
 		if matcher.ignores(target, false) {
 			return "No matches found.", nil
@@ -343,7 +372,7 @@ func (r *Registry) readFile(ctx context.Context, raw json.RawMessage) (string, e
 	}
 
 	if isSensitivePath(args.Path) {
-		return "", fmt.Errorf("refusing to read sensitive path: %s", args.Path)
+		return "", refuseSensitive("read", args.Path)
 	}
 	file, err := r.workspace.OpenRegular(args.Path, maxEditableFile)
 	if err != nil {
@@ -472,28 +501,6 @@ func truncateLine(value string, limit int) string {
 		return value
 	}
 	return cutAtRune(value, limit) + "…"
-}
-
-func isSensitivePath(value string) bool {
-	clean := strings.ToLower(pathpkg.Clean(strings.ReplaceAll(value, "\\", "/")))
-	base := pathpkg.Base(clean)
-	if clean == ".git" || strings.HasPrefix(clean, ".git/") || strings.Contains(clean, "/.git/") {
-		return true
-	}
-	if base == ".env" || strings.HasPrefix(base, ".env.") {
-		return true
-	}
-	switch base {
-	case ".netrc", ".npmrc", ".pypirc", "credentials", "credentials.json",
-		"id_dsa", "id_ecdsa", "id_ed25519", "id_rsa":
-		return true
-	}
-	for _, suffix := range []string{".jks", ".key", ".p12", ".pem", ".pfx"} {
-		if strings.HasSuffix(base, suffix) {
-			return true
-		}
-	}
-	return false
 }
 
 func objectSchema(properties map[string]any, required ...string) map[string]any {

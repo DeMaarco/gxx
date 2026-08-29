@@ -39,6 +39,7 @@ var (
 	ParseRateLimit      = parseRateLimit
 	Retryable           = retryable
 	PromptCacheKey      = promptCacheKey
+	EmergencyFit        = emergencyFit
 )
 
 func ToolParams(definitions []agent.ToolDefinition) []responses.ToolUnionParam {

@@ -24,6 +24,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -40,7 +41,7 @@ func (r *Registry) gitStatusSpec() toolSpec {
 	return toolSpec{
 		definition: agent.ToolDefinition{
 			Name:        "git_status",
-			Description: "Show git status for the workspace repository (porcelain). Read-only. Fails if the git root or git dir is outside the workspace.",
+			Description: "Show git status for the workspace repository (porcelain). Read-only. Sensitive paths are omitted. Fails if the git root or git dir is outside the workspace.",
 			ReadOnly:    true,
 			Parameters: map[string]any{
 				"type":                 "object",
@@ -57,7 +58,7 @@ func (r *Registry) gitDiffSpec() toolSpec {
 	return toolSpec{
 		definition: agent.ToolDefinition{
 			Name:        "git_diff",
-			Description: "Show git diff for the workspace repository. Optional path limits the diff. staged true uses the index. Read-only.",
+			Description: "Show git diff for the workspace repository. Optional path limits the diff. staged true uses the index. Read-only. Sensitive paths are omitted.",
 			ReadOnly:    true,
 			Parameters: objectSchema(map[string]any{
 				"path": map[string]any{
@@ -99,10 +100,17 @@ func (r *Registry) gitStatus(ctx context.Context, raw json.RawMessage) (string, 
 	if err != nil {
 		return "", err
 	}
-	if strings.TrimSpace(output) == "" {
+	filtered, omitted := filterPorcelainStatus(output)
+	if strings.TrimSpace(filtered) == "" {
+		if omitted > 0 {
+			return omittedSensitiveNotice(omitted), nil
+		}
 		return "No changes.", nil
 	}
-	return output, nil
+	if omitted > 0 {
+		return filtered + "\n" + omittedSensitiveNotice(omitted), nil
+	}
+	return filtered, nil
 }
 
 type gitDiffArgs struct {
@@ -115,25 +123,64 @@ func (r *Registry) gitDiff(ctx context.Context, raw json.RawMessage) (string, er
 	if err := decodeArgs(raw, &args); err != nil {
 		return "", err
 	}
-	command := []string{"diff"}
-	if optionalBool(args.Staged, false) {
-		command = append(command, "--cached")
-	}
+	staged := optionalBool(args.Staged, false)
+	var clean string
 	if path := optionalString(args.Path, ""); path != "" {
-		clean, err := r.workspace.Clean(path)
+		var err error
+		clean, err = r.workspace.Clean(path)
 		if err != nil {
 			return "", err
 		}
-		command = append(command, "--", clean)
+		if isSensitivePath(clean) {
+			return "", refuseSensitive("diff", path)
+		}
 	}
+	kept, omitted, err := r.gitDiffNames(ctx, staged, clean)
+	if err != nil {
+		return "", err
+	}
+	if len(kept) == 0 {
+		if omitted > 0 {
+			return omittedSensitiveNotice(omitted), nil
+		}
+		return "No diff.", nil
+	}
+	command := []string{"diff"}
+	if staged {
+		command = append(command, "--cached")
+	}
+	command = append(command, "--")
+	command = append(command, kept...)
 	output, err := r.runGit(ctx, command...)
 	if err != nil {
 		return "", err
 	}
 	if strings.TrimSpace(output) == "" {
+		if omitted > 0 {
+			return omittedSensitiveNotice(omitted), nil
+		}
 		return "No diff.", nil
 	}
+	if omitted > 0 {
+		return output + "\n" + omittedSensitiveNotice(omitted), nil
+	}
 	return output, nil
+}
+
+func (r *Registry) gitDiffNames(ctx context.Context, staged bool, path string) ([]string, int, error) {
+	command := []string{"diff", "--name-status", "-z"}
+	if staged {
+		command = append(command, "--cached")
+	}
+	if path != "" {
+		command = append(command, "--", path)
+	}
+	output, err := r.runGit(ctx, command...)
+	if err != nil {
+		return nil, 0, err
+	}
+	kept, omitted := filterGitNameStatus(output)
+	return kept, omitted, nil
 }
 
 type gitLogArgs struct {
@@ -270,4 +317,102 @@ func hasFilePathPrefix(path, prefix string) bool {
 		return len(path) >= len(prefix) && strings.EqualFold(path[:len(prefix)], prefix)
 	}
 	return strings.HasPrefix(path, prefix)
+}
+
+func filterGitNameStatus(output string) (kept []string, omitted int) {
+	fields := splitGitNull(output)
+	for i := 0; i < len(fields); {
+		status := fields[i]
+		i++
+		if status == "" {
+			continue
+		}
+		rename := status[0] == 'R' || status[0] == 'C'
+		if rename {
+			if i+1 >= len(fields) {
+				break
+			}
+			oldPath, newPath := fields[i], fields[i+1]
+			i += 2
+			if isSensitivePath(oldPath) || isSensitivePath(newPath) {
+				omitted++
+				continue
+			}
+			kept = append(kept, newPath)
+			continue
+		}
+		if i >= len(fields) {
+			break
+		}
+		path := fields[i]
+		i++
+		if isSensitivePath(path) {
+			omitted++
+			continue
+		}
+		kept = append(kept, path)
+	}
+	return kept, omitted
+}
+
+func filterPorcelainStatus(output string) (string, int) {
+	if strings.TrimSpace(output) == "" {
+		return "", 0
+	}
+	var kept []string
+	omitted := 0
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimRight(line, "\r")
+		if line == "" {
+			continue
+		}
+		if porcelainLineSensitive(line) {
+			omitted++
+			continue
+		}
+		kept = append(kept, line)
+	}
+	return strings.Join(kept, "\n"), omitted
+}
+
+func porcelainLineSensitive(line string) bool {
+	rest := line
+	if len(line) >= 3 && line[2] == ' ' {
+		rest = line[3:]
+	}
+	for _, path := range porcelainPaths(rest) {
+		if isSensitivePath(path) {
+			return true
+		}
+	}
+	return false
+}
+
+func porcelainPaths(rest string) []string {
+	rest = strings.TrimSpace(rest)
+	if left, right, ok := strings.Cut(rest, " -> "); ok {
+		return []string{unquoteGitPath(left), unquoteGitPath(right)}
+	}
+	return []string{unquoteGitPath(rest)}
+}
+
+func unquoteGitPath(value string) string {
+	value = strings.TrimSpace(value)
+	if len(value) >= 2 && value[0] == '"' {
+		if unquoted, err := strconv.Unquote(value); err == nil {
+			return unquoted
+		}
+	}
+	return value
+}
+
+func splitGitNull(output string) []string {
+	var paths []string
+	for _, part := range strings.Split(output, "\x00") {
+		if part == "" {
+			continue
+		}
+		paths = append(paths, part)
+	}
+	return paths
 }

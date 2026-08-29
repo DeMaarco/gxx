@@ -46,7 +46,7 @@ The status line is model · permission mode · effort · context size · window 
 | **Plan mode** | `Shift+Tab` for a read-only pass: inspect and design, no writes and no shell. |
 | **Git inspect** | `git_status`, `git_diff`, and `git_log` are read-only and stay inside the workspace. |
 | **One-shot CLI** | `gxx ask` for scripts and pipes. `--json` when you want a machine-readable result. |
-| **Secret-aware** | `.env`, keys, and credential paths stay blocked. Requests go out with `store:false`. |
+| **Secret-aware** | `.env`, keys, and credential paths are blocked on read, search, list, patch, git inspect, and shell commands that name them. Requests go out with `store:false`. |
 
 ## Install
 
@@ -121,7 +121,7 @@ echo "what does main.go do?" | gxx ask
 gxx usage
 ```
 
-Drop an `AGENTS.md` in the project root if you want extra instructions loaded into the session. It is re-read at the start of every turn and on `/clear`.
+Drop an `AGENTS.md` in the project root if you want extra instructions loaded into the session. It is re-read at the start of every turn and on `/clear`. Those notes cannot override gxx safety, permission, or plan-mode rules.
 
 ## REPL
 
@@ -183,7 +183,8 @@ Commands are not OS-sandboxed — review them in `ask`. Changing `/mode` clears 
 
 - Requests use `store:false`.
 - Only files the tools actually open go to OpenAI.
-- Secret paths (`.env`, keys, credentials) are blocked.
+- Secret paths (`.env`, keys, credentials) are blocked on file tools, git inspect, and commands that name them.
+- The saved API key is owner-only (`0600` on Unix, a user-only ACL on Windows).
 - Do not point it at code you cannot send to that account.
 
 ## Build from source

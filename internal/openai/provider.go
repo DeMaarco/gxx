@@ -39,6 +39,10 @@ import (
 
 const fallbackHistoryItems = 256
 
+// ErrContextOverflow is returned when history still exceeds the window after
+// compaction and emergency clipping. The API is not called.
+var ErrContextOverflow = errors.New("context window is full; run /clear or start a new conversation")
+
 // Provider implements a store:false Responses conversation. It resends the
 // completed output items, including encrypted reasoning, on each turn.
 type Provider struct {
@@ -192,10 +196,22 @@ func (p *Provider) Respond(
 		return result, errors.New("model input contains neither a user message nor tool results")
 	}
 
-	staged := append([]responses.ResponseInputItemUnionParam(nil), p.history...)
+	staged := slimInput(
+		append([]responses.ResponseInputItemUnionParam(nil), p.history...),
+		p.ecoLevel,
+		p.ecoToolKeep,
+		p.ecoToolClip,
+	)
+	if p.overBudget(staged) {
+		staged = emergencyFit(staged, p.contextTokens, p.instructions)
+	}
+	if p.overBudget(staged) {
+		p.mu.Unlock()
+		return result, ErrContextOverflow
+	}
 	generation := p.generation
 	timeout := p.timeout
-	params := p.requestParamsLocked(slimInput(staged, p.ecoLevel, p.ecoToolKeep, p.ecoToolClip), definitions, input.FinalStep)
+	params := p.requestParamsLocked(staged, definitions, input.FinalStep)
 	client := p.client
 	p.refreshContextLocked()
 	p.mu.Unlock()
@@ -276,7 +292,7 @@ func (p *Provider) requestParamsLocked(
 	definitions []agent.ToolDefinition,
 	finalStep bool,
 ) responses.ResponseNewParams {
-	instructions := compressInstructions(p.instructions, p.ecoLevel)
+	instructions := agent.CompressProjectInstructions(p.instructions, p.ecoLevel)
 	params := responses.ResponseNewParams{
 		Model:             shared.ResponsesModel(p.model),
 		Instructions:      openaisdk.String(instructions),
@@ -424,10 +440,6 @@ func cloneJSON(value map[string]any) map[string]any {
 		return value
 	}
 	return cloned
-}
-
-func compressInstructions(text string, level int) string {
-	return caveman.Compress(text, level)
 }
 
 func outputItemParam(item responses.ResponseOutputItemUnion) (responses.ResponseInputItemUnionParam, bool) {

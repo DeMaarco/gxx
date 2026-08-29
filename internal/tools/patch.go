@@ -211,7 +211,7 @@ func (r *Registry) applyPatchChange(
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 	if isSensitivePath(clean) {
-		return nil, fmt.Errorf("refusing to patch sensitive path: %s", clean)
+		return nil, refuseSensitive("patch", clean)
 	}
 
 	work, seen := byPath[clean]

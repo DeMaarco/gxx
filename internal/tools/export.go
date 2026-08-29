@@ -26,6 +26,9 @@ var (
 	DefaultGoCache       = defaultGoCache
 	CommandRiskNotes     = commandRiskNotes
 	PathInsideWorkspace  = pathInsideWorkspace
+	IsSensitivePath      = isSensitivePath
+	WalkDepth            = walkDepth
+	FilterGitNameStatus  = filterGitNameStatus
 )
 
 type IgnoreMatcher = ignoreMatcher

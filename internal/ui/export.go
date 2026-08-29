@@ -65,6 +65,7 @@ var (
 	PromptPrefix        = promptPrefix
 	CatalogModels       = catalogModels
 	ParseModelCommand   = parseModelCommand
+	ApplyModelCommand   = applyModelCommand
 	ParseModeCommand    = parseModeCommand
 	ParseEcoCommand     = parseEcoCommand
 	EncodeModelCommand  = encodeModelCommand

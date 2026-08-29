@@ -476,4 +476,7 @@ func TestSaveMigratesLegacyWindowsConfig(t *testing.T) {
 	if !strings.Contains(string(data), "new-key") {
 		t.Fatalf("preferred config = %q", data)
 	}
+	if _, err := os.Stat(filepath.Join(legacyDir, "config.json")); !os.IsNotExist(err) {
+		t.Fatalf("legacy config still present: %v", err)
+	}
 }

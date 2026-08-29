@@ -348,7 +348,7 @@ func savePersistent(mutate func(*persistentConfig) error) (string, error) {
 	if err := os.MkdirAll(directory, 0o700); err != nil {
 		return "", fmt.Errorf("create config directory: %w", err)
 	}
-	if err := os.Chmod(directory, 0o700); err != nil && osutil.UnixPermissions() {
+	if err := osutil.RestrictToCurrentUser(directory); err != nil {
 		return "", fmt.Errorf("secure config directory: %w", err)
 	}
 	if info, err := os.Lstat(path); err == nil {
@@ -375,6 +375,10 @@ func savePersistent(mutate func(*persistentConfig) error) (string, error) {
 		cleanup()
 		return "", fmt.Errorf("secure temporary config: %w", err)
 	}
+	if err := osutil.RestrictToCurrentUser(tempPath); err != nil {
+		cleanup()
+		return "", fmt.Errorf("secure temporary config: %w", err)
+	}
 	encoder := json.NewEncoder(temp)
 	encoder.SetEscapeHTML(false)
 	if err := encoder.Encode(stored); err != nil {
@@ -389,10 +393,22 @@ func savePersistent(mutate func(*persistentConfig) error) (string, error) {
 		cleanup()
 		return "", fmt.Errorf("replace config: %w", err)
 	}
-	if err := os.Chmod(path, 0o600); err != nil && osutil.UnixPermissions() {
+	if err := osutil.RestrictToCurrentUser(path); err != nil {
 		return "", fmt.Errorf("secure config: %w", err)
 	}
+	removeLegacyWindowsConfig(path)
 	return path, nil
+}
+
+func removeLegacyWindowsConfig(preferred string) {
+	if runtime.GOOS != "windows" || strings.TrimSpace(os.Getenv("XDG_CONFIG_HOME")) != "" {
+		return
+	}
+	legacy, err := unixConfigPath()
+	if err != nil || configPathsEqual(preferred, legacy) {
+		return
+	}
+	_ = os.Remove(legacy)
 }
 
 func envString(name, fallback string) string {

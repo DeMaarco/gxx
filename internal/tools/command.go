@@ -39,6 +39,7 @@ func (r *Registry) runCommandSpec() toolSpec {
 		definition: agent.ToolDefinition{
 			Name: "run_command",
 			Description: "Run a shell command in the workspace with a finite timeout and sanitized environment. Requires user approval. " +
+				"Commands that name sensitive paths such as .env, keys, or credentials are refused. " +
 				"A command that exits non-zero is a normal result, returned as \"exit code N\" followed by its output; only a command that could not be started or that timed out is a tool error. " +
 				commandShellDescription(),
 			ReadOnly: false,
@@ -76,14 +77,19 @@ func (r *Registry) previewRunCommand(raw json.RawMessage) (approval.Action, erro
 		return approval.Action{}, err
 	}
 	preview := "$ " + args.Command
-	if notes := commandRiskNotes(args.Command); len(notes) > 0 {
+	notes := commandRiskNotes(args.Command)
+	if len(notes) > 0 {
 		preview += "\n" + strings.Join(notes, "\n")
+	}
+	repeat := args.Command
+	if len(notes) > 0 {
+		repeat = ""
 	}
 	return approval.Action{
 		Title:     "Run command in " + r.workspace.Root(),
 		Preview:   approval.CapPreview(preview),
 		Kind:      approval.KindCommand,
-		RepeatKey: args.Command,
+		RepeatKey: repeat,
 	}, nil
 }
 
@@ -95,6 +101,9 @@ func (r *Registry) parseCommandArgs(raw json.RawMessage) (runCommandArgs, time.D
 	args.Command = strings.TrimSpace(args.Command)
 	if args.Command == "" {
 		return args, 0, errors.New("command cannot be empty")
+	}
+	if hasSensitivePathToken(args.Command) {
+		return args, 0, errors.New("refusing to run command that may touch a sensitive path")
 	}
 
 	timeout := r.commandTimeout

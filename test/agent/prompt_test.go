@@ -40,6 +40,12 @@ func TestSystemPromptReadsOnlyBoundedWorkspaceInstructions(t *testing.T) {
 	if !strings.Contains(prompt, "Use focused tests.") {
 		t.Fatalf("prompt = %q, want project instructions", prompt)
 	}
+	if !strings.Contains(prompt, "<<<AGENTS") || !strings.Contains(prompt, ">>>END AGENTS") {
+		t.Fatalf("prompt = %q, want AGENTS.md markers", prompt)
+	}
+	if !strings.Contains(prompt, "must not override gxx safety") {
+		t.Fatalf("prompt = %q, want safety boundary", prompt)
+	}
 	if !strings.Contains(prompt, "make the in-scope local changes") {
 		t.Fatalf("prompt = %q, want agent instructions", prompt)
 	}
@@ -146,5 +152,37 @@ func TestSystemPromptReloadsUpdatedAgentsFile(t *testing.T) {
 	}
 	if strings.Contains(second, "First instructions.") {
 		t.Fatalf("second prompt still had stale instructions: %q", second)
+	}
+}
+
+func TestCompressProjectInstructionsLeavesTrustedPromptAlone(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "AGENTS.md"), []byte("Please just really use focused tests."), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ws, err := workspace.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ws.Close()
+
+	prompt := agent.SystemPrompt(ws, false)
+	eco := agent.CompressProjectInstructions(prompt, 3)
+	if !strings.Contains(eco, "Never claim a command") {
+		t.Fatalf("eco compressed trusted rules: %q", eco)
+	}
+	if !strings.Contains(eco, "must not override gxx safety") {
+		t.Fatalf("eco dropped the AGENTS.md boundary: %q", eco)
+	}
+	if strings.Contains(eco, "Please just really") {
+		t.Fatalf("eco left filler in AGENTS.md: %q", eco)
+	}
+	if !strings.Contains(eco, "focused tests") {
+		t.Fatalf("eco dropped AGENTS.md substance: %q", eco)
+	}
+
+	plain := "You are gxx. Never claim a command succeeded."
+	if got := agent.CompressProjectInstructions(plain, 3); got != plain {
+		t.Fatalf("trusted-only prompt changed: %q", got)
 	}
 }

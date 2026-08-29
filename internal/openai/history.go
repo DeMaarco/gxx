@@ -121,8 +121,11 @@ func (p *Provider) shouldCompact(userText string) bool {
 	if userText != "" {
 		extra = estimateTokens(len(userText))
 	}
-	if p.lastInputTokens > 0 && p.contextTokens > 0 && p.lastInputTokens+extra > p.compactTarget() {
-		return true
+	if p.lastInputTokens > 0 && p.contextTokens > 0 {
+		projected := p.lastInputTokens + extra
+		if projected > int64(p.contextTokens) || projected > p.compactTarget() {
+			return true
+		}
 	}
 	if userText == "" {
 		return p.overTarget(p.history)
@@ -161,6 +164,44 @@ func (p *Provider) compactTarget() int64 {
 		numer, denom = 2, 3
 	}
 	return int64(p.contextTokens) * int64(numer) / int64(denom)
+}
+
+const emergencyToolClipBytes = 512
+
+func emergencyFit(
+	items []responses.ResponseInputItemUnionParam,
+	window int,
+	instructions string,
+) []responses.ResponseInputItemUnionParam {
+	items = dropAllReasoning(items)
+	items = clipAllToolOutputs(items, emergencyToolClipBytes)
+	if window > 0 {
+		items = dropOldTurns(items, int64(window)/2, instructions)
+	}
+	return items
+}
+
+func clipAllToolOutputs(items []responses.ResponseInputItemUnionParam, maxBytes int) []responses.ResponseInputItemUnionParam {
+	if maxBytes <= 0 {
+		return items
+	}
+	out := append([]responses.ResponseInputItemUnionParam(nil), items...)
+	for index := range out {
+		id, _, isOutput := functionCallID(out[index])
+		if !isOutput {
+			continue
+		}
+		text := functionCallOutput(out[index])
+		if len(text) <= maxBytes {
+			continue
+		}
+		clipped := clipBytes(text, maxBytes)
+		if maxBytes > 24 {
+			clipped = clipBytes(text, maxBytes-22) + "\n… [context clipped]"
+		}
+		out[index] = responses.ResponseInputItemParamOfFunctionCallOutput(id, clipped)
+	}
+	return out
 }
 
 func slimInput(items []responses.ResponseInputItemUnionParam, level, keep, clip int) []responses.ResponseInputItemUnionParam {

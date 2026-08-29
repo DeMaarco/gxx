@@ -15,6 +15,9 @@
 package openai_test
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -49,5 +52,31 @@ func TestContextSnapshotCountsInstructionsAndHistory(t *testing.T) {
 	}
 	if used.Percent != agent.ContextPercent(used.UsedTokens, used.WindowTokens) {
 		t.Fatalf("percent = %d", used.Percent)
+	}
+}
+
+func TestRespondFailsClosedWhenHistoryExceedsWindow(t *testing.T) {
+	provider := openai.New("test-key", "gpt-5.6-sol", "inst", time.Second)
+	provider.SetContextTokens(40)
+	_, err := provider.Respond(
+		context.Background(),
+		agent.ModelInput{UserText: strings.Repeat("x", 4000)},
+		nil,
+		nil,
+	)
+	if !errors.Is(err, openai.ErrContextOverflow) {
+		t.Fatalf("Respond() error = %v, want context overflow", err)
+	}
+}
+
+func TestEmergencyFitClipsCurrentTurnToolOutput(t *testing.T) {
+	items := []responses.ResponseInputItemUnionParam{
+		responses.ResponseInputItemParamOfMessage("task", responses.EasyInputMessageRoleUser),
+		responses.ResponseInputItemParamOfFunctionCallOutput("call_1", strings.Repeat("a", 2000)),
+	}
+	got := openai.EmergencyFit(items, 80, "inst")
+	data, _ := json.Marshal(got[len(got)-1])
+	if !strings.Contains(string(data), "context clipped") {
+		t.Fatalf("current-turn tool output = %s, want emergency clip", data)
 	}
 }

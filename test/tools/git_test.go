@@ -76,6 +76,76 @@ func TestGitToolsInspectWorkspaceRepo(t *testing.T) {
 	}
 }
 
+func TestGitToolsOmitSensitivePaths(t *testing.T) {
+	requireGit(t)
+	root := t.TempDir()
+	writeTestFile(t, root, "README.md", "hello\n")
+	writeTestFile(t, root, ".env", "API_TOKEN=very-secret\n")
+	initGitRepo(t, root)
+	runGit(t, root, "add", "README.md", ".env")
+	runGit(t, root, "commit", "-m", "initial")
+	writeTestFile(t, root, "README.md", "hello world\n")
+	writeTestFile(t, root, ".env", "API_TOKEN=changed\n")
+
+	registry := newTestRegistry(t, root, &staticApprover{}, tools.Options{
+		MaxResultBytes:  4096,
+		MaxSearchResult: 10,
+		ParallelReads:   1,
+		CommandTimeout:  time.Second,
+	})
+
+	status := registry.Execute(context.Background(), []agent.ToolCall{
+		toolCall("status", "git_status", map[string]any{}),
+	}, nil)[0]
+	if status.IsError {
+		t.Fatalf("git_status failed: %s", status.Output)
+	}
+	if !strings.Contains(status.Output, "README.md") {
+		t.Fatalf("status = %q, want README.md", status.Output)
+	}
+	if strings.Contains(status.Output, ".env") || strings.Contains(status.Output, "very-secret") || strings.Contains(status.Output, "changed") {
+		t.Fatalf("status leaked a sensitive path: %q", status.Output)
+	}
+	if !strings.Contains(status.Output, "omitted by gxx") {
+		t.Fatalf("status = %q, want omitted notice", status.Output)
+	}
+
+	diff := registry.Execute(context.Background(), []agent.ToolCall{
+		toolCall("diff", "git_diff", map[string]any{"path": nil, "staged": nil}),
+	}, nil)[0]
+	if diff.IsError {
+		t.Fatalf("git_diff failed: %s", diff.Output)
+	}
+	if !strings.Contains(diff.Output, "hello world") {
+		t.Fatalf("diff = %q, want working tree change", diff.Output)
+	}
+	if strings.Contains(diff.Output, ".env") || strings.Contains(diff.Output, "API_TOKEN") {
+		t.Fatalf("diff leaked a sensitive path: %q", diff.Output)
+	}
+
+	targeted := registry.Execute(context.Background(), []agent.ToolCall{
+		toolCall("diff", "git_diff", map[string]any{"path": ".env", "staged": nil}),
+	}, nil)[0]
+	if !targeted.IsError || !strings.Contains(targeted.Output, "sensitive path") {
+		t.Fatalf("git_diff .env = %+v, want sensitive-path error", targeted)
+	}
+
+	runGit(t, root, "checkout", "--", ".env", "README.md")
+	runGit(t, root, "mv", ".env", "leaked.txt")
+	renamed := registry.Execute(context.Background(), []agent.ToolCall{
+		toolCall("diff", "git_diff", map[string]any{"path": nil, "staged": true}),
+	}, nil)[0]
+	if renamed.IsError {
+		t.Fatalf("git_diff rename failed: %s", renamed.Output)
+	}
+	if strings.Contains(renamed.Output, "API_TOKEN") || strings.Contains(renamed.Output, "very-secret") {
+		t.Fatalf("rename diff leaked secret: %q", renamed.Output)
+	}
+	if !strings.Contains(renamed.Output, "omitted by gxx") {
+		t.Fatalf("rename diff = %q, want omitted notice", renamed.Output)
+	}
+}
+
 func TestGitToolsRejectRepoOutsideWorkspace(t *testing.T) {
 	requireGit(t)
 	outside := t.TempDir()

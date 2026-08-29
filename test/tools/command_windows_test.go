@@ -269,28 +269,25 @@ func TestAutoRunsCommandsWithoutPrompt(t *testing.T) {
 	}
 }
 
-func TestRunCommandPreviewWarnsOnSensitivePath(t *testing.T) {
+func TestRunCommandPreviewRejectsSensitivePath(t *testing.T) {
 	root := t.TempDir()
-	approver := &staticApprover{approved: false}
+	approver := &staticApprover{approved: true}
 	registry := newTestRegistry(t, root, approver, tools.Options{
 		MaxResultBytes:  4096,
 		MaxSearchResult: 10,
 		ParallelReads:   1,
 		CommandTimeout:  time.Second,
 	})
-	_ = registry.Execute(context.Background(), []agent.ToolCall{
+	result := registry.Execute(context.Background(), []agent.ToolCall{
 		toolCall("command", "run_command", map[string]any{
 			"command": "Get-Content .env", "timeout_seconds": nil,
 		}),
-	}, nil)
-	if len(approver.actions) != 1 {
-		t.Fatalf("actions = %#v", approver.actions)
+	}, nil)[0]
+	if !result.IsError || !strings.Contains(result.Output, "sensitive path") {
+		t.Fatalf("result = %+v, want sensitive-path refusal", result)
 	}
-	if !strings.Contains(approver.actions[0].Preview, "sensitive path") {
-		t.Fatalf("preview = %q, want sensitive path warning", approver.actions[0].Preview)
-	}
-	if approver.actions[0].RepeatKey != "Get-Content .env" {
-		t.Fatalf("RepeatKey = %q", approver.actions[0].RepeatKey)
+	if len(approver.actions) != 0 {
+		t.Fatalf("sensitive command was prompted: %#v", approver.actions)
 	}
 }
 

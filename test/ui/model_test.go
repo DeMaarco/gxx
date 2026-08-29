@@ -15,6 +15,8 @@
 package ui_test
 
 import (
+	"bytes"
+	"errors"
 	"testing"
 
 	"gxx/internal/ui"
@@ -58,6 +60,29 @@ func TestParseModelCommand(t *testing.T) {
 	}
 	if _, err := ui.ParseModelCommand("/model extra leftover"); err == nil {
 		t.Fatal("expected unexpected argument error")
+	}
+}
+
+func TestApplyModelCommandRollsBackOnSyncError(t *testing.T) {
+	settings := ui.REPLSettings{
+		Model:   "gpt-5.6-sol",
+		Context: "272k",
+		Effort:  "medium",
+		Fast:    false,
+		SyncSession: func(ui.REPLSettings) error {
+			return errors.New("disk full")
+		},
+	}
+	var output bytes.Buffer
+	changed, err := ui.ApplyModelCommand(&output, &settings, "/model terra context=1m effort=high fast=on")
+	if err == nil {
+		t.Fatal("ApplyModelCommand() succeeded, want sync error")
+	}
+	if changed {
+		t.Fatal("failed sync reported a model change")
+	}
+	if settings.Model != "gpt-5.6-sol" || settings.Context != "272k" || settings.Effort != "medium" || settings.Fast {
+		t.Fatalf("settings mutated after failed sync: %+v", settings)
 	}
 }
 

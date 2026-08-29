@@ -14,9 +14,29 @@
 
 package osutil
 
-import "runtime"
+import (
+	"os"
+	"runtime"
+)
 
 // UnixPermissions reports whether POSIX permission bits are meaningful.
 func UnixPermissions() bool {
 	return runtime.GOOS != "windows"
+}
+
+// RestrictToCurrentUser makes path readable only by the current user.
+// Unix uses 0600/0700. Windows replaces the DACL with an owner-only ACL.
+func RestrictToCurrentUser(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if UnixPermissions() {
+		mode := os.FileMode(0o600)
+		if info.IsDir() {
+			mode = 0o700
+		}
+		return os.Chmod(path, mode)
+	}
+	return restrictToCurrentUser(path)
 }

@@ -764,7 +764,7 @@ func applyModelCommand(writer io.Writer, settings *REPLSettings, line string) (b
 		return false, nil
 	}
 
-	previousModel := settings.Model
+	previous := *settings
 	if command.Model != "" {
 		settings.Model = command.Model
 	}
@@ -779,6 +779,10 @@ func applyModelCommand(writer io.Writer, settings *REPLSettings, line string) (b
 	}
 	if settings.SyncSession != nil {
 		if err := settings.SyncSession(*settings); err != nil {
+			settings.Model = previous.Model
+			settings.Context = previous.Context
+			settings.Effort = previous.Effort
+			settings.Fast = previous.Fast
 			return false, err
 		}
 	}
@@ -791,7 +795,7 @@ func applyModelCommand(writer io.Writer, settings *REPLSettings, line string) (b
 			settings.Fast,
 		)),
 	)
-	return command.Model != "" && command.Model != previousModel, nil
+	return command.Model != "" && command.Model != previous.Model, nil
 }
 
 func applyModeCommand(writer io.Writer, settings *REPLSettings, line string) error {
