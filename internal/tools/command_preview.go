@@ -21,6 +21,8 @@ import (
 
 var riskyCommandTokens = []string{
 	"curl", "wget", "sudo", "scp", "ssh", "nc", "ncat", "netcat",
+	"irm", "iwr", "iex",
+	"invoke-webrequest", "invoke-restmethod", "invoke-expression",
 }
 
 func commandRiskNotes(command string) []string {
@@ -66,11 +68,28 @@ func isPathBoundary(b byte) bool {
 
 func hasAbsolutePathToken(command string) bool {
 	for _, token := range commandTokens(command) {
-		if strings.HasPrefix(token, "/") || strings.HasPrefix(token, "~/") || token == "~" {
+		if isAbsolutePathToken(strings.Trim(token, `"'`)) {
 			return true
 		}
 	}
 	return false
+}
+
+func isAbsolutePathToken(token string) bool {
+	if token == "~" || strings.HasPrefix(token, "/") || strings.HasPrefix(token, "~/") {
+		return true
+	}
+	if strings.HasPrefix(token, `\\`) {
+		return true
+	}
+	if len(token) >= 3 && isDriveLetter(token[0]) && token[1] == ':' && (token[2] == '\\' || token[2] == '/') {
+		return true
+	}
+	return false
+}
+
+func isDriveLetter(b byte) bool {
+	return (b >= 'A' && b <= 'Z') || (b >= 'a' && b <= 'z')
 }
 
 func hasSensitivePathToken(command string) bool {
@@ -86,6 +105,12 @@ func hasSensitivePathToken(command string) bool {
 func hasRiskyCommandToken(command string) bool {
 	lower := strings.ToLower(command)
 	if strings.Contains(lower, "rm -rf") || strings.Contains(lower, "rm -fr") {
+		return true
+	}
+	if strings.Contains(lower, "remove-item") && strings.Contains(lower, "-recurse") {
+		return true
+	}
+	if strings.Contains(lower, "del /s") || strings.Contains(lower, "rd /s") || strings.Contains(lower, "rmdir /s") {
 		return true
 	}
 	for _, token := range commandTokens(command) {

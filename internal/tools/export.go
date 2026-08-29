@@ -25,6 +25,7 @@ var (
 	SanitizedEnvironment = sanitizedEnvironment
 	DefaultGoCache       = defaultGoCache
 	CommandRiskNotes     = commandRiskNotes
+	PathInsideWorkspace  = pathInsideWorkspace
 )
 
 type IgnoreMatcher = ignoreMatcher

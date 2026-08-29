@@ -30,6 +30,7 @@ import (
 
 	"gxx/internal/agent"
 	"gxx/internal/config"
+	"gxx/internal/osutil"
 )
 
 const maxPromptBytes = 1024 * 1024
@@ -881,10 +882,10 @@ func readLine(ctx context.Context, reader *bufio.Reader, file *os.File) (string,
 	}
 	if file != nil {
 		stop := context.AfterFunc(ctx, func() {
-			_ = file.SetReadDeadline(time.Now())
+			osutil.InterruptRead(file)
 		})
 		defer stop()
-		defer func() { _ = file.SetReadDeadline(time.Time{}) }()
+		defer osutil.ClearReadDeadline(file)
 		line, err := reader.ReadString('\n')
 		if err != nil && ctx.Err() != nil {
 			return "", ctx.Err()

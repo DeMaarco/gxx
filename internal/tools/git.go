@@ -23,6 +23,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -251,9 +252,22 @@ func pathInsideWorkspace(root, candidate string) bool {
 	}
 	realRoot = filepath.Clean(realRoot)
 	realCandidate = filepath.Clean(realCandidate)
-	if realCandidate == realRoot {
+	if sameFilePath(realCandidate, realRoot) {
 		return true
 	}
-	sep := string(filepath.Separator)
-	return strings.HasPrefix(realCandidate, realRoot+sep)
+	return hasFilePathPrefix(realCandidate, realRoot+string(filepath.Separator))
+}
+
+func sameFilePath(a, b string) bool {
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(a, b)
+	}
+	return a == b
+}
+
+func hasFilePathPrefix(path, prefix string) bool {
+	if runtime.GOOS == "windows" {
+		return len(path) >= len(prefix) && strings.EqualFold(path[:len(prefix)], prefix)
+	}
+	return strings.HasPrefix(path, prefix)
 }

@@ -507,9 +507,7 @@ func TestReadToolsDoNotExposeSensitiveFiles(t *testing.T) {
 func TestReadCannotBypassSensitivePolicyThroughSymlinkDirectory(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, ".git/config", "token=very-secret\n")
-	if err := os.Symlink(".git", filepath.Join(root, "alias")); err != nil {
-		t.Fatal(err)
-	}
+	requireSymlink(t, ".git", filepath.Join(root, "alias"))
 	registry := newTestRegistry(t, root, &staticApprover{}, tools.Options{
 		MaxResultBytes:  4096,
 		MaxSearchResult: 10,
@@ -636,9 +634,7 @@ func TestApplyPatchRejectsSensitiveAndSymlinkPaths(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, ".env", "API_TOKEN=very-secret\n")
 	writeTestFile(t, root, "real.txt", "before\n")
-	if err := os.Symlink("real.txt", filepath.Join(root, "alias.txt")); err != nil {
-		t.Fatal(err)
-	}
+	requireSymlink(t, "real.txt", filepath.Join(root, "alias.txt"))
 	registry := newTestRegistry(t, root, &staticApprover{approved: true}, tools.Options{
 		MaxResultBytes:  4096,
 		MaxSearchResult: 10,
@@ -1157,6 +1153,13 @@ func toolCall(id, name string, arguments map[string]any) agent.ToolCall {
 		panic(err)
 	}
 	return agent.ToolCall{ID: id, Name: name, Arguments: encoded}
+}
+
+func requireSymlink(t *testing.T, oldname, newname string) {
+	t.Helper()
+	if err := os.Symlink(oldname, newname); err != nil {
+		t.Skipf("symlinks not available: %v", err)
+	}
 }
 
 func writeTestFile(t *testing.T, root, path, content string) {

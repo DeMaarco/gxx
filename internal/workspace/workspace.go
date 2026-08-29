@@ -24,7 +24,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
+
+	"gxx/internal/osutil"
 )
 
 // Workspace confines filesystem operations to a single real directory tree.
@@ -150,7 +151,7 @@ func (w *Workspace) OpenRegular(path string, maxBytes int64) (*os.File, error) {
 	if err := w.rejectSymlinkComponents(clean, false); err != nil {
 		return nil, err
 	}
-	file, err := w.guard.OpenFile(clean, os.O_RDONLY|syscall.O_NONBLOCK|syscall.O_NOFOLLOW, 0)
+	file, err := w.guard.OpenFile(clean, osutil.ReadNoFollowFlags(), 0)
 	if err != nil {
 		return nil, Describe(path, err)
 	}
@@ -239,11 +240,22 @@ func (w *Workspace) AtomicWrite(path string, data []byte) error {
 		cleanup()
 		return fmt.Errorf("close temporary file: %w", err)
 	}
-	if err := w.guard.Rename(tempPath, target); err != nil {
+	if err := w.replace(tempPath, target); err != nil {
 		cleanup()
 		return fmt.Errorf("replace file: %w", Describe(path, err))
 	}
 	return nil
+}
+
+func (w *Workspace) replace(oldpath, newpath string) error {
+	return osutil.ReplaceFile(w.absolute(oldpath), w.absolute(newpath))
+}
+
+func (w *Workspace) absolute(rel string) string {
+	if rel == "" || rel == "." {
+		return w.root
+	}
+	return filepath.Join(w.root, filepath.FromSlash(rel))
 }
 
 func (w *Workspace) rejectSymlinkComponents(path string, allowMissing bool) error {

@@ -17,6 +17,7 @@ package workspace_test
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -68,7 +69,7 @@ func TestApplyTransactionAddsUpdatesAndDeletesTogether(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0o640 {
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o640 {
 		t.Fatalf("updated mode = %04o, want 0640", info.Mode().Perm())
 	}
 	assertNoTransactionArtifacts(t, root)

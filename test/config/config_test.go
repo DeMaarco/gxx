@@ -17,6 +17,7 @@ package config_test
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -223,7 +224,7 @@ func TestSaveAndLoadAPIKeyWithPrivatePermissions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0o600 {
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 		t.Fatalf("config mode = %04o, want 0600", info.Mode().Perm())
 	}
 	key, err := config.LoadAPIKey()
@@ -360,7 +361,7 @@ func TestSaveAPIKeyRejectsSymlinkedConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := os.Symlink(outside, filepath.Join(directory, "config.json")); err != nil {
-		t.Fatal(err)
+		t.Skipf("symlinks not available: %v", err)
 	}
 
 	if _, err := config.LoadAPIKey(); err == nil {

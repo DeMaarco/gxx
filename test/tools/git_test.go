@@ -19,6 +19,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -127,6 +128,26 @@ func TestPlanModeIncludesGitTools(t *testing.T) {
 	for _, name := range []string{"git_status", "git_diff", "git_log"} {
 		if !found[name] {
 			t.Fatalf("plan mode hid %s", name)
+		}
+	}
+}
+
+func TestPathInsideWorkspaceHandlesWindowsCase(t *testing.T) {
+	root := t.TempDir()
+	child := filepath.Join(root, "src", "main.go")
+	if !tools.PathInsideWorkspace(root, child) {
+		t.Fatalf("child %q should be inside %q", child, root)
+	}
+	if tools.PathInsideWorkspace(root, root+"-other") {
+		t.Fatalf("sibling %q should not be inside %q", root+"-other", root)
+	}
+	if runtime.GOOS == "windows" {
+		mixed := strings.ToUpper(root)
+		if !tools.PathInsideWorkspace(root, mixed) {
+			t.Fatalf("case-folded root %q should be inside %q", mixed, root)
+		}
+		if !tools.PathInsideWorkspace(root, filepath.Join(mixed, "src")) {
+			t.Fatalf("case-folded child should be inside %q", root)
 		}
 	}
 }
