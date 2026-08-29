@@ -19,6 +19,7 @@ import (
 	"io"
 	"time"
 
+	"gxx/internal/approval"
 	"gxx/internal/config"
 )
 
@@ -38,6 +39,7 @@ const (
 	KeyUp         = keyUp
 	KeyDown       = keyDown
 	KeyRight      = keyRight
+	KeyEsc        = keyEsc
 	KeyCtrlC      = keyCtrlC
 	PickerClosed  = int(pickerClosed)
 	PickerModels  = int(pickerModels)
@@ -76,6 +78,7 @@ var (
 	MatchingCommands    = matchingCommands
 	LookupSlashCommand  = lookupSlashCommand
 	TogglePlan          = togglePlan
+	ImplementPlanPrompt = implementPlanPrompt
 	EcoLabel            = ecoLabel
 	FormatEcoStatus     = formatEcoStatus
 	ContextPercentColor = contextPercentColor
@@ -105,6 +108,50 @@ type KeyEvent struct {
 
 type InputState struct {
 	inner inputState
+}
+
+type ApprovalMenu struct {
+	inner approvalMenu
+}
+
+type PlanMenu struct {
+	inner planMenu
+}
+
+func NewPlanMenu() PlanMenu {
+	return PlanMenu{inner: newPlanMenu()}
+}
+
+func (m *PlanMenu) Apply(kind KeyKind) (bool, PlanChoice) {
+	return m.inner.apply(keyEvent{kind: keyKind(kind)})
+}
+
+func (m PlanMenu) Index() int { return m.inner.index }
+
+func (m PlanMenu) Labels() []string {
+	labels := make([]string, len(m.inner.options))
+	for i, option := range m.inner.options {
+		labels[i] = option.Label
+	}
+	return labels
+}
+
+func NewApprovalMenu(allowSession bool) ApprovalMenu {
+	return ApprovalMenu{inner: newApprovalMenu(allowSession)}
+}
+
+func (m *ApprovalMenu) Apply(kind KeyKind) (bool, approval.Decision) {
+	return m.inner.apply(keyEvent{kind: keyKind(kind)})
+}
+
+func (m ApprovalMenu) Index() int { return m.inner.index }
+
+func (m ApprovalMenu) Labels() []string {
+	labels := make([]string, len(m.inner.choices))
+	for i, choice := range m.inner.choices {
+		labels[i] = choice.Label
+	}
+	return labels
 }
 
 type TurnGate struct {

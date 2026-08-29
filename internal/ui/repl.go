@@ -65,6 +65,7 @@ type REPLSettings struct {
 	SetEco              func(int) error
 	Eco                 int
 	EcoLast             int
+	ChoosePlan          func(context.Context) (PlanChoice, error)
 }
 
 type Renderer struct {
@@ -616,26 +617,145 @@ func RunREPL(
 			}
 		}
 
-		turnCtx, finishTurn := turns.start(sessionCtx)
-		if settings.RefreshInstructions != nil {
-			settings.RefreshInstructions()
-		}
-		renderer.StartTurn()
-		result, err := loop.Run(turnCtx, prompt, renderer.Event)
-		renderer.Finish(result.Answer)
-		finishTurn()
-		if sessionCtx.Err() != nil {
-			return sessionCtx.Err()
-		}
+		ok, err := runREPLTurn(sessionCtx, &turns, loop, renderer, writer, &settings, prompt)
 		if err != nil {
-			if errors.Is(err, context.Canceled) {
-				fmt.Fprintln(writer, paint(settings.Color, red, "interrupted"))
-			} else {
-				fmt.Fprintf(writer, "%s\n", paint(settings.Color, red, "error: "+err.Error()))
+			return err
+		}
+		if ok && settings.Plan {
+			if err := handlePlanFollowup(sessionCtx, &turns, loop, renderer, reader, editor, writer, &settings); err != nil {
+				return err
 			}
 		}
-		fmt.Fprintln(writer)
 	}
+}
+
+func runREPLTurn(
+	sessionCtx context.Context,
+	turns *turnGate,
+	loop *agent.Loop,
+	renderer *Renderer,
+	writer io.Writer,
+	settings *REPLSettings,
+	prompt string,
+) (bool, error) {
+	turnCtx, finishTurn := turns.start(sessionCtx)
+	if settings.RefreshInstructions != nil {
+		settings.RefreshInstructions()
+	}
+	renderer.StartTurn()
+	result, err := loop.Run(turnCtx, prompt, renderer.Event)
+	renderer.Finish(result.Answer)
+	finishTurn()
+	if sessionCtx.Err() != nil {
+		return false, sessionCtx.Err()
+	}
+	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			fmt.Fprintln(writer, paint(settings.Color, red, "interrupted"))
+		} else {
+			fmt.Fprintf(writer, "%s\n", paint(settings.Color, red, "error: "+err.Error()))
+		}
+		fmt.Fprintln(writer)
+		return false, nil
+	}
+	fmt.Fprintln(writer)
+	return true, nil
+}
+
+func handlePlanFollowup(
+	sessionCtx context.Context,
+	turns *turnGate,
+	loop *agent.Loop,
+	renderer *Renderer,
+	reader *bufio.Reader,
+	editor *lineEditor,
+	writer io.Writer,
+	settings *REPLSettings,
+) error {
+	for settings.Plan {
+		if err := sessionCtx.Err(); err != nil {
+			return err
+		}
+		choice, err := choosePlanResponse(sessionCtx, writer, settings)
+		if err != nil {
+			if errors.Is(err, context.Canceled) || sessionCtx.Err() != nil {
+				return sessionCtx.Err()
+			}
+			fmt.Fprintf(writer, "%s\n", paint(settings.Color, red, "error: "+err.Error()))
+			fmt.Fprintln(writer)
+			return nil
+		}
+		switch choice {
+		case PlanExecute:
+			leavePlan(settings)
+			fmt.Fprintln(writer, paint(settings.Color, dim, "Leaving plan mode · implementing"))
+			_, err := runREPLTurn(sessionCtx, turns, loop, renderer, writer, settings, implementPlanPrompt)
+			return err
+		case PlanRevise:
+			revision, err := readPlanRevision(sessionCtx, reader, editor, writer, settings)
+			if err != nil {
+				if errors.Is(err, io.EOF) {
+					return nil
+				}
+				return err
+			}
+			revision = strings.TrimSpace(revision)
+			if revision == "" {
+				return nil
+			}
+			ok, err := runREPLTurn(sessionCtx, turns, loop, renderer, writer, settings, revision)
+			if err != nil || !ok {
+				return err
+			}
+		default:
+			return nil
+		}
+	}
+	return nil
+}
+
+func choosePlanResponse(ctx context.Context, writer io.Writer, settings *REPLSettings) (PlanChoice, error) {
+	if settings.ChoosePlan != nil {
+		return settings.ChoosePlan(ctx)
+	}
+	if settings.Stdin == nil {
+		return PlanCancel, nil
+	}
+	return ReadPlanChoice(ctx, settings.Stdin, writer, settings.Color)
+}
+
+func leavePlan(settings *REPLSettings) {
+	if settings == nil || !settings.Plan {
+		return
+	}
+	if settings.SetPlan != nil {
+		if err := settings.SetPlan(false); err != nil {
+			return
+		}
+	}
+	settings.Plan = false
+}
+
+func readPlanRevision(
+	ctx context.Context,
+	reader *bufio.Reader,
+	editor *lineEditor,
+	writer io.Writer,
+	settings *REPLSettings,
+) (string, error) {
+	fmt.Fprintln(writer, paint(settings.Color, dim, "Describe the changes to the plan."))
+	if editor != nil {
+		if err := writeHeader(writer, *settings); err != nil {
+			return "", err
+		}
+		return editor.Read(ctx, settings)
+	}
+	if err := writeChrome(writer, *settings); err != nil {
+		return "", err
+	}
+	line, err := readLine(ctx, reader, settings.Stdin)
+	clearStatusLine(writer, settings.Color)
+	return line, err
 }
 
 type turnGate struct {
@@ -704,7 +824,7 @@ func printREPLHelp(writer io.Writer, settings REPLSettings) {
 		writer,
 		"%s  %s\n",
 		paint(settings.Color, cyan, "Shift+Tab"),
-		paint(settings.Color, dim, "Toggle plan mode (read-only design) and agent mode"),
+		paint(settings.Color, dim, "Toggle plan mode (read-only design) and agent mode; after a plan, choose execute, request changes, or cancel"),
 	)
 }
 

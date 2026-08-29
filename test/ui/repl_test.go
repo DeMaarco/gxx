@@ -32,16 +32,25 @@ import (
 
 type replModel struct {
 	resetCount int
+	prompts    []string
+	reply      string
 }
 
 func (m *replModel) Respond(
 	_ context.Context,
-	_ agent.ModelInput,
+	input agent.ModelInput,
 	_ []agent.ToolDefinition,
 	emit agent.EmitFunc,
 ) (agent.ModelResponse, error) {
-	agent.Emit(emit, agent.Event{Kind: agent.EventTextDelta, Text: "world"})
-	return agent.ModelResponse{Text: "world"}, nil
+	if strings.TrimSpace(input.UserText) != "" {
+		m.prompts = append(m.prompts, input.UserText)
+	}
+	reply := m.reply
+	if reply == "" {
+		reply = "world"
+	}
+	agent.Emit(emit, agent.Event{Kind: agent.EventTextDelta, Text: reply})
+	return agent.ModelResponse{Text: reply}, nil
 }
 
 func (m *replModel) Reset() {
@@ -584,7 +593,7 @@ func TestRunREPLAppliesModeCommand(t *testing.T) {
 	}
 	text := output.String()
 	for _, expected := range []string{
-		"permission ask · confirm every file change and command; a-xxxx allows a command for the session",
+		"permission ask · confirm every file change and command; the approval menu can allow a command for the session",
 		"* ask",
 		"auto-writes",
 		"permission auto-writes · file changes run without confirmation; commands still ask",
@@ -803,5 +812,162 @@ func TestRunREPLLoginRequiresProviderWithoutTTY(t *testing.T) {
 	}
 	if !strings.Contains(output.String(), "/login openai") {
 		t.Fatalf("output = %q, want provider guidance", output.String())
+	}
+}
+
+func TestRunREPLPlanExecuteLeavesPlanAndImplements(t *testing.T) {
+	model := &replModel{reply: "the plan"}
+	plan := true
+	loop := &agent.Loop{Model: model, Executor: emptyExecutor{}, MaxSteps: 2}
+	input := bufio.NewReader(strings.NewReader("design auth\n/exit\n"))
+	var output bytes.Buffer
+	err := ui.RunREPL(
+		context.Background(),
+		loop,
+		input,
+		ui.NewRenderer(&output),
+		&output,
+		ui.REPLSettings{
+			Version:        "0.0.1",
+			Model:          "test-model",
+			PermissionMode: config.PermissionAsk,
+			Workspace:      "/workspace",
+			Plan:           true,
+			SetPlan: func(next bool) error {
+				plan = next
+				return nil
+			},
+			ChoosePlan: func(context.Context) (ui.PlanChoice, error) {
+				return ui.PlanExecute, nil
+			},
+		},
+	)
+	if err != nil {
+		t.Fatalf("RunREPL() error = %v", err)
+	}
+	if plan {
+		t.Fatal("execute should leave plan mode")
+	}
+	if len(model.prompts) != 2 || model.prompts[0] != "design auth" || model.prompts[1] != ui.ImplementPlanPrompt {
+		t.Fatalf("prompts = %#v, want design then implement", model.prompts)
+	}
+	if !strings.Contains(output.String(), "Leaving plan mode · implementing") {
+		t.Fatalf("output = %q, want implement notice", output.String())
+	}
+}
+
+func TestRunREPLPlanReviseStaysInPlanAndSendsChanges(t *testing.T) {
+	model := &replModel{reply: "revised plan"}
+	choices := []ui.PlanChoice{ui.PlanRevise, ui.PlanCancel}
+	var plan = true
+	loop := &agent.Loop{Model: model, Executor: emptyExecutor{}, MaxSteps: 2}
+	input := bufio.NewReader(strings.NewReader("design auth\nuse JWT instead\n/exit\n"))
+	var output bytes.Buffer
+	err := ui.RunREPL(
+		context.Background(),
+		loop,
+		input,
+		ui.NewRenderer(&output),
+		&output,
+		ui.REPLSettings{
+			Version:        "0.0.1",
+			Model:          "test-model",
+			PermissionMode: config.PermissionAsk,
+			Workspace:      "/workspace",
+			Plan:           true,
+			SetPlan: func(next bool) error {
+				plan = next
+				return nil
+			},
+			ChoosePlan: func(context.Context) (ui.PlanChoice, error) {
+				if len(choices) == 0 {
+					t.Fatal("ChoosePlan called too many times")
+				}
+				choice := choices[0]
+				choices = choices[1:]
+				return choice, nil
+			},
+		},
+	)
+	if err != nil {
+		t.Fatalf("RunREPL() error = %v", err)
+	}
+	if !plan {
+		t.Fatal("revise should stay in plan mode")
+	}
+	if len(model.prompts) != 2 || model.prompts[0] != "design auth" || model.prompts[1] != "use JWT instead" {
+		t.Fatalf("prompts = %#v, want design then revision", model.prompts)
+	}
+	if !strings.Contains(output.String(), "Describe the changes to the plan.") {
+		t.Fatalf("output = %q, want revision hint", output.String())
+	}
+}
+
+func TestRunREPLPlanCancelKeepsPlanWithoutAnotherTurn(t *testing.T) {
+	model := &replModel{reply: "the plan"}
+	plan := true
+	loop := &agent.Loop{Model: model, Executor: emptyExecutor{}, MaxSteps: 2}
+	input := bufio.NewReader(strings.NewReader("design auth\n/exit\n"))
+	var output bytes.Buffer
+	err := ui.RunREPL(
+		context.Background(),
+		loop,
+		input,
+		ui.NewRenderer(&output),
+		&output,
+		ui.REPLSettings{
+			Version:        "0.0.1",
+			Model:          "test-model",
+			PermissionMode: config.PermissionAsk,
+			Workspace:      "/workspace",
+			Plan:           true,
+			SetPlan: func(next bool) error {
+				plan = next
+				return nil
+			},
+			ChoosePlan: func(context.Context) (ui.PlanChoice, error) {
+				return ui.PlanCancel, nil
+			},
+		},
+	)
+	if err != nil {
+		t.Fatalf("RunREPL() error = %v", err)
+	}
+	if !plan {
+		t.Fatal("cancel should keep plan mode")
+	}
+	if len(model.prompts) != 1 || model.prompts[0] != "design auth" {
+		t.Fatalf("prompts = %#v, want only the plan turn", model.prompts)
+	}
+}
+
+func TestRunREPLSkipsPlanMenuWithoutChooserOrTerminal(t *testing.T) {
+	model := &replModel{reply: "the plan"}
+	loop := &agent.Loop{Model: model, Executor: emptyExecutor{}, MaxSteps: 2}
+	input := bufio.NewReader(strings.NewReader("design auth\n/exit\n"))
+	var output bytes.Buffer
+	err := ui.RunREPL(
+		context.Background(),
+		loop,
+		input,
+		ui.NewRenderer(&output),
+		&output,
+		ui.REPLSettings{
+			Version:        "0.0.1",
+			Model:          "test-model",
+			PermissionMode: config.PermissionAsk,
+			Workspace:      "/workspace",
+			Plan:           true,
+		},
+	)
+	if err != nil {
+		t.Fatalf("RunREPL() error = %v", err)
+	}
+	if len(model.prompts) != 1 {
+		t.Fatalf("prompts = %#v, want a single turn when the menu is unavailable", model.prompts)
+	}
+	if strings.Contains(output.String(), "Leaving plan mode") ||
+		strings.Contains(output.String(), "Describe the changes") {
+		t.Fatalf("output = %q, did not want a plan follow-up", output.String())
 	}
 }

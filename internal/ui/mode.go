@@ -55,18 +55,18 @@ func formatModeStatus(mode string) string {
 	case config.PermissionAuto:
 		return "permission auto · file changes and commands run without confirmation"
 	default:
-		return "permission ask · confirm every file change and command; a-xxxx allows a command for the session"
+		return "permission ask · confirm every file change and command; the approval menu can allow a command for the session"
 	}
 }
 
 func permissionHelp(mode string) string {
 	switch mode {
 	case config.PermissionAutoWrites:
-		return "file changes without confirmation; commands still ask (a-xxxx allows a command for the session)"
+		return "file changes without confirmation; commands still ask (the approval menu can allow a command for the session)"
 	case config.PermissionAuto:
 		return "all file changes and commands without confirmation"
 	default:
-		return "confirm every file change and command; a-xxxx allows a command for the session"
+		return "confirm every file change and command; the approval menu can allow a command for the session"
 	}
 }
 

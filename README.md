@@ -29,7 +29,7 @@ Inspired by [`fx`](https://github.com/vercel-labs/fx), but narrower on purpose:
 **OpenAI or Claude**, **one workspace**, **no TUI**. Just a prompt.
 
 ```text
-◆ gxx  v0.0.13
+◆ gxx  v0.0.14
 >
 gpt-5.6-sol · ask · medium · 272k · 0%
 ```
@@ -42,8 +42,8 @@ The status line is model · permission mode · effort · context size · window 
 | | What you get |
 | --- | --- |
 | **Workspace-bound** | The directory you start in is the whole world. No traversal, no outside symlinks. |
-| **Ask before it writes** | Default `ask` mode previews file edits and shell commands until you approve. Type `a-xxxx` to allow that exact command for the rest of the session. |
-| **Plan mode** | `Shift+Tab` for a read-only pass: inspect and design, no writes and no shell. |
+| **Ask before it writes** | Default `ask` mode previews file edits and shell commands until you approve. Arrow keys choose deny, approve, or allow that exact command for the rest of the session. |
+| **Plan mode** | `Shift+Tab` for a read-only pass: inspect and design, no writes and no shell. After the plan, arrow keys choose execute, request changes, or cancel. |
 | **Git inspect** | `git_status`, `git_diff`, and `git_log` are read-only and stay inside the workspace. |
 | **One-shot CLI** | `gxx ask` for scripts and pipes. `--json` when you want a machine-readable result. |
 | **Secret-aware** | `.env`, keys, and credential paths are blocked on read, search, list, patch, git inspect, and shell commands that name them. Requests go out with `store:false`. |
@@ -66,7 +66,7 @@ gxx version
 Pin a release or another directory:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/DeMaarco/gxx/main/install.sh | sh -s -- --version v0.0.13
+curl -fsSL https://raw.githubusercontent.com/DeMaarco/gxx/main/install.sh | sh -s -- --version v0.0.14
 curl -fsSL https://raw.githubusercontent.com/DeMaarco/gxx/main/install.sh | sh -s -- --dir /usr/local/bin
 ```
 
@@ -81,7 +81,7 @@ That puts `gxx.exe` in `%LOCALAPPDATA%\gxx` and puts that folder first on your u
 Pin a release or another directory:
 
 ```powershell
-$env:GXX_VERSION = "v0.0.13"
+$env:GXX_VERSION = "v0.0.14"
 irm https://raw.githubusercontent.com/DeMaarco/gxx/main/install.ps1 | iex
 ```
 
@@ -144,7 +144,7 @@ Drop an `AGENTS.md` in the project root if you want extra instructions loaded in
 ## REPL
 
 ```text
-◆ gxx  v0.0.13     badge and version
+◆ gxx  v0.0.14     badge and version
 >                 type here  ·  becomes  > plan  in plan mode
 gpt-5.6-sol · ask · medium · 272k · 0%
 ```
@@ -157,7 +157,7 @@ gpt-5.6-sol · ask · medium · 272k · 0%
 | `Ctrl+C` | Clear, cancel, or confirm exit |
 | `Ctrl+D` | Exit |
 
-Plan mode is session-only. It is not saved to config.
+Plan mode is session-only. It is not saved to config. After a plan is generated, a terminal shows an arrow-key menu: execute the plan, request changes, or cancel. Request changes stays in plan mode so you can send a revision.
 
 `/eco` is also session-only. It paints green on the prompt like plan. `/eco` toggles; `/eco lite` `full` `ultra` set the strength (aliases: 1/2/3). Eco never changes the model. It compresses request input the way Caveman does: drop filler, keep code, paths, URLs, and identifiers. Tool descriptions shrink too. Ultra also drops reasoning replay.
 
@@ -193,10 +193,11 @@ Reads always run. Writes and shell commands follow the mode, unless plan is on.
 
 | Mode | Files | Shell |
 | --- | --- | --- |
-| `ask` | Preview + `y-xxxx` | Preview + `y-xxxx`, or `a-xxxx` to allow that exact command for the session |
-| `auto-writes` | Apply | Preview + `y-xxxx` / `a-xxxx` |
+| `ask` | Preview + arrow menu | Preview + arrow menu, or allow that exact command for the session |
+| `auto-writes` | Apply | Preview + arrow menu |
 | `auto` | Apply | Apply |
 
+A terminal shows an arrow-key menu (deny is the default). Without one, type `y-xxxx` to approve or `a-xxxx` to allow that exact command for the session.
 Piped `gxx ask` stays on `ask` and denies mutations unless you pass `--permission`.
 Commands are not OS-sandboxed — review them in `ask`. Changing `/mode` clears the session command allowlist. On Windows they run under PowerShell (`pwsh` if present, otherwise `powershell.exe`).
 

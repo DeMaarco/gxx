@@ -41,7 +41,8 @@ Do not edit files, apply patches, create files, or run commands that change the 
 Use list_files, search_files, read_file, git_status, git_diff, and git_log only.
 If the goal is ambiguous, ask clarifying questions before planning.
 When ready, present: goal, approach, files to change, risks, and how to verify.
-Wait for the user to leave plan mode (Shift+Tab) before implementing.`
+The user will choose to execute the plan, request changes, or cancel.
+Wait for that choice before implementing.`
 
 const (
 	ecoInstructions1 = `Eco lite: no filler or hedging. Keep articles and full sentences. Tight professional. Code, paths, errors exact. Fire tools with no preamble.`

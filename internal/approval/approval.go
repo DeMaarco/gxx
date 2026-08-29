@@ -54,20 +54,22 @@ type Action struct {
 // Decision is the result of an approval prompt.
 type Decision struct {
 	Approved bool
-	Remember bool // a-xxxx: remember RepeatKey for this session
+	Remember bool // allow this RepeatKey for the rest of the session
 }
 
 type Approver interface {
 	Approve(context.Context, Action) (Decision, error)
 }
 
-// Prompt asks for explicit y/N approval. Non-interactive instances deny.
+// Prompt asks for approval. A terminal shows an arrow-key menu; otherwise
+// it asks for y-xxxx / a-xxxx. Non-interactive instances deny.
 type Prompt struct {
 	reader      *bufio.Reader
 	writer      io.Writer
 	file        *os.File
 	interactive bool
 	code        func() (string, error)
+	choose      func(context.Context, Action) (Decision, error)
 	hold        func() (resume func())
 	mu          sync.Mutex
 }
@@ -89,6 +91,11 @@ func (p *Prompt) SetFile(file *os.File) {
 // before the challenge is printed. resume runs after the decision.
 func (p *Prompt) SetHold(hold func() (resume func())) {
 	p.hold = hold
+}
+
+// SetChooser uses an interactive menu instead of the typed y-xxxx challenge.
+func (p *Prompt) SetChooser(choose func(context.Context, Action) (Decision, error)) {
+	p.choose = choose
 }
 
 func (p *Prompt) Approve(ctx context.Context, action Action) (Decision, error) {
@@ -113,10 +120,6 @@ func (p *Prompt) Approve(ctx context.Context, action Action) (Decision, error) {
 	if err := discardStaleInput(p.reader, p.file); err != nil {
 		return Decision{}, err
 	}
-	code, err := p.code()
-	if err != nil {
-		return Decision{}, fmt.Errorf("create approval challenge: %w", err)
-	}
 	title := safeDisplay(action.Title)
 	preview := displayPreview(action.Preview)
 	if strings.TrimSpace(preview) != "" {
@@ -125,6 +128,13 @@ func (p *Prompt) Approve(ctx context.Context, action Action) (Decision, error) {
 		}
 	} else if _, err := fmt.Fprintf(p.writer, "\n%s\n", title); err != nil {
 		return Decision{}, err
+	}
+	if p.choose != nil {
+		return p.choose(ctx, action)
+	}
+	code, err := p.code()
+	if err != nil {
+		return Decision{}, fmt.Errorf("create approval challenge: %w", err)
 	}
 	if action.RepeatKey != "" {
 		if _, err := fmt.Fprintf(

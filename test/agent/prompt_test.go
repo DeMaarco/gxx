@@ -99,6 +99,9 @@ func TestSystemPromptPlanModeUsesReadOnlyInstructions(t *testing.T) {
 	if !strings.Contains(prompt, "plan mode") {
 		t.Fatalf("prompt = %q, want plan mode instructions", prompt)
 	}
+	if !strings.Contains(prompt, "execute the plan, request changes, or cancel") {
+		t.Fatalf("prompt = %q, want plan follow-up menu instructions", prompt)
+	}
 	if strings.Contains(prompt, "make the in-scope local changes") {
 		t.Fatalf("plan prompt included agent implementation instructions")
 	}

@@ -43,7 +43,7 @@ import (
 	"gxx/internal/workspace"
 )
 
-var Version = "0.0.13"
+var Version = "0.0.14"
 
 type runtime struct {
 	config    config.Config
@@ -517,6 +517,10 @@ func newRuntimeFromConfig(
 	prompt := approval.NewPrompt(reader, promptOut, interactive)
 	if file := terminalFile(stdin); file != nil {
 		prompt.SetFile(file)
+		color := ui.ColorEnabled(promptOut)
+		prompt.SetChooser(func(ctx context.Context, action approval.Action) (approval.Decision, error) {
+			return ui.ReadApprovalChoice(ctx, file, promptOut, color, action)
+		})
 	}
 	policy := approval.NewPolicy(settings.PermissionMode, prompt)
 	registry := tools.NewRegistry(ws, policy, tools.Options{

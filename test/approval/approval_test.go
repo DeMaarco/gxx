@@ -273,6 +273,32 @@ func TestPromptSessionAllowWithoutRepeatKeyIsDenied(t *testing.T) {
 	}
 }
 
+func TestPromptUsesChooserInsteadOfTypedChallenge(t *testing.T) {
+	var output bytes.Buffer
+	prompt := testPrompt(bufio.NewReader(strings.NewReader("y-test\n")), &output, true)
+	prompt.SetChooser(func(context.Context, approval.Action) (approval.Decision, error) {
+		return approval.Decision{Approved: true, Remember: true}, nil
+	})
+	decision, err := prompt.Approve(context.Background(), approval.Action{
+		Title:     "Run command",
+		Preview:   "$ go test ./...",
+		Kind:      approval.KindCommand,
+		RepeatKey: "go test ./...",
+	})
+	if err != nil {
+		t.Fatalf("Approve() error = %v", err)
+	}
+	if !decision.Approved || !decision.Remember {
+		t.Fatalf("decision = %+v, want chooser result", decision)
+	}
+	if strings.Contains(output.String(), "Type y-test") {
+		t.Fatalf("output = %q, typed challenge should be skipped", output.String())
+	}
+	if !strings.Contains(output.String(), "Run command") {
+		t.Fatalf("output = %q, want preview title", output.String())
+	}
+}
+
 func TestPromptWriteDoesNotOfferSessionAllow(t *testing.T) {
 	var output bytes.Buffer
 	prompt := testPrompt(bufio.NewReader(strings.NewReader("y-test\n")), &output, true)
