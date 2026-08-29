@@ -272,6 +272,9 @@ func TestProviderStreamsAndResendsStatelessHistory(t *testing.T) {
 	if !strings.Contains(string(firstJSON), `"ttl":"30m"`) {
 		t.Fatalf("first request = %s, want prompt cache ttl", firstJSON)
 	}
+	if !strings.Contains(string(firstJSON), `"include_obfuscation":false`) {
+		t.Fatalf("first request = %s, want stream obfuscation disabled", firstJSON)
+	}
 	if strings.Contains(string(firstJSON), `"context":`) {
 		t.Fatalf("first request = %s, did not want reasoning context", firstJSON)
 	}
@@ -959,6 +962,181 @@ func writeCompletedText(t *testing.T, writer http.ResponseWriter, text string) {
 		}}),
 	})
 	_, _ = fmt.Fprint(writer, "data: [DONE]\n\n")
+}
+
+type staticTokens struct {
+	token   string
+	account string
+}
+
+func (s staticTokens) AccessToken(context.Context) (string, error) { return s.token, nil }
+func (s staticTokens) AccountID(context.Context) (string, error)   { return s.account, nil }
+
+func TestCodexClientSendsAccountHeaders(t *testing.T) {
+	var got *http.Request
+	var body []byte
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		body, _ = io.ReadAll(request.Body)
+		clone := request.Clone(request.Context())
+		clone.Body = nil
+		got = clone
+		writeCompletedText(t, writer, "ok")
+	}))
+	defer server.Close()
+
+	provider := openai.NewWithSource(staticTokens{token: "oauth-token", account: "acct-123"}, "gpt-5.6", "instructions", time.Second)
+	if !provider.UsingOAuth() || provider.BaseURL() != openai.CodexAPIBaseURL() {
+		t.Fatalf("oauth=%v base=%q", provider.UsingOAuth(), provider.BaseURL())
+	}
+	provider.SetBaseURL(server.URL)
+	_, err := provider.Respond(
+		context.Background(),
+		agent.ModelInput{UserText: "hello"},
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("Respond() error = %v", err)
+	}
+	if got == nil {
+		t.Fatal("no request")
+	}
+	if got.URL.Path != "/responses" {
+		t.Fatalf("path = %q", got.URL.Path)
+	}
+	if auth := got.Header.Get("Authorization"); auth != "Bearer oauth-token" {
+		t.Fatalf("Authorization = %q", auth)
+	}
+	if got.Header.Get(openai.CodexAccountHeader()) != "acct-123" {
+		t.Fatalf("account header = %q", got.Header.Get(openai.CodexAccountHeader()))
+	}
+	if got.Header.Get("originator") != openai.CodexOriginator() || got.Header.Get("originator") == "codex_cli_rs" {
+		t.Fatalf("originator = %q", got.Header.Get("originator"))
+	}
+	if got.Header.Get("OpenAI-Beta") != openai.CodexBetaHeader() {
+		t.Fatalf("OpenAI-Beta = %q", got.Header.Get("OpenAI-Beta"))
+	}
+	if got.Header.Get("session-id") == "" {
+		t.Fatal("missing session-id")
+	}
+	if strings.Contains(string(body), "prompt_cache_options") || strings.Contains(string(body), `"truncation"`) || strings.Contains(string(body), "include_obfuscation") {
+		t.Fatalf("codex body included platform-only fields: %s", body)
+	}
+	if !strings.Contains(string(body), `"store":false`) {
+		t.Fatalf("codex body = %s, want store:false", body)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatalf("body = %s", body)
+	}
+	for key := range payload {
+		switch key {
+		case "model", "instructions", "input", "tools", "tool_choice", "parallel_tool_calls",
+			"reasoning", "store", "stream", "include", "service_tier", "prompt_cache_key", "text":
+		default:
+			t.Fatalf("unsupported Codex field %q in %s", key, body)
+		}
+	}
+}
+
+func TestSanitizeCodexPayloadDropsUnknownFields(t *testing.T) {
+	got := openai.SanitizeCodexPayload([]byte(`{
+		"model":"gpt-5.6-sol",
+		"store":false,
+		"stream":true,
+		"metadata":{"x":"1"},
+		"truncation":"disabled",
+		"prompt_cache_options":{"ttl":"30m"},
+		"service_tier":"fast",
+		"tools":[{"type":"function","name":"read_file","strict":true}]
+	}`))
+	var payload map[string]any
+	if err := json.Unmarshal(got, &payload); err != nil {
+		t.Fatal(err)
+	}
+	for _, extra := range []string{"metadata", "truncation", "prompt_cache_options", "service_tier"} {
+		if _, ok := payload[extra]; ok {
+			t.Fatalf("kept %s: %s", extra, got)
+		}
+	}
+	tools := payload["tools"].([]any)
+	tool := tools[0].(map[string]any)
+	if _, ok := tool["strict"]; ok {
+		t.Fatalf("kept tool strict: %s", got)
+	}
+}
+
+func TestCodexErrorSurfacesDetail(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		writer.WriteHeader(http.StatusBadRequest)
+		_, _ = writer.Write([]byte(`{"detail":"Unknown field: prompt_cache_options"}`))
+	}))
+	defer server.Close()
+
+	provider := openai.NewWithSource(staticTokens{token: "oauth-token", account: "acct-123"}, "gpt-5.6", "instructions", time.Second)
+	provider.SetBaseURL(server.URL)
+	_, err := provider.Respond(
+		context.Background(),
+		agent.ModelInput{UserText: "hello"},
+		nil,
+		nil,
+	)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "Unknown field: prompt_cache_options") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestOAuthUsageFetchesChatGPTSubscription(t *testing.T) {
+	var path, originator, accountID, auth string
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		path = request.URL.Path
+		originator = request.Header.Get("originator")
+		accountID = request.Header.Get(openai.CodexAccountHeader())
+		auth = request.Header.Get("Authorization")
+		if strings.Contains(request.URL.Path, "/organization/") {
+			t.Errorf("OAuth usage probed organization endpoint %s", request.URL.Path)
+		}
+		writeJSON(t, writer, map[string]any{
+			"plan_type": "plus",
+			"rate_limit": map[string]any{
+				"primary_window": map[string]any{
+					"used_percent":         55,
+					"limit_window_seconds": 18000,
+					"reset_after_seconds":  7920,
+				},
+				"secondary_window": map[string]any{
+					"used_percent":         51,
+					"limit_window_seconds": 604800,
+					"reset_after_seconds":  489600,
+				},
+			},
+		})
+	}))
+	defer server.Close()
+
+	provider := openai.NewWithSource(staticTokens{token: "oauth-token", account: "acct"}, "gpt-5.6", "", time.Second)
+	provider.SetHTTPClient(server.Client())
+	provider.SetBaseURL(server.URL)
+	report := provider.Report(context.Background())
+	if path != "/wham/usage" {
+		t.Fatalf("path = %q, want /wham/usage", path)
+	}
+	if originator != openai.CodexOriginator() || accountID != "acct" || auth != "Bearer oauth-token" {
+		t.Fatalf("headers originator=%q account=%q auth=%q", originator, accountID, auth)
+	}
+	if report.Source != "ChatGPT" || report.Account.Plan != "plus" || len(report.Account.Windows) != 2 {
+		t.Fatalf("account = %+v", report.Account)
+	}
+	if report.Account.Windows[0].Name != "5h" || report.Account.Windows[0].UsedPercent != 55 {
+		t.Fatalf("5h window = %+v", report.Account.Windows[0])
+	}
+	if report.Account.Windows[1].Name != "weekly" || report.Account.Windows[1].UsedPercent != 51 {
+		t.Fatalf("weekly window = %+v", report.Account.Windows[1])
+	}
 }
 
 func writeSSE(t *testing.T, writer io.Writer, event any) {

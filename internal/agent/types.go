@@ -106,21 +106,32 @@ type RateLimit struct {
 
 // AccountUsage is organization spend and token usage for the current month.
 type AccountUsage struct {
-	PeriodStart  time.Time `json:"period_start"`
-	Requests     int64     `json:"requests"`
-	InputTokens  int64     `json:"input_tokens"`
-	OutputTokens int64     `json:"output_tokens"`
-	SpendUSD     float64   `json:"spend_usd"`
-	HasSpend     bool      `json:"has_spend"`
-	LimitUSD     float64   `json:"limit_usd"`
-	HasLimit     bool      `json:"has_limit"`
-	RemainingUSD float64   `json:"remaining_usd"`
-	HasRemaining bool      `json:"has_remaining"`
-	Error        string    `json:"error,omitempty"`
+	PeriodStart  time.Time     `json:"period_start"`
+	Requests     int64         `json:"requests"`
+	InputTokens  int64         `json:"input_tokens"`
+	OutputTokens int64         `json:"output_tokens"`
+	SpendUSD     float64       `json:"spend_usd"`
+	HasSpend     bool          `json:"has_spend"`
+	LimitUSD     float64       `json:"limit_usd"`
+	HasLimit     bool          `json:"has_limit"`
+	RemainingUSD float64       `json:"remaining_usd"`
+	HasRemaining bool          `json:"has_remaining"`
+	Plan         string        `json:"plan,omitempty"`
+	Windows      []QuotaWindow `json:"windows,omitempty"`
+	Error        string        `json:"error,omitempty"`
+}
+
+// QuotaWindow is a subscription rate-limit bucket (5-hour, weekly, …).
+type QuotaWindow struct {
+	Name          string    `json:"name"`
+	UsedPercent   float64   `json:"used_percent"`
+	ResetAt       time.Time `json:"reset_at,omitempty"`
+	ResetAfterSec int64     `json:"reset_after_seconds,omitempty"`
 }
 
 // UsageReport is the snapshot shown by /usage.
 type UsageReport struct {
+	Source          string       `json:"source,omitempty"`
 	Session         Usage        `json:"session"`
 	SessionRequests int64        `json:"session_requests"`
 	RateLimit       RateLimit    `json:"rate_limit"`

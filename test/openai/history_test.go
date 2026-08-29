@@ -91,7 +91,7 @@ func TestPromptCacheKeyChangesWithInstructions(t *testing.T) {
 func TestUnmatchedCallIDsTracksOpenFunctionCalls(t *testing.T) {
 	items := []responses.ResponseInputItemUnionParam{
 		responses.ResponseInputItemParamOfFunctionCall(`{}`, "call_1", "read_file"),
-		responses.ResponseInputItemParamOfFunctionCallOutput("call_1", "ok"),
+		openai.FunctionCallOutputParam("call_1", "ok"),
 		responses.ResponseInputItemParamOfFunctionCall(`{}`, "call_2", "read_file"),
 	}
 	open := openai.UnmatchedCallIDs(items)
@@ -103,9 +103,9 @@ func TestUnmatchedCallIDsTracksOpenFunctionCalls(t *testing.T) {
 func TestSlimInputClipsOldToolOutput(t *testing.T) {
 	items := []responses.ResponseInputItemUnionParam{
 		responses.ResponseInputItemParamOfMessage("old", responses.EasyInputMessageRoleUser),
-		responses.ResponseInputItemParamOfFunctionCallOutput("call_1", strings.Repeat("a", 80)),
+		openai.FunctionCallOutputParam("call_1", strings.Repeat("a", 80)),
 		responses.ResponseInputItemParamOfMessage("task", responses.EasyInputMessageRoleUser),
-		responses.ResponseInputItemParamOfFunctionCallOutput("call_2", strings.Repeat("b", 80)),
+		openai.FunctionCallOutputParam("call_2", strings.Repeat("b", 80)),
 	}
 	got := openai.SlimInput(items, 1, 0, 40)
 	data, _ := json.Marshal(got[1])
@@ -121,11 +121,11 @@ func TestSlimInputClipsOldToolOutput(t *testing.T) {
 func TestClipOldToolOutputsKeepsCurrentTurn(t *testing.T) {
 	items := []responses.ResponseInputItemUnionParam{
 		responses.ResponseInputItemParamOfMessage("old", responses.EasyInputMessageRoleUser),
-		responses.ResponseInputItemParamOfFunctionCallOutput("old_1", strings.Repeat("a", 80)),
-		responses.ResponseInputItemParamOfFunctionCallOutput("old_2", strings.Repeat("b", 80)),
+		openai.FunctionCallOutputParam("old_1", strings.Repeat("a", 80)),
+		openai.FunctionCallOutputParam("old_2", strings.Repeat("b", 80)),
 		responses.ResponseInputItemParamOfMessage("now", responses.EasyInputMessageRoleUser),
-		responses.ResponseInputItemParamOfFunctionCallOutput("new_1", strings.Repeat("c", 80)),
-		responses.ResponseInputItemParamOfFunctionCallOutput("new_2", strings.Repeat("d", 80)),
+		openai.FunctionCallOutputParam("new_1", strings.Repeat("c", 80)),
+		openai.FunctionCallOutputParam("new_2", strings.Repeat("d", 80)),
 	}
 	got := openai.ClipOldToolOutputs(items, 1, 40)
 	old1, _ := json.Marshal(got[1])
@@ -190,7 +190,7 @@ func TestSummarizeDroppedIncludesToolsAndErrors(t *testing.T) {
 	items := []responses.ResponseInputItemUnionParam{
 		responses.ResponseInputItemParamOfMessage("inspect the repo", responses.EasyInputMessageRoleUser),
 		responses.ResponseInputItemParamOfFunctionCall(`{}`, "call_1", "read_file"),
-		responses.ResponseInputItemParamOfFunctionCallOutput("call_1", "error: missing file"),
+		openai.FunctionCallOutputParam("call_1", "error: missing file"),
 	}
 	got := openai.SummarizeDropped(items)
 	if !strings.Contains(got, "inspect the repo") {

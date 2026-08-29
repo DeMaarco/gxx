@@ -27,6 +27,7 @@ import (
 
 	"golang.org/x/term"
 
+	"gxx/internal/auth"
 	"gxx/internal/config"
 	"gxx/internal/osutil"
 )
@@ -84,6 +85,10 @@ type inputState struct {
 	sessionEffort     string
 	sessionFast       bool
 	sessionPermission string
+	activeAccount     string
+	availableModels   []string
+	catalogLocked     bool
+	loginIndex        int
 	modeIndex         int
 	exitArmed         bool
 }
@@ -131,6 +136,9 @@ func (s *inputState) afterEdit() {
 		s.picker = pickerClosed
 	}
 	if s.picker == pickerContext && !strings.HasPrefix(s.text(), "/context") {
+		s.picker = pickerClosed
+	}
+	if s.picker == pickerLogin && !strings.HasPrefix(s.text(), "/login") {
 		s.picker = pickerClosed
 	}
 	if s.picker == pickerModels {
@@ -252,13 +260,18 @@ func (s *inputState) complete() {
 		s.startContextPicker()
 		return
 	}
+	if matches[s.suggest].name == "/login" {
+		s.setText("/login")
+		s.startLoginPicker()
+		return
+	}
 	s.setText(matches[s.suggest].name)
 	s.afterEdit()
 }
 
 func (s *inputState) startPicker() {
 	s.picker = pickerModels
-	s.models = catalogModels(s.sessionModel)
+	s.models = s.catalog()
 	s.modelIndex = 0
 	for index, model := range s.models {
 		if model == s.sessionModel {
@@ -325,6 +338,71 @@ func (s *inputState) modelCommand() string {
 		return ""
 	}
 	return encodeModelCommand(model, s.pickContext, s.pickEffort, s.pickFast)
+}
+
+func (s *inputState) catalog() []string {
+	account := s.activeAccount
+	live := s.availableModels
+	if !s.catalogLocked {
+		if account == "" {
+			if config.IsClaudeModel(s.sessionModel) {
+				account = config.AccountClaude
+			} else if strings.TrimSpace(s.sessionModel) != "" {
+				account = config.AccountAPI
+			}
+		}
+		if live != nil {
+			return catalogModels(s.sessionModel, account, live)
+		}
+		return catalogModels(s.sessionModel, account, nil)
+	}
+	return catalogModels(s.sessionModel, s.activeAccount, s.availableModels)
+}
+
+func (s *inputState) startLoginPicker() {
+	s.picker = pickerLogin
+	options := auth.Options(s.activeAccount)
+	s.loginIndex = 0
+	for index, option := range options {
+		if option.ID == s.activeAccount {
+			s.loginIndex = index
+			break
+		}
+	}
+	s.clampLoginIndex()
+}
+
+func (s *inputState) loginOptions() []auth.Option {
+	return auth.Options(s.activeAccount)
+}
+
+func (s *inputState) clampLoginIndex() {
+	options := s.loginOptions()
+	if len(options) == 0 {
+		s.loginIndex = 0
+		return
+	}
+	if s.loginIndex >= len(options) {
+		s.loginIndex = len(options) - 1
+	}
+	if s.loginIndex < 0 {
+		s.loginIndex = 0
+	}
+}
+
+func (s *inputState) selectedLogin() string {
+	options := s.loginOptions()
+	if len(options) == 0 || s.loginIndex < 0 || s.loginIndex >= len(options) {
+		return ""
+	}
+	return options[s.loginIndex].ID
+}
+
+func (s *inputState) loginCommand() string {
+	if id := s.selectedLogin(); id != "" {
+		return "/login " + id
+	}
+	return strings.TrimSpace(s.text())
 }
 
 func (s *inputState) startModePicker() {
@@ -414,6 +492,9 @@ func (s *inputState) submit() string {
 		s.afterEdit()
 		return ""
 	}
+	if s.picker == pickerLogin {
+		return s.loginCommand()
+	}
 	if s.openModelPicker() {
 		return ""
 	}
@@ -421,6 +502,9 @@ func (s *inputState) submit() string {
 		return ""
 	}
 	if s.openContextPicker() {
+		return ""
+	}
+	if s.openLoginPicker() {
 		return ""
 	}
 	matches := s.matches()
@@ -441,6 +525,11 @@ func (s *inputState) submit() string {
 			if selected == "/context" {
 				s.setText("/context")
 				s.startContextPicker()
+				return ""
+			}
+			if selected == "/login" {
+				s.setText("/login")
+				s.startLoginPicker()
 				return ""
 			}
 			return selected
@@ -482,6 +571,17 @@ func (s *inputState) openContextPicker() bool {
 	return true
 }
 
+func (s *inputState) openLoginPicker() bool {
+	if s.picker != pickerClosed {
+		return false
+	}
+	if strings.TrimSpace(s.text()) != "/login" {
+		return false
+	}
+	s.startLoginPicker()
+	return true
+}
+
 func (s *inputState) up() {
 	if s.picker == pickerModels {
 		if s.modelIndex > 0 {
@@ -502,6 +602,12 @@ func (s *inputState) up() {
 		return
 	}
 	if s.picker == pickerContext {
+		return
+	}
+	if s.picker == pickerLogin {
+		if s.loginIndex > 0 {
+			s.loginIndex--
+		}
 		return
 	}
 	if matches := s.matches(); len(matches) > 0 {
@@ -540,6 +646,12 @@ func (s *inputState) down() {
 		return
 	}
 	if s.picker == pickerContext {
+		return
+	}
+	if s.picker == pickerLogin {
+		if s.loginIndex < len(s.loginOptions())-1 {
+			s.loginIndex++
+		}
 		return
 	}
 	if matches := s.matches(); len(matches) > 0 {
@@ -614,7 +726,7 @@ func (s *inputState) apply(event keyEvent) (submitted string, eof bool, handled 
 	case keyEsc:
 		if s.picker == pickerOptions {
 			s.picker = pickerModels
-		} else if s.picker == pickerModels || s.picker == pickerModes || s.picker == pickerContext {
+		} else if s.picker == pickerModels || s.picker == pickerModes || s.picker == pickerContext || s.picker == pickerLogin {
 			s.picker = pickerClosed
 			s.setText("")
 			s.afterEdit()
@@ -694,6 +806,9 @@ func (e *lineEditor) Read(ctx context.Context, settings *REPLSettings) (string, 
 	e.state.sessionEffort = settings.Effort
 	e.state.sessionFast = settings.Fast
 	e.state.sessionPermission = settings.PermissionMode
+	e.state.activeAccount = settings.ActiveAccount
+	e.state.availableModels = settings.Models
+	e.state.catalogLocked = true
 	e.state.picker = pickerClosed
 	e.state.exitArmed = false
 	e.cursorRow = 0
@@ -799,6 +914,9 @@ func (e *lineEditor) renderPicker(settings REPLSettings) error {
 	if e.state.picker == pickerContext {
 		return e.renderContextPicker(settings)
 	}
+	if e.state.picker == pickerLogin {
+		return e.renderLoginPicker(settings)
+	}
 	e.state.clampModelIndex()
 	var body strings.Builder
 	if e.state.picker == pickerOptions {
@@ -829,7 +947,11 @@ func (e *lineEditor) renderPicker(settings REPLSettings) error {
 	} else {
 		visible := e.state.visibleModels()
 		if len(visible) == 0 {
-			body.WriteString(paint(e.color, dim, "  no matching models") + "\r\n")
+			if e.state.activeAccount == "" && e.state.catalogLocked {
+				body.WriteString(paint(e.color, dim, "  no models — run /login") + "\r\n")
+			} else {
+				body.WriteString(paint(e.color, dim, "  no matching models") + "\r\n")
+			}
 		}
 		for index, model := range visible {
 			marker := "  "
@@ -870,6 +992,33 @@ func (e *lineEditor) renderModePicker(settings REPLSettings) error {
 			}
 		}
 		body.WriteString(marker + label + note + "\r\n")
+	}
+	body.WriteString(paint(e.color, dim, "enter apply · esc cancel") + "\r\n")
+	return e.paintFrame(settings, body.String(), strings.Count(body.String(), "\r\n"), true)
+}
+
+func (e *lineEditor) renderLoginPicker(settings REPLSettings) error {
+	e.state.clampLoginIndex()
+	var body strings.Builder
+	options := e.state.loginOptions()
+	if len(options) == 0 {
+		body.WriteString(paint(e.color, dim, "  no login options") + "\r\n")
+	}
+	for index, option := range options {
+		active := option.ID == e.state.activeAccount
+		selected := index == e.state.loginIndex
+		marker := "  "
+		label := option.Label
+		help := paint(e.color, dim, "  "+option.Help)
+		switch {
+		case active:
+			marker = paint(e.color, green, "● ")
+			label = paint(e.color, bold+green, option.Label)
+		case selected:
+			marker = paint(e.color, cyan, "▸ ")
+			label = paint(e.color, bold+cyan, option.Label)
+		}
+		body.WriteString(marker + label + help + "\r\n")
 	}
 	body.WriteString(paint(e.color, dim, "enter apply · esc cancel") + "\r\n")
 	return e.paintFrame(settings, body.String(), strings.Count(body.String(), "\r\n"), true)

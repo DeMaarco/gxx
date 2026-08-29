@@ -175,7 +175,8 @@ func defaultGoCache(home string) string {
 func isSensitiveEnvironmentName(name string) bool {
 	upper := strings.ToUpper(name)
 	switch upper {
-	case "OPENAI_API_KEY", "OPENAI_ADMIN_KEY", "GH_TOKEN", "GITHUB_TOKEN",
+	case "OPENAI_API_KEY", "OPENAI_ADMIN_KEY", "ANTHROPIC_API_KEY",
+		"ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "GH_TOKEN", "GITHUB_TOKEN",
 		"GOOGLE_APPLICATION_CREDENTIALS", "BASH_ENV", "CDPATH", "ENV", "SHELLOPTS",
 		"ZDOTDIR":
 		return true

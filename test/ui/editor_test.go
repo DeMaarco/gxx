@@ -219,6 +219,23 @@ func TestInputStateModelPickerTabAndEnter(t *testing.T) {
 	}
 }
 
+func TestInputStateLoginPickerSelectsAccount(t *testing.T) {
+	state := ui.InputState{}
+	state.SetText("/login")
+	line, _, submitted := state.Apply(ui.KeyEnter)
+	if !submitted || line != "" || state.Picker() != ui.PickerLogin {
+		t.Fatalf("enter on /login = %q picker=%d submitted=%v", line, state.Picker(), submitted)
+	}
+	state.Apply(ui.KeyDown)
+	if state.SelectedLogin() != "claude" {
+		t.Fatalf("selected login = %q, want claude", state.SelectedLogin())
+	}
+	line, _, submitted = state.Apply(ui.KeyEnter)
+	if !submitted || line != "/login claude" {
+		t.Fatalf("apply = %q submitted=%v", line, submitted)
+	}
+}
+
 func TestInputStateTabOnModelCommandOpensPicker(t *testing.T) {
 	state := ui.InputState{}
 	state.SetSession("gpt-5.6-sol", "", "medium", "")

@@ -114,6 +114,84 @@ func TestFormatTurnUsageOmitsZeroTotals(t *testing.T) {
 	}
 }
 
+func TestFormatUsageShowsSubscriptionRemaining(t *testing.T) {
+	text := ui.FormatUsage(agent.UsageReport{
+		Source: "ChatGPT",
+		Account: agent.AccountUsage{
+			Plan: "Plus",
+			Windows: []agent.QuotaWindow{
+				{Name: "5h", UsedPercent: 55, ResetAfterSec: 2*3600 + 12*60},
+				{Name: "weekly", UsedPercent: 51, ResetAfterSec: 5*24*3600 + 16*3600},
+				{Name: "opus week", UsedPercent: 92, ResetAfterSec: 3600},
+			},
+		},
+	}, false)
+	for _, expected := range []string{
+		"ChatGPT  Plus",
+		"5h         █████████░░░░░░░░░░░   45%  reset 2h 12m",
+		"weekly     ██████████░░░░░░░░░░   49%  reset 5d 16h",
+		"opus week  ██░░░░░░░░░░░░░░░░░░    8%  reset 1h",
+		"session  idle",
+	} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("usage = %q, want %q", text, expected)
+		}
+	}
+	if strings.Contains(text, "account this month") {
+		t.Fatalf("subscription usage showed monthly spend: %q", text)
+	}
+	if strings.Contains(text, "unknown until a model request is made") {
+		t.Fatalf("subscription usage showed API rate-limit hint: %q", text)
+	}
+}
+
+func TestFormatUsageShowsClaudeWindows(t *testing.T) {
+	text := ui.FormatUsage(agent.UsageReport{
+		Source: "Claude",
+		Account: agent.AccountUsage{
+			Windows: []agent.QuotaWindow{
+				{Name: "5h", UsedPercent: 0},
+				{Name: "weekly", UsedPercent: 20, ResetAfterSec: 2 * 24 * 3600},
+			},
+		},
+	}, false)
+	for _, expected := range []string{
+		"Claude",
+		"5h         ████████████████████  100%  not started",
+		"weekly     ████████████████░░░░   80%  reset 2d",
+		"session  idle",
+	} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("usage = %q, want %q", text, expected)
+		}
+	}
+}
+
+func TestFormatUsageColorsQuotaAndPlan(t *testing.T) {
+	text := ui.FormatUsage(agent.UsageReport{
+		Source: "ChatGPT",
+		Account: agent.AccountUsage{
+			Plan: "go",
+			Windows: []agent.QuotaWindow{
+				{Name: "weekly", UsedPercent: 0, ResetAfterSec: 30 * 24 * 3600},
+				{Name: "5h", UsedPercent: 92, ResetAfterSec: 3600},
+			},
+		},
+	}, true)
+	if !strings.Contains(text, "ChatGPT") || !strings.Contains(text, "Go") {
+		t.Fatalf("usage = %q, want ChatGPT Go", text)
+	}
+	if !strings.Contains(text, ui.ColorGreen) {
+		t.Fatalf("usage = %q, want green for healthy quota", text)
+	}
+	if !strings.Contains(text, ui.ColorRed) {
+		t.Fatalf("usage = %q, want red for low quota", text)
+	}
+	if !strings.Contains(text, ui.ColorBold) {
+		t.Fatalf("usage = %q, want bold plan", text)
+	}
+}
+
 func TestFormatUsageExplainsMissingAccountAndRateLimit(t *testing.T) {
 	text := ui.FormatUsage(agent.UsageReport{
 		Account: agent.AccountUsage{

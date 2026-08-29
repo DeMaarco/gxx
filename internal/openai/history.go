@@ -19,6 +19,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	openaisdk "github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/responses"
 
 	"gxx/internal/agent"
@@ -52,10 +53,7 @@ func (p *Provider) appendToolResultsLocked(results []agent.ToolResult) {
 		if !open[result.CallID] {
 			continue
 		}
-		p.history = append(p.history, responses.ResponseInputItemParamOfFunctionCallOutput(
-			result.CallID,
-			result.Output,
-		))
+		p.history = append(p.history, functionCallOutputParam(result.CallID, result.Output))
 		delete(open, result.CallID)
 	}
 }
@@ -67,10 +65,7 @@ func (p *Provider) closeOpenFunctionCallsLocked(reason string) int {
 	}
 	closed := 0
 	for callID := range unmatchedCallIDs(p.history) {
-		p.history = append(p.history, responses.ResponseInputItemParamOfFunctionCallOutput(
-			callID,
-			reason,
-		))
+		p.history = append(p.history, functionCallOutputParam(callID, reason))
 		closed++
 	}
 	return closed
@@ -114,6 +109,14 @@ func functionCallID(item responses.ResponseInputItemUnionParam) (id string, isCa
 	default:
 		return "", false, false
 	}
+}
+
+func functionCallOutputParam(callID, output string) responses.ResponseInputItemUnionParam {
+	item := responses.ResponseInputItemParamOfFunctionCallOutput(output)
+	if callID != "" && item.OfFunctionCallOutput != nil {
+		item.OfFunctionCallOutput.CallID = openaisdk.String(callID)
+	}
+	return item
 }
 
 func (p *Provider) shouldCompact(userText string) bool {
@@ -199,7 +202,7 @@ func clipAllToolOutputs(items []responses.ResponseInputItemUnionParam, maxBytes 
 		if maxBytes > 24 {
 			clipped = clipBytes(text, maxBytes-22) + "\n… [context clipped]"
 		}
-		out[index] = responses.ResponseInputItemParamOfFunctionCallOutput(id, clipped)
+		out[index] = functionCallOutputParam(id, clipped)
 	}
 	return out
 }
@@ -253,7 +256,7 @@ func compressInputProse(items []responses.ResponseInputItemUnionParam, level int
 		text := functionCallOutput(item)
 		compressed := caveman.Compress(text, level)
 		if compressed != text {
-			out[index] = responses.ResponseInputItemParamOfFunctionCallOutput(id, compressed)
+			out[index] = functionCallOutputParam(id, compressed)
 		}
 	}
 	return out
@@ -296,7 +299,7 @@ func clipOldToolOutputs(items []responses.ResponseInputItemUnionParam, keep, max
 		if maxBytes > 24 {
 			clipped = clipBytes(text, maxBytes-18) + "\n… [eco clipped]"
 		}
-		out[index] = responses.ResponseInputItemParamOfFunctionCallOutput(id, clipped)
+		out[index] = functionCallOutputParam(id, clipped)
 	}
 	return out
 }

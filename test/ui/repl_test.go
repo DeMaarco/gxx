@@ -257,7 +257,7 @@ func TestRunREPLConfiguresAPIKeyWithoutEchoingIt(t *testing.T) {
 	if strings.Contains(output.String(), "secret-api-key") {
 		t.Fatalf("API key leaked to output: %q", output.String())
 	}
-	for _, expected := range []string{"Run /config", "API key saved", "Conversation cleared"} {
+	for _, expected := range []string{"Run /login", "API key saved", "Conversation cleared"} {
 		if !strings.Contains(output.String(), expected) {
 			t.Fatalf("output = %q, want %q", output.String(), expected)
 		}
@@ -516,6 +516,7 @@ func TestRunREPLAppliesModelCommand(t *testing.T) {
 			Context:          "272k",
 			Workspace:        "/workspace",
 			APIKeyConfigured: true,
+			ActiveAccount:    config.AccountAPI,
 			SyncSession: func(session ui.REPLSettings) error {
 				synced = append(synced, session)
 				return nil
@@ -665,5 +666,142 @@ func TestRunREPLAppliesEcoCommand(t *testing.T) {
 	}
 	if len(ecoLevels) != 2 || ecoLevels[0] != 2 || ecoLevels[1] != 0 {
 		t.Fatalf("eco levels = %v", ecoLevels)
+	}
+}
+
+func TestRunREPLLoginAndLogoutClaude(t *testing.T) {
+	model := &replModel{}
+	loop := &agent.Loop{Model: model, Executor: emptyExecutor{}, MaxSteps: 2}
+	input := bufio.NewReader(strings.NewReader("/login claude\n/logout claude\n/exit\n"))
+	var output bytes.Buffer
+	loggedIn := false
+	loggedOut := false
+
+	err := ui.RunREPL(
+		context.Background(),
+		loop,
+		input,
+		ui.NewRenderer(&output),
+		&output,
+		ui.REPLSettings{
+			Version:          "0.0.1",
+			Model:            "claude-sonnet-4-6",
+			PermissionMode:   config.PermissionAsk,
+			Effort:           "medium",
+			Workspace:        "/workspace",
+			ClaudeConfigured: false,
+			Login: func(_ context.Context, _ io.Writer, args []string) (string, error) {
+				if len(args) == 0 || args[0] != "claude" {
+					t.Errorf("login args = %v", args)
+				}
+				loggedIn = true
+				return "/home/user/.config/gxx/config.json", nil
+			},
+			Logout: func(args []string) (string, error) {
+				if len(args) == 0 || args[0] != "claude" {
+					t.Errorf("logout args = %v", args)
+				}
+				loggedOut = true
+				return "/home/user/.config/gxx/config.json", nil
+			},
+		},
+	)
+	if err != nil {
+		t.Fatalf("RunREPL() error = %v", err)
+	}
+	if !loggedIn || !loggedOut {
+		t.Fatalf("login=%v logout=%v", loggedIn, loggedOut)
+	}
+	text := output.String()
+	for _, expected := range []string{
+		"Run /login",
+		"Claude login saved",
+		"Claude login cleared",
+		"Conversation cleared",
+	} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("output = %q, want %q", text, expected)
+		}
+	}
+}
+
+func TestRunREPLLoginAndLogoutOpenAI(t *testing.T) {
+	model := &replModel{}
+	loop := &agent.Loop{Model: model, Executor: emptyExecutor{}, MaxSteps: 2}
+	input := bufio.NewReader(strings.NewReader("/login openai\n/logout chatgpt\n/exit\n"))
+	var output bytes.Buffer
+	var loginArgs, logoutArgs []string
+
+	err := ui.RunREPL(
+		context.Background(),
+		loop,
+		input,
+		ui.NewRenderer(&output),
+		&output,
+		ui.REPLSettings{
+			Version:          "0.0.1",
+			Model:            "gpt-5.6-sol",
+			PermissionMode:   config.PermissionAsk,
+			Effort:           "medium",
+			Workspace:        "/workspace",
+			OpenAIConfigured: false,
+			Login: func(_ context.Context, _ io.Writer, args []string) (string, error) {
+				loginArgs = append([]string(nil), args...)
+				return "/home/user/.config/gxx/config.json", nil
+			},
+			Logout: func(args []string) (string, error) {
+				logoutArgs = append([]string(nil), args...)
+				return "/home/user/.config/gxx/config.json", nil
+			},
+		},
+	)
+	if err != nil {
+		t.Fatalf("RunREPL() error = %v", err)
+	}
+	if len(loginArgs) == 0 || loginArgs[0] != "openai" {
+		t.Fatalf("login args = %v", loginArgs)
+	}
+	if len(logoutArgs) == 0 || logoutArgs[0] != "openai" {
+		t.Fatalf("logout args = %v", logoutArgs)
+	}
+	text := output.String()
+	for _, expected := range []string{
+		"Run /login",
+		"OpenAI login saved",
+		"OpenAI login cleared",
+	} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("output = %q, want %q", text, expected)
+		}
+	}
+}
+
+func TestRunREPLLoginRequiresProviderWithoutTTY(t *testing.T) {
+	model := &replModel{}
+	loop := &agent.Loop{Model: model, Executor: emptyExecutor{}, MaxSteps: 2}
+	input := bufio.NewReader(strings.NewReader("/login\n/exit\n"))
+	var output bytes.Buffer
+	err := ui.RunREPL(
+		context.Background(),
+		loop,
+		input,
+		ui.NewRenderer(&output),
+		&output,
+		ui.REPLSettings{
+			Version:        "0.0.1",
+			Model:          "gpt-5.6-sol",
+			PermissionMode: config.PermissionAsk,
+			Workspace:      "/workspace",
+			Login: func(context.Context, io.Writer, []string) (string, error) {
+				t.Fatal("login should not run without a provider")
+				return "", nil
+			},
+		},
+	)
+	if err != nil {
+		t.Fatalf("RunREPL() error = %v", err)
+	}
+	if !strings.Contains(output.String(), "/login openai") {
+		t.Fatalf("output = %q, want provider guidance", output.String())
 	}
 }

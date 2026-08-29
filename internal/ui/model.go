@@ -19,13 +19,8 @@ import (
 	"strings"
 
 	"gxx/internal/config"
+	"gxx/internal/models"
 )
-
-var bundledModels = []string{
-	"gpt-5.6-sol",
-	"gpt-5.6-terra",
-	"gpt-5.6-luna",
-}
 
 var effortValues = []string{"none", "minimal", "low", "medium", "high", "xhigh", "max"}
 
@@ -37,6 +32,7 @@ const (
 	pickerOptions
 	pickerModes
 	pickerContext
+	pickerLogin
 )
 
 const (
@@ -54,22 +50,8 @@ type modelCommand struct {
 	Fast    *bool
 }
 
-func catalogModels(current string) []string {
-	current = config.CanonicalModel(current)
-	seen := map[string]struct{}{}
-	models := make([]string, 0, len(bundledModels)+1)
-	if current != "" {
-		models = append(models, current)
-		seen[current] = struct{}{}
-	}
-	for _, model := range bundledModels {
-		if _, exists := seen[model]; exists {
-			continue
-		}
-		seen[model] = struct{}{}
-		models = append(models, model)
-	}
-	return models
+func catalogModels(current, account string, live []string) []string {
+	return models.Catalog(current, account, live)
 }
 
 func cycleValue(values []string, current string, delta int) string {

@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	"gxx/internal/app"
+	"gxx/internal/config"
 )
 
 func TestRunHelpDoesNotRequireConfiguration(t *testing.T) {
@@ -38,6 +39,9 @@ func TestRunHelpDoesNotRequireConfiguration(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "gxx usage") {
 		t.Fatalf("stdout = %q, want usage command", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "gxx login") {
+		t.Fatalf("stdout = %q, want login command", stdout.String())
 	}
 	if !strings.Contains(stdout.String(), "--permission") {
 		t.Fatalf("stdout = %q, want permission flag", stdout.String())
@@ -74,7 +78,7 @@ func TestRunAskReportsMissingAPIKeyThroughInjectedIO(t *testing.T) {
 	if code != 2 {
 		t.Fatalf("Run() code = %d, want 2", code)
 	}
-	if !strings.Contains(stdout.String(), `"error":"OPENAI_API_KEY is not set"`) {
+	if !strings.Contains(stdout.String(), `"error":"OpenAI is not configured; run gxx login"`) {
 		t.Fatalf("stdout = %q, want JSON error", stdout.String())
 	}
 }
@@ -126,7 +130,7 @@ func TestInteractiveModeStartsWithoutAPIKeyForConfigCommand(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("Run() code = %d, stderr = %q", code, stderr.String())
 	}
-	if !strings.Contains(stdout.String(), "Run /config") {
+	if !strings.Contains(stdout.String(), "Run /login") {
 		t.Fatalf("stdout = %q, want missing-key guidance", stdout.String())
 	}
 }
@@ -141,8 +145,8 @@ func TestRunUsageReportsMissingAPIKey(t *testing.T) {
 	if code != 2 {
 		t.Fatalf("Run() code = %d, want 2; stdout = %q", code, stdout.String())
 	}
-	if !strings.Contains(stderr.String(), "OPENAI_API_KEY is not set") {
-		t.Fatalf("stderr = %q, want missing API key", stderr.String())
+	if !strings.Contains(stderr.String(), "gxx login") {
+		t.Fatalf("stderr = %q, want missing OpenAI credentials", stderr.String())
 	}
 }
 
@@ -165,5 +169,118 @@ func TestAskRejectsUnknownPermissionMode(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "permission mode") {
 		t.Fatalf("stdout = %q, want permission mode error", stdout.String())
+	}
+}
+
+func TestRunAskReportsMissingClaudeLogin(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "")
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	code := app.Run(
+		context.Background(),
+		[]string{"ask", "--model", "opus", "--json", "inspect", "the", "repo"},
+		strings.NewReader(""),
+		&stdout,
+		&stderr,
+		false,
+	)
+	if code != 2 {
+		t.Fatalf("Run() code = %d, want 2", code)
+	}
+	if !strings.Contains(stdout.String(), "gxx login") {
+		t.Fatalf("stdout = %q, want Claude login error", stdout.String())
+	}
+}
+
+func TestRunUsageReportsMissingClaudeLogin(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "")
+	t.Setenv("GXX_MODEL", "sonnet")
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	code := app.Run(context.Background(), []string{"usage"}, strings.NewReader(""), &stdout, &stderr, false)
+	if code != 2 {
+		t.Fatalf("Run() code = %d, want 2; stdout = %q", code, stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "gxx login") {
+		t.Fatalf("stderr = %q, want Claude login", stderr.String())
+	}
+}
+
+func TestRunLoginRequiresProviderWithoutTTY(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := app.Run(context.Background(), []string{"login"}, strings.NewReader(""), &stdout, &stderr, false)
+	if code != 2 {
+		t.Fatalf("Run() code = %d, stderr = %q", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "openai, claude, or api") {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+}
+
+func TestRunLogoutRequiresProviderWithoutTTY(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := app.Run(context.Background(), []string{"logout"}, strings.NewReader(""), &stdout, &stderr, false)
+	if code != 2 {
+		t.Fatalf("Run() code = %d, stderr = %q", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "no account connected") {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+}
+
+func TestRunLogoutClearsTokens(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "")
+	if _, err := config.SaveClaudeTokens(config.ClaudeTokens{AccessToken: "keep-me"}); err != nil {
+		t.Fatal(err)
+	}
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := app.Run(context.Background(), []string{"logout"}, strings.NewReader(""), &stdout, &stderr, false)
+	if code != 0 {
+		t.Fatalf("Run() code = %d, stderr = %q", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "Claude login cleared") {
+		t.Fatalf("stdout = %q", stdout.String())
+	}
+	tokens, err := config.LoadClaudeTokens()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tokens.AccessToken != "" {
+		t.Fatalf("claude tokens still present: %+v", tokens)
+	}
+}
+
+func TestRunLogoutOpenAIClearsCodexTokens(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	if _, err := config.SaveOpenAITokens(config.OpenAITokens{AccessToken: "oauth", AccountID: "acct"}); err != nil {
+		t.Fatal(err)
+	}
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := app.Run(context.Background(), []string{"logout", "chatgpt"}, strings.NewReader(""), &stdout, &stderr, false)
+	if code != 0 {
+		t.Fatalf("Run() code = %d, stderr = %q", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "OpenAI login cleared") {
+		t.Fatalf("stdout = %q", stdout.String())
+	}
+	tokens, err := config.LoadOpenAITokens()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tokens.AccessToken != "" {
+		t.Fatalf("openai tokens still present: %+v", tokens)
 	}
 }

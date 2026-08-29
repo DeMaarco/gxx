@@ -16,6 +16,7 @@ package openai
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -39,15 +40,25 @@ import (
 
 const fallbackHistoryItems = 256
 
+var errOpenAIUnconfigured = errors.New("OpenAI is not configured; run gxx login openai or /config")
+
 // ErrContextOverflow is returned when history still exceeds the window after
 // compaction and emergency clipping. The API is not called.
 var ErrContextOverflow = errors.New("context window is full; run /clear or start a new conversation")
+
+// TokenSource returns a usable Codex OAuth access token, refreshing when needed.
+type TokenSource interface {
+	AccessToken(context.Context) (string, error)
+	AccountID(context.Context) (string, error)
+}
 
 // Provider implements a store:false Responses conversation. It resends the
 // completed output items, including encrypted reasoning, on each turn.
 type Provider struct {
 	client        openaisdk.Client
 	apiKey        string
+	tokens        TokenSource
+	oauth         bool
 	model         string
 	effort        string
 	contextTokens int
@@ -71,6 +82,7 @@ type Provider struct {
 	ecoToolClip     int
 	httpClient      *http.Client
 	baseURL         string
+	sessionID       string
 }
 
 func New(apiKey, model, instructions string, timeout time.Duration) *Provider {
@@ -87,8 +99,18 @@ func New(apiKey, model, instructions string, timeout time.Duration) *Provider {
 		compactDenom:  3,
 		httpClient:    &http.Client{Timeout: usageFetchTimeout},
 		baseURL:       defaultAPIBaseURL,
+		sessionID:     newSessionID(),
 	}
 	provider.refreshContextLocked()
+	return provider
+}
+
+// NewWithSource authenticates against the Codex backend with a ChatGPT account.
+func NewWithSource(source TokenSource, model, instructions string, timeout time.Duration) *Provider {
+	provider := New("", model, instructions, timeout)
+	provider.tokens = source
+	provider.oauth = true
+	provider.baseURL = codexAPIBaseURL
 	return provider
 }
 
@@ -160,10 +182,14 @@ func (p *Provider) Respond(
 ) (agent.ModelResponse, error) {
 	var result agent.ModelResponse
 
+	if err := p.refreshOAuthClient(ctx); err != nil {
+		return result, err
+	}
+
 	p.mu.Lock()
-	if p.apiKey == "" {
+	if p.apiKey == "" && !p.oauth {
 		p.mu.Unlock()
-		return result, errors.New("OpenAI API key is not configured; run /config")
+		return result, errOpenAIUnconfigured
 	}
 
 	hasUserText := strings.TrimSpace(input.UserText) != ""
@@ -293,24 +319,39 @@ func (p *Provider) requestParamsLocked(
 	finalStep bool,
 ) responses.ResponseNewParams {
 	instructions := agent.CompressProjectInstructions(p.instructions, p.ecoLevel)
+	if p.oauth && strings.TrimSpace(instructions) == "" {
+		instructions = defaultCodexInstructions
+	}
 	params := responses.ResponseNewParams{
 		Model:             shared.ResponsesModel(p.model),
 		Instructions:      openaisdk.String(instructions),
 		Store:             openaisdk.Bool(false),
 		ParallelToolCalls: openaisdk.Bool(true),
-		Truncation:        responses.ResponseNewParamsTruncationDisabled,
 		PromptCacheKey:    openaisdk.String(promptCacheKey(p.model, instructions)),
-		PromptCacheOptions: responses.ResponseNewParamsPromptCacheOptions{
-			Mode: "implicit",
-			Ttl:  "30m",
-		},
 		Reasoning: shared.ReasoningParam{
 			Effort: shared.ReasoningEffort(p.effort),
 		},
 		Input: responses.ResponseNewParamsInputUnion{
 			OfInputItemList: staged,
 		},
-		Tools: toolParams(definitions, p.ecoLevel),
+		Tools: toolParams(definitions, p.ecoLevel, !p.oauth),
+	}
+	if p.oauth {
+		params.PromptCacheKey = openaisdk.String(p.sessionID)
+		if len(params.Tools) > 0 && !finalStep {
+			params.ToolChoice = responses.ResponseNewParamsToolChoiceUnion{
+				OfToolChoiceMode: openaisdk.Opt(responses.ToolChoiceOptionsAuto),
+			}
+		}
+	} else {
+		params.Truncation = responses.ResponseNewParamsTruncationDisabled
+		params.PromptCacheOptions = responses.ResponseNewParamsPromptCacheOptions{
+			Mode: "implicit",
+			Ttl:  "30m",
+		}
+		params.StreamOptions = responses.ResponseNewParamsStreamOptions{
+			IncludeObfuscation: openaisdk.Bool(false),
+		}
 	}
 	if !p.omitReasoning {
 		params.Include = []responses.ResponseIncludable{
@@ -342,7 +383,11 @@ func (p *Provider) SetAPIKey(apiKey string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.apiKey = apiKey
+	p.tokens = nil
+	p.oauth = false
+	p.baseURL = defaultAPIBaseURL
 	p.client = newClient(apiKey)
+	p.sessionID = newSessionID()
 	p.generation++
 	p.history = nil
 	p.session = agent.Usage{}
@@ -350,6 +395,34 @@ func (p *Provider) SetAPIKey(apiKey string) error {
 	p.rateLimit = agent.RateLimit{}
 	p.lastInputTokens = 0
 	p.refreshContextLocked()
+	return nil
+}
+
+func (p *Provider) refreshOAuthClient(ctx context.Context) error {
+	p.mu.Lock()
+	source := p.tokens
+	oauth := p.oauth
+	baseURL := p.baseURL
+	p.mu.Unlock()
+	if !oauth || source == nil {
+		return nil
+	}
+	token, err := source.AccessToken(ctx)
+	if err != nil {
+		return err
+	}
+	accountID, err := source.AccountID(ctx)
+	if err != nil {
+		return err
+	}
+	accountID = strings.TrimSpace(accountID)
+	if accountID == "" {
+		return errors.New("ChatGPT account id is missing; run /login openai again")
+	}
+	p.mu.Lock()
+	sessionID := p.sessionID
+	p.client = newCodexClient(token, accountID, baseURL, sessionID)
+	p.mu.Unlock()
 	return nil
 }
 
@@ -362,6 +435,38 @@ func newClient(apiKey string) openaisdk.Client {
 		opts = append(opts, option.WithAdminAPIKey(apiKey))
 	}
 	return openaisdk.NewClient(opts...)
+}
+
+func newCodexClient(accessToken, accountID, baseURL, sessionID string) openaisdk.Client {
+	if strings.TrimSpace(baseURL) == "" {
+		baseURL = codexAPIBaseURL
+	}
+	opts := []option.RequestOption{
+		option.WithAPIKey(accessToken),
+		option.WithBaseURL(strings.TrimRight(baseURL, "/") + "/"),
+		option.WithHeader("OpenAI-Beta", codexBetaHeader),
+		option.WithHeader("originator", codexOriginator),
+		option.WithMiddleware(sanitizeCodexRequest),
+		option.WithMaxRetries(0),
+	}
+	if accountID = strings.TrimSpace(accountID); accountID != "" {
+		opts = append(opts, option.WithHeader(codexAccountHdr, accountID))
+	}
+	if sessionID = strings.TrimSpace(sessionID); sessionID != "" {
+		opts = append(opts,
+			option.WithHeader("session-id", sessionID),
+			option.WithHeader("session_id", sessionID),
+		)
+	}
+	return openaisdk.NewClient(opts...)
+}
+
+func newSessionID() string {
+	raw := make([]byte, 16)
+	if _, err := rand.Read(raw); err != nil {
+		return fmt.Sprintf("gxx-%d", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(raw)
 }
 
 func responseText(response responses.Response) string {
@@ -386,12 +491,13 @@ func (p *Provider) Reset() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.generation++
+	p.sessionID = newSessionID()
 	p.history = nil
 	p.lastInputTokens = 0
 	p.refreshContextLocked()
 }
 
-func toolParams(definitions []agent.ToolDefinition, eco int) []responses.ToolUnionParam {
+func toolParams(definitions []agent.ToolDefinition, eco int, strict bool) []responses.ToolUnionParam {
 	if len(definitions) == 0 {
 		// An empty slice serializes to "tools": [], which withdraws the tool
 		// namespace. Omit the field instead.
@@ -409,7 +515,9 @@ func toolParams(definitions []agent.ToolDefinition, eco int) []responses.ToolUni
 			Name:        definition.Name,
 			Description: openaisdk.String(description),
 			Parameters:  parameters,
-			Strict:      openaisdk.Bool(true),
+		}
+		if strict {
+			function.Strict = openaisdk.Bool(true)
 		}
 		params = append(params, responses.ToolUnionParam{OfFunction: &function})
 	}

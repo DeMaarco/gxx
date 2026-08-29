@@ -55,6 +55,11 @@ func TestParseModelCommand(t *testing.T) {
 		t.Fatalf("alias = %+v, %v, want gpt-5.6-luna", command, err)
 	}
 
+	command, err = ui.ParseModelCommand("/model opus")
+	if err != nil || command.Model != "claude-opus-5" {
+		t.Fatalf("claude alias = %+v, %v, want claude-opus-5", command, err)
+	}
+
 	if _, err := ui.ParseModelCommand("/model effort bogus"); err == nil {
 		t.Fatal("expected invalid effort error")
 	}
@@ -65,10 +70,11 @@ func TestParseModelCommand(t *testing.T) {
 
 func TestApplyModelCommandRollsBackOnSyncError(t *testing.T) {
 	settings := ui.REPLSettings{
-		Model:   "gpt-5.6-sol",
-		Context: "272k",
-		Effort:  "medium",
-		Fast:    false,
+		Model:         "gpt-5.6-sol",
+		Context:       "272k",
+		Effort:        "medium",
+		Fast:          false,
+		ActiveAccount: "api",
 		SyncSession: func(ui.REPLSettings) error {
 			return errors.New("disk full")
 		},
@@ -94,9 +100,13 @@ func TestEncodeModelCommand(t *testing.T) {
 	}
 }
 
-func TestCatalogModelsListsSolTerraLuna(t *testing.T) {
+func TestCatalogModelsListsOpenAIAndClaude(t *testing.T) {
 	got := ui.CatalogModels("gpt-5.6-sol")
-	want := []string{"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"}
+	want := []string{
+		"gpt-5.6-sol",
+		"gpt-5.6-terra",
+		"gpt-5.6-luna",
+	}
 	if len(got) != len(want) {
 		t.Fatalf("catalog = %#v, want %#v", got, want)
 	}

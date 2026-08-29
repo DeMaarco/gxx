@@ -28,6 +28,9 @@ func TestLookupSlashCommand(t *testing.T) {
 		wantErr string
 	}{
 		{line: "/help", name: "/help"},
+		{line: "/login", name: "/login"},
+		{line: "/login openai", name: "/login"},
+		{line: "/logout claude", name: "/logout"},
 		{line: "/quit", name: "/exit"},
 		{line: "/model terra", name: "/model"},
 		{line: "/mode auto", name: "/mode"},

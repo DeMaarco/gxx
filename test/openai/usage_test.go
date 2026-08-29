@@ -57,6 +57,9 @@ func TestParseAPIErrorAcceptsStringOrObject(t *testing.T) {
 	if got := openai.ParseAPIError([]byte(`{"error":{"message":"forbidden","type":"invalid_request_error"}}`)); got != "forbidden" {
 		t.Fatalf("object error = %q", got)
 	}
+	if got := openai.ParseAPIError([]byte(`{"detail":"Store must be set to false"}`)); got != "Store must be set to false" {
+		t.Fatalf("detail error = %q", got)
+	}
 }
 
 func TestFetchAccountUsageSumsSpendAndRemainingQuota(t *testing.T) {
@@ -179,6 +182,106 @@ func TestFetchAccountUsageHandlesStringErrorBodies(t *testing.T) {
 	}
 	if strings.Contains(account.Error, "cannot unmarshal") {
 		t.Fatalf("error leaked SDK decode failure: %q", account.Error)
+	}
+}
+
+func TestChatGPTUsageURLUsesWhamOnCodexBackend(t *testing.T) {
+	if got := openai.ChatGPTUsageURL(""); got != "https://chatgpt.com/backend-api/wham/usage" {
+		t.Fatalf("empty = %q", got)
+	}
+	if got := openai.ChatGPTUsageURL(openai.CodexAPIBaseURL()); got != "https://chatgpt.com/backend-api/wham/usage" {
+		t.Fatalf("codex = %q", got)
+	}
+	if got := openai.ChatGPTUsageURL("http://127.0.0.1:9/backend-api/codex"); got != "http://127.0.0.1:9/backend-api/wham/usage" {
+		t.Fatalf("custom codex = %q", got)
+	}
+	if got := openai.ChatGPTUsageURL("http://127.0.0.1:9"); got != "http://127.0.0.1:9/wham/usage" {
+		t.Fatalf("custom = %q", got)
+	}
+}
+
+func TestParseChatGPTUsageLabelsMonthlyWindow(t *testing.T) {
+	account := openai.ParseChatGPTUsage([]byte(`{
+		"plan_type": "go",
+		"rate_limit": {
+			"primary_window": {"used_percent": 0, "limit_window_seconds": 2592000, "reset_after_seconds": 2592000},
+			"secondary_window": null
+		}
+	}`))
+	if account.Error != "" || account.Plan != "go" || len(account.Windows) != 1 {
+		t.Fatalf("account = %+v", account)
+	}
+	if account.Windows[0].Name != "30d" || account.Windows[0].UsedPercent != 0 {
+		t.Fatalf("window = %+v", account.Windows[0])
+	}
+}
+
+func TestParseChatGPTUsageReadsAdditionalFiveHourWindow(t *testing.T) {
+	account := openai.ParseChatGPTUsage([]byte(`{
+		"plan_type": "plus",
+		"rate_limit": {
+			"primary_window": {"used_percent": 10, "limit_window_seconds": 604800}
+		},
+		"additional_rate_limits": [{
+			"limit_name": "codex",
+			"rate_limit": {
+				"primary_window": {"used_percent": 22, "limit_window_seconds": 18000, "reset_after_seconds": 3600}
+			}
+		}]
+	}`))
+	if len(account.Windows) != 2 {
+		t.Fatalf("windows = %+v", account.Windows)
+	}
+	if account.Windows[0].Name != "weekly" || account.Windows[1].Name != "5h" || account.Windows[1].UsedPercent != 22 {
+		t.Fatalf("windows = %+v", account.Windows)
+	}
+}
+
+func TestParseChatGPTUsageReadsWindows(t *testing.T) {
+	account := openai.ParseChatGPTUsage([]byte(`{
+		"plan_type": "pro",
+		"rate_limit": {
+			"primary_window": {"used_percent": 12.5, "limit_window_seconds": 18000, "reset_after_seconds": 60},
+			"secondary_window": {"used_percent": 40, "limit_window_seconds": 604800, "reset_at": "2026-09-04T12:00:00Z"}
+		}
+	}`))
+	if account.Error != "" || account.Plan != "pro" || len(account.Windows) != 2 {
+		t.Fatalf("account = %+v", account)
+	}
+	if account.Windows[0].Name != "5h" || account.Windows[0].UsedPercent != 12.5 || account.Windows[0].ResetAfterSec != 60 {
+		t.Fatalf("5h = %+v", account.Windows[0])
+	}
+	if account.Windows[1].Name != "weekly" || account.Windows[1].UsedPercent != 40 || account.Windows[1].ResetAt.UTC() != time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC) {
+		t.Fatalf("weekly = %+v", account.Windows[1])
+	}
+}
+
+func TestFetchChatGPTUsageSendsAccountHeaders(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/wham/usage" {
+			t.Errorf("path = %s", request.URL.Path)
+		}
+		if request.Header.Get("Authorization") != "Bearer tok" {
+			t.Errorf("auth = %q", request.Header.Get("Authorization"))
+		}
+		if request.Header.Get("originator") != openai.CodexOriginator() {
+			t.Errorf("originator = %q", request.Header.Get("originator"))
+		}
+		if request.Header.Get(openai.CodexAccountHeader()) != "acct-1" {
+			t.Errorf("account = %q", request.Header.Get(openai.CodexAccountHeader()))
+		}
+		writeJSON(t, writer, map[string]any{
+			"plan_type": "plus",
+			"rate_limit": map[string]any{
+				"primary_window": map[string]any{"used_percent": 10, "limit_window_seconds": 18000},
+			},
+		})
+	}))
+	defer server.Close()
+
+	account := openai.FetchChatGPTUsage(context.Background(), server.Client(), server.URL, "tok", "acct-1")
+	if account.Error != "" || account.Plan != "plus" || len(account.Windows) != 1 {
+		t.Fatalf("account = %+v", account)
 	}
 }
 

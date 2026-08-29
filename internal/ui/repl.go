@@ -29,6 +29,7 @@ import (
 	"unicode/utf8"
 
 	"gxx/internal/agent"
+	"gxx/internal/auth"
 	"gxx/internal/config"
 	"gxx/internal/osutil"
 )
@@ -47,8 +48,15 @@ type REPLSettings struct {
 	Color               bool
 	Stdin               *os.File
 	APIKeyConfigured    bool
+	OpenAIConfigured    bool
+	ClaudeConfigured    bool
+	ActiveAccount       string
+	Models              []string
+	RefreshAuth         func(*REPLSettings)
 	ReadAPIKey          func(context.Context) (string, error)
 	SaveAPIKey          func(string) (string, error)
+	Login               func(context.Context, io.Writer, []string) (string, error)
+	Logout              func([]string) (string, error)
 	FetchUsage          func(context.Context) (agent.UsageReport, error)
 	FetchContext        func() agent.ContextUsage
 	RefreshInstructions func()
@@ -447,8 +455,8 @@ func RunREPL(
 	writer io.Writer,
 	settings REPLSettings,
 ) error {
-	if !settings.APIKeyConfigured {
-		fmt.Fprintln(writer, paint(settings.Color, dim, "OpenAI API key is not configured. Run /config."))
+	if hint := authHint(settings); hint != "" {
+		fmt.Fprintln(writer, paint(settings.Color, dim, hint))
 		fmt.Fprintln(writer)
 	}
 
@@ -505,7 +513,7 @@ func RunREPL(
 			continue
 		}
 		if strings.HasPrefix(prompt, "/") {
-			name, _, slashErr := lookupSlashCommand(prompt)
+			name, slashArgs, slashErr := lookupSlashCommand(prompt)
 			if slashErr != nil {
 				fmt.Fprintf(writer, "%s\n", paint(settings.Color, red, "error: "+slashErr.Error()))
 				fmt.Fprintln(writer)
@@ -523,7 +531,19 @@ func RunREPL(
 				fmt.Fprintln(writer)
 				continue
 			case "/config":
-				if err := configureAPIKey(sessionCtx, loop, writer, settings); err != nil {
+				if err := configureAPIKey(sessionCtx, loop, writer, &settings); err != nil {
+					fmt.Fprintf(writer, "%s\n", paint(settings.Color, red, "error: "+err.Error()))
+				}
+				fmt.Fprintln(writer)
+				continue
+			case "/login":
+				if err := loginAccount(sessionCtx, loop, writer, reader, &settings, slashArgs); err != nil {
+					fmt.Fprintf(writer, "%s\n", paint(settings.Color, red, "error: "+err.Error()))
+				}
+				fmt.Fprintln(writer)
+				continue
+			case "/logout":
+				if err := logoutAccount(loop, writer, reader, &settings, slashArgs); err != nil {
 					fmt.Fprintf(writer, "%s\n", paint(settings.Color, red, "error: "+err.Error()))
 				}
 				fmt.Fprintln(writer)
@@ -752,7 +772,11 @@ func applyModelCommand(writer io.Writer, settings *REPLSettings, line string) (b
 				settings.Fast,
 			)),
 		)
-		for _, model := range catalogModels(settings.Model) {
+		listed := catalogModels(settings.Model, settings.ActiveAccount, settings.Models)
+		if len(listed) == 0 {
+			fmt.Fprintln(writer, paint(settings.Color, dim, "No models. Run /login."))
+		}
+		for _, model := range listed {
 			marker := "  "
 			if model == settings.Model {
 				marker = "* "
@@ -766,6 +790,9 @@ func applyModelCommand(writer io.Writer, settings *REPLSettings, line string) (b
 
 	previous := *settings
 	if command.Model != "" {
+		if err := ensureModelAllowed(*settings, command.Model); err != nil {
+			return false, err
+		}
 		settings.Model = command.Model
 	}
 	if command.Context != "" {
@@ -795,6 +822,9 @@ func applyModelCommand(writer io.Writer, settings *REPLSettings, line string) (b
 			settings.Fast,
 		)),
 	)
+	if hint := authHint(*settings); hint != "" {
+		fmt.Fprintln(writer, paint(settings.Color, dim, hint))
+	}
 	return command.Model != "" && command.Model != previous.Model, nil
 }
 
@@ -850,9 +880,9 @@ func configureAPIKey(
 	ctx context.Context,
 	loop *agent.Loop,
 	writer io.Writer,
-	settings REPLSettings,
+	settings *REPLSettings,
 ) error {
-	if settings.ReadAPIKey == nil || settings.SaveAPIKey == nil {
+	if settings == nil || settings.ReadAPIKey == nil || settings.SaveAPIKey == nil {
 		return errors.New("interactive API key configuration is unavailable")
 	}
 	if _, err := fmt.Fprint(writer, "OpenAI API key (hidden; blank cancels): "); err != nil {
@@ -875,9 +905,178 @@ func configureAPIKey(
 	if err != nil {
 		return fmt.Errorf("save API key: %w", err)
 	}
+	settings.APIKeyConfigured = true
+	settings.OpenAIConfigured = true
+	settings.ClaudeConfigured = false
+	settings.ActiveAccount = config.AccountAPI
+	if settings.RefreshAuth != nil {
+		settings.RefreshAuth(settings)
+	}
 	loop.Reset()
 	fmt.Fprintf(writer, "API key saved to %s. Conversation cleared.\n", path)
 	return nil
+}
+
+func authHint(settings REPLSettings) string {
+	if settings.ActiveAccount != "" || settings.ClaudeConfigured || settings.OpenAIConfigured || settings.APIKeyConfigured {
+		return ""
+	}
+	return "No account connected. Run /login."
+}
+
+func ensureModelAllowed(settings REPLSettings, model string) error {
+	account := settings.ActiveAccount
+	if account == "" {
+		if settings.ClaudeConfigured {
+			account = config.AccountClaude
+		} else if settings.APIKeyConfigured {
+			account = config.AccountAPI
+		} else if settings.OpenAIConfigured {
+			account = config.AccountOpenAI
+		}
+	}
+	if account == "" {
+		return errors.New("no account connected; run /login")
+	}
+	if config.IsClaudeModel(model) && account != config.AccountClaude {
+		return errors.New("Claude models require a Claude login")
+	}
+	if config.IsOpenAIModel(model) && account != config.AccountOpenAI && account != config.AccountAPI {
+		return errors.New("OpenAI models require an OpenAI login")
+	}
+	listed := catalogModels(settings.Model, account, settings.Models)
+	if len(listed) == 0 {
+		return nil
+	}
+	for _, id := range listed {
+		if id == model {
+			return nil
+		}
+	}
+	return fmt.Errorf("model %s is not available on this account", model)
+}
+
+func loginAccount(
+	ctx context.Context,
+	loop *agent.Loop,
+	writer io.Writer,
+	reader *bufio.Reader,
+	settings *REPLSettings,
+	args []string,
+) error {
+	if settings.Login == nil {
+		return errors.New("login is unavailable")
+	}
+	provider, remaining, err := resolveSlashProvider(ctx, writer, reader, settings, args, "/login")
+	if err != nil {
+		if errors.Is(err, io.EOF) || strings.Contains(err.Error(), "login canceled") || auth.IsCanceled(err) {
+			fmt.Fprintln(writer, "Login canceled.")
+			return nil
+		}
+		return err
+	}
+	if provider == config.AccountAPI {
+		return configureAPIKey(ctx, loop, writer, settings)
+	}
+	path, err := settings.Login(ctx, writer, append([]string{provider}, remaining...))
+	if err != nil {
+		if errors.Is(err, io.EOF) || strings.Contains(err.Error(), "login canceled") {
+			fmt.Fprintln(writer, "Login canceled.")
+			return nil
+		}
+		return err
+	}
+	applyAccountFlags(settings, provider)
+	if settings.RefreshAuth != nil {
+		settings.RefreshAuth(settings)
+	}
+	loop.Reset()
+	fmt.Fprintf(writer, "%s login saved to %s. Conversation cleared.\n", loginLabel(provider), path)
+	return nil
+}
+
+func logoutAccount(loop *agent.Loop, writer io.Writer, reader *bufio.Reader, settings *REPLSettings, args []string) error {
+	if settings.Logout == nil {
+		return errors.New("logout is unavailable")
+	}
+	provider := settings.ActiveAccount
+	remaining := args
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		var err error
+		provider, remaining, err = resolveSlashProvider(context.Background(), writer, reader, settings, args, "/logout")
+		if err != nil {
+			if errors.Is(err, io.EOF) || strings.Contains(err.Error(), "canceled") || auth.IsCanceled(err) {
+				fmt.Fprintln(writer, "Logout canceled.")
+				return nil
+			}
+			return err
+		}
+	}
+	if provider == "" {
+		return errors.New("no account connected")
+	}
+	path, err := settings.Logout(append([]string{provider}, remaining...))
+	if err != nil {
+		return err
+	}
+	settings.APIKeyConfigured = false
+	settings.OpenAIConfigured = false
+	settings.ClaudeConfigured = false
+	settings.ActiveAccount = ""
+	settings.Models = nil
+	if settings.RefreshAuth != nil {
+		settings.RefreshAuth(settings)
+	}
+	loop.Reset()
+	fmt.Fprintf(writer, "%s login cleared from %s. Conversation cleared.\n", loginLabel(provider), path)
+	return nil
+}
+
+func resolveSlashProvider(
+	ctx context.Context,
+	writer io.Writer,
+	reader *bufio.Reader,
+	settings *REPLSettings,
+	args []string,
+	command string,
+) (string, []string, error) {
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		provider, err := canonicalLoginProvider(args[0])
+		if err != nil {
+			return "", nil, err
+		}
+		return provider, args[1:], nil
+	}
+	if settings != nil && settings.Stdin != nil {
+		choice, err := ReadLoginChoice(settings.Stdin, writer, settings.Color, settings.ActiveAccount)
+		if err != nil {
+			return "", nil, err
+		}
+		return choice, args, nil
+	}
+	return "", nil, fmt.Errorf("choose openai, claude, or api (for example `%s openai`)", command)
+}
+
+func canonicalLoginProvider(value string) (string, error) {
+	return auth.CanonicalProvider(value)
+}
+
+func applyAccountFlags(settings *REPLSettings, provider string) {
+	settings.APIKeyConfigured = provider == config.AccountAPI
+	settings.OpenAIConfigured = provider == config.AccountOpenAI || provider == config.AccountAPI
+	settings.ClaudeConfigured = provider == config.AccountClaude
+	settings.ActiveAccount = provider
+}
+
+func loginLabel(provider string) string {
+	switch provider {
+	case config.AccountOpenAI:
+		return "OpenAI"
+	case config.AccountAPI:
+		return "API"
+	default:
+		return "Claude"
+	}
 }
 
 func readLine(ctx context.Context, reader *bufio.Reader, file *os.File) (string, error) {

@@ -27,13 +27,18 @@ func TestSanitizedEnvironmentInjectsGoCachesFromHome(t *testing.T) {
 		"HOME=/tmp/gxx-home-should-not-leak",
 		"PATH=/usr/bin",
 		"OPENAI_API_KEY=secret",
+		"ANTHROPIC_API_KEY=ant-secret",
+		"ANTHROPIC_AUTH_TOKEN=ant-token",
+		"CLAUDE_CODE_OAUTH_TOKEN=oauth-secret",
 	})
 	joined := strings.Join(env, "\n")
 	if !strings.Contains(joined, "HOME=/tmp/gxx-home-should-not-leak") {
 		t.Fatalf("HOME missing: %q", env)
 	}
-	if strings.Contains(joined, "OPENAI_API_KEY=") {
-		t.Fatalf("API key leaked: %q", env)
+	for _, leaked := range []string{"OPENAI_API_KEY=", "ANTHROPIC_API_KEY=", "ANTHROPIC_AUTH_TOKEN=", "CLAUDE_CODE_OAUTH_TOKEN="} {
+		if strings.Contains(joined, leaked) {
+			t.Fatalf("credential leaked (%s): %q", leaked, env)
+		}
 	}
 	if !strings.Contains(joined, "GIT_TERMINAL_PROMPT=0") {
 		t.Fatalf("GIT_TERMINAL_PROMPT missing: %q", env)

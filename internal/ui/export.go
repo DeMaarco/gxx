@@ -18,6 +18,8 @@ import (
 	"context"
 	"io"
 	"time"
+
+	"gxx/internal/config"
 )
 
 const (
@@ -42,6 +44,7 @@ const (
 	PickerOptions = int(pickerOptions)
 	PickerModes   = int(pickerModes)
 	PickerContext = int(pickerContext)
+	PickerLogin   = int(pickerLogin)
 	OptionContext = optionContext
 	OptionEffort  = optionEffort
 	OptionFast    = optionFast
@@ -63,7 +66,7 @@ var (
 	WriteChrome         = writeChrome
 	FormatStatus        = formatStatus
 	PromptPrefix        = promptPrefix
-	CatalogModels       = catalogModels
+	CatalogModels       = catalogModelsForTest
 	ParseModelCommand   = parseModelCommand
 	ApplyModelCommand   = applyModelCommand
 	ParseModeCommand    = parseModeCommand
@@ -167,11 +170,31 @@ func (s *InputState) SetOptionIndex(index int) {
 func (s *InputState) PickEffort() string  { return s.inner.pickEffort }
 func (s *InputState) PickContext() string { return s.inner.pickContext }
 func (s *InputState) PickFast() bool      { return s.inner.pickFast }
+func catalogModelsForTest(current string) []string {
+	account := config.AccountAPI
+	if config.IsClaudeModel(current) {
+		account = config.AccountClaude
+	}
+	return catalogModels(current, account, nil)
+}
+
+func Catalog(current, account string, live []string) []string {
+	return catalogModels(current, account, live)
+}
+
 func (s *InputState) SetSession(model, contextValue, effort, permission string) {
 	s.inner.sessionModel = model
 	s.inner.sessionContext = contextValue
 	s.inner.sessionEffort = effort
 	s.inner.sessionPermission = permission
+}
+
+func (s *InputState) SetActiveAccount(account string) {
+	s.inner.activeAccount = account
+}
+
+func (s *InputState) SelectedLogin() string {
+	return s.inner.selectedLogin()
 }
 
 func (g *TurnGate) Start(parent context.Context) (context.Context, context.CancelFunc) {

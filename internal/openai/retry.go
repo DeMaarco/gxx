@@ -94,6 +94,24 @@ func sleepContext(ctx context.Context, delay time.Duration) error {
 	}
 }
 
+func formatResponsesError(err error) error {
+	if err == nil {
+		return nil
+	}
+	var apiErr *openaisdk.Error
+	if !errors.As(err, &apiErr) {
+		return err
+	}
+	detail := strings.TrimSpace(apiErr.Message)
+	if detail == "" {
+		detail = parseAPIError([]byte(apiErr.RawJSON()))
+	}
+	if detail == "" || detail == "request failed" || strings.Contains(err.Error(), detail) {
+		return err
+	}
+	return fmt.Errorf("%w: %s", err, detail)
+}
+
 func streamResponse(
 	ctx context.Context,
 	client openaisdk.Client,
@@ -121,7 +139,7 @@ func streamResponse(
 		}
 	}
 	if err := stream.Err(); err != nil {
-		return completed, raw, err
+		return completed, raw, formatResponsesError(err)
 	}
 	if streamError != nil {
 		return completed, raw, streamError

@@ -24,26 +24,31 @@ import (
 )
 
 var (
-	DropOldReasoning    = dropOldReasoning
-	DropAllReasoning    = dropAllReasoning
-	KeepLatestReasoning = keepLatestReasoning
-	SlimInput           = slimInput
-	ClipOldToolOutputs  = clipOldToolOutputs
-	DropOldTurns        = dropOldTurns
-	SummarizeDropped    = summarizeDropped
-	UnmatchedCallIDs    = unmatchedCallIDs
-	OutputItemParam     = outputItemParam
-	ResponseText        = responseText
-	FetchAccountUsage   = fetchAccountUsage
-	ParseAPIError       = parseAPIError
-	ParseRateLimit      = parseRateLimit
-	Retryable           = retryable
-	PromptCacheKey      = promptCacheKey
-	EmergencyFit        = emergencyFit
+	DropOldReasoning        = dropOldReasoning
+	DropAllReasoning        = dropAllReasoning
+	KeepLatestReasoning     = keepLatestReasoning
+	SlimInput               = slimInput
+	ClipOldToolOutputs      = clipOldToolOutputs
+	DropOldTurns            = dropOldTurns
+	SummarizeDropped        = summarizeDropped
+	UnmatchedCallIDs        = unmatchedCallIDs
+	OutputItemParam         = outputItemParam
+	ResponseText            = responseText
+	FetchAccountUsage       = fetchAccountUsage
+	FetchChatGPTUsage       = fetchChatGPTUsage
+	ParseChatGPTUsage       = parseChatGPTUsage
+	ChatGPTUsageURL         = chatgptUsageURL
+	ParseAPIError           = parseAPIError
+	ParseRateLimit          = parseRateLimit
+	Retryable               = retryable
+	PromptCacheKey          = promptCacheKey
+	EmergencyFit            = emergencyFit
+	FunctionCallOutputParam = functionCallOutputParam
+	SanitizeCodexPayload    = sanitizeCodexPayload
 )
 
 func ToolParams(definitions []agent.ToolDefinition) []responses.ToolUnionParam {
-	return toolParams(definitions, 0)
+	return toolParams(definitions, 0, true)
 }
 
 func (p *Provider) SetHistory(items []responses.ResponseInputItemUnionParam) {
@@ -68,6 +73,30 @@ func (p *Provider) SetBaseURL(baseURL string) {
 
 func (p *Provider) APIKey() string {
 	return p.apiKey
+}
+
+func (p *Provider) UsingOAuth() bool {
+	return p.oauth
+}
+
+func (p *Provider) BaseURL() string {
+	return p.baseURL
+}
+
+func CodexAPIBaseURL() string {
+	return codexAPIBaseURL
+}
+
+func CodexAccountHeader() string {
+	return codexAccountHdr
+}
+
+func CodexOriginator() string {
+	return codexOriginator
+}
+
+func CodexBetaHeader() string {
+	return codexBetaHeader
 }
 
 func (p *Provider) ContextTokens() int {

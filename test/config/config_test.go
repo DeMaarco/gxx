@@ -65,8 +65,8 @@ func TestValidateRejectsMissingAPIKey(t *testing.T) {
 	settings.APIKey = ""
 
 	err := settings.Validate()
-	if err == nil || !strings.Contains(err.Error(), "OPENAI_API_KEY") {
-		t.Fatalf("Validate() error = %v, want missing API key", err)
+	if err == nil || !strings.Contains(err.Error(), "gxx login") {
+		t.Fatalf("Validate() error = %v, want missing OpenAI credentials", err)
 	}
 }
 

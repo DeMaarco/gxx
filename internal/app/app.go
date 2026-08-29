@@ -25,19 +25,25 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"time"
 
 	"golang.org/x/term"
 
 	"gxx/internal/agent"
+	anthropicProvider "gxx/internal/anthropic"
 	"gxx/internal/approval"
+	"gxx/internal/auth"
+	"gxx/internal/auth/claude"
+	openaiAuth "gxx/internal/auth/openai"
 	"gxx/internal/config"
+	"gxx/internal/models"
 	openaiProvider "gxx/internal/openai"
 	"gxx/internal/tools"
 	"gxx/internal/ui"
 	"gxx/internal/workspace"
 )
 
-var Version = "0.0.11"
+var Version = "0.0.12"
 
 type runtime struct {
 	config    config.Config
@@ -45,7 +51,7 @@ type runtime struct {
 	reader    *bufio.Reader
 	renderer  *ui.Renderer
 	workspace *workspace.Workspace
-	provider  *openaiProvider.Provider
+	provider  agent.Backend
 	policy    *approval.Policy
 	registry  *tools.Registry
 	eco       int
@@ -75,12 +81,20 @@ func Run(
 			return runAsk(ctx, args[1:], stdin, stdout, stderr, interactive)
 		case "usage":
 			return runUsage(ctx, args[1:], stdin, stdout, stderr)
+		case "login":
+			return runLogin(ctx, args[1:], stdin, stdout, stderr)
+		case "logout":
+			return runLogout(args[1:], stdin, stdout, stderr)
 		case "help":
 			if len(args) > 1 && args[1] == "ask" {
 				printAskUsage(stdout)
 			} else if len(args) > 1 && args[1] == "usage" {
 				fmt.Fprintln(stdout, "Usage:")
 				fmt.Fprintln(stdout, "  gxx usage")
+			} else if len(args) > 1 && args[1] == "login" {
+				printLoginUsage(stdout)
+			} else if len(args) > 1 && args[1] == "logout" {
+				printLogoutUsage(stdout)
 			} else {
 				printRootUsage(stdout)
 			}
@@ -257,14 +271,161 @@ func runUsage(
 		return 2
 	}
 	settings := config.Load(cwd)
-	if strings.TrimSpace(settings.APIKey) == "" {
-		fmt.Fprintln(stderr, "gxx usage: OPENAI_API_KEY is not set")
+	if err := settings.Validate(); err != nil {
+		fmt.Fprintf(stderr, "gxx usage: %v\n", err)
 		return 2
 	}
 
-	provider := openaiProvider.New(settings.APIKey, settings.Model, "", settings.APITimeout)
+	provider, err := newBackend(settings, nil)
+	if err != nil {
+		fmt.Fprintf(stderr, "gxx usage: %v\n", err)
+		return 2
+	}
 	fmt.Fprint(stdout, ui.FormatUsage(provider.Report(ctx), ui.ColorEnabled(stdout)))
 	return 0
+}
+
+func runLogin(
+	ctx context.Context,
+	args []string,
+	stdin io.Reader,
+	stdout io.Writer,
+	stderr io.Writer,
+) int {
+	command, err := auth.ParseCommand(args)
+	if err != nil {
+		fmt.Fprintf(stderr, "gxx login: %v\n", err)
+		return 2
+	}
+	if command.Help {
+		printLoginUsage(stdout)
+		return 0
+	}
+	cwd, _ := os.Getwd()
+	settings := config.Load(cwd)
+	provider, err := resolveProviderChoice(command.Provider, stdin, stdout, settings.ActiveAccount(), "gxx login")
+	if err != nil {
+		if auth.IsCanceled(err) {
+			fmt.Fprintln(stdout, "Login canceled.")
+			return 0
+		}
+		fmt.Fprintf(stderr, "gxx login: %v\n", err)
+		return 2
+	}
+
+	var path string
+	switch provider {
+	case auth.ProviderAPI:
+		path, err = loginAPIKey(ctx, stdin, stdout)
+	case auth.ProviderOpenAI:
+		device := command.Device || openaiAuth.PreferDevice()
+		_, path, err = openaiAuth.Login(ctx, openaiAuth.NewClient(), stdout, device)
+	default:
+		_, path, err = claude.Login(ctx, claude.NewClient(), stdout, claude.LineReader(stdin))
+	}
+	if err != nil {
+		if auth.IsCanceled(err) || claude.IsCanceled(err) || openaiAuth.IsCanceled(err) {
+			fmt.Fprintln(stdout, "Login canceled.")
+			return 0
+		}
+		fmt.Fprintf(stderr, "gxx login: %v\n", err)
+		return 1
+	}
+	fmt.Fprintf(stdout, "%s login saved to %s.\n", loginLabel(provider), path)
+	return 0
+}
+
+func runLogout(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	command, err := auth.ParseCommand(args)
+	if err != nil {
+		fmt.Fprintf(stderr, "gxx logout: %v\n", err)
+		return 2
+	}
+	if command.Help {
+		printLogoutUsage(stdout)
+		return 0
+	}
+	if command.Device {
+		fmt.Fprintln(stderr, "gxx logout: unexpected flag --device")
+		return 2
+	}
+	cwd, _ := os.Getwd()
+	settings := config.Load(cwd)
+	provider := command.Provider
+	if provider == "" {
+		provider = settings.ActiveAccount()
+	}
+	if provider == "" {
+		fmt.Fprintln(stderr, "gxx logout: no account connected")
+		return 2
+	}
+
+	var path string
+	switch provider {
+	case auth.ProviderAPI:
+		path, err = config.ClearAPIKey()
+	case auth.ProviderOpenAI:
+		path, err = openaiAuth.Logout()
+	default:
+		path, err = claude.Logout()
+	}
+	if err != nil {
+		fmt.Fprintf(stderr, "gxx logout: %v\n", err)
+		return 1
+	}
+	fmt.Fprintf(stdout, "%s login cleared from %s.\n", loginLabel(provider), path)
+	return 0
+}
+
+func resolveProviderChoice(
+	provider string,
+	stdin io.Reader,
+	stdout io.Writer,
+	active string,
+	command string,
+) (string, error) {
+	if strings.TrimSpace(provider) != "" {
+		return provider, nil
+	}
+	file := terminalFile(stdin)
+	if file == nil {
+		return "", fmt.Errorf("choose openai, claude, or api (for example `%s openai`)", command)
+	}
+	return ui.ReadLoginChoice(file, stdout, ui.ColorEnabled(stdout), active)
+}
+
+func loginLabel(provider string) string {
+	switch provider {
+	case auth.ProviderOpenAI:
+		return "OpenAI"
+	case auth.ProviderAPI:
+		return "API"
+	default:
+		return "Claude"
+	}
+}
+
+func loginAPIKey(ctx context.Context, stdin io.Reader, stdout io.Writer) (string, error) {
+	if _, err := fmt.Fprint(stdout, "OpenAI API key (hidden; blank cancels): "); err != nil {
+		return "", err
+	}
+	file, ok := stdin.(*os.File)
+	if !ok || !term.IsTerminal(int(file.Fd())) {
+		return "", errors.New("API key input requires a terminal")
+	}
+	value, err := term.ReadPassword(int(file.Fd()))
+	_, _ = fmt.Fprintln(stdout)
+	if err != nil {
+		return "", err
+	}
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	key := strings.TrimSpace(string(value))
+	if key == "" {
+		return "", auth.ErrCanceled
+	}
+	return config.SaveAPIKey(key)
 }
 
 type parsedFlags struct {
@@ -289,7 +450,7 @@ func parseFlags(
 	flags := flag.NewFlagSet(name, flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	flags.Usage = func() {}
-	flags.StringVar(&parsed.config.Model, "model", parsed.config.Model, "OpenAI model")
+	flags.StringVar(&parsed.config.Model, "model", parsed.config.Model, "model (OpenAI or Claude)")
 	flags.IntVar(&parsed.config.MaxSteps, "max-steps", parsed.config.MaxSteps, "maximum model steps")
 	flags.DurationVar(
 		&parsed.config.CommandTimeout,
@@ -301,7 +462,7 @@ func parseFlags(
 		&parsed.config.APITimeout,
 		"api-timeout",
 		parsed.config.APITimeout,
-		"timeout for each OpenAI response",
+		"timeout for each model response",
 	)
 	flags.StringVar(&parsed.config.Effort, "effort", parsed.config.Effort, "reasoning effort")
 	flags.StringVar(&parsed.config.Context, "context", parsed.config.Context, "context window size")
@@ -360,15 +521,10 @@ func newRuntimeFromConfig(
 		ParallelReads:   settings.ParallelReads,
 		CommandTimeout:  settings.CommandTimeout,
 	})
-	model := openaiProvider.New(
-		settings.APIKey,
-		settings.Model,
-		agent.SystemPrompt(ws, false),
-		settings.APITimeout,
-	)
-	model.SetEffort(settings.Effort)
-	model.SetContext(settings.Context)
-	model.SetFast(settings.Fast)
+	model, err := newBackend(settings, ws)
+	if err != nil {
+		return nil, err
+	}
 	loop := &agent.Loop{
 		Model:    model,
 		Executor: registry,
@@ -397,9 +553,16 @@ func replSettings(rt *runtime, stdin io.Reader, stdout io.Writer) ui.REPLSetting
 		Workspace:        rt.config.Workspace,
 		Color:            ui.ColorEnabled(stdout),
 		Stdin:            terminalFile(stdin),
-		APIKeyConfigured: rt.config.APIKey != "",
+		APIKeyConfigured: rt.config.HasOpenAIAPIKey(),
+		OpenAIConfigured: rt.config.HasOpenAICredentials(),
+		ClaudeConfigured: rt.config.HasClaudeCredentials(),
+		ActiveAccount:    rt.config.ActiveAccount(),
+		Models:           listAccountModels(context.Background(), rt.config),
 		ReadAPIKey:       terminalAPIKeyReader(stdin, rt.reader),
 		SaveAPIKey:       rt.saveAPIKey,
+		Login:            rt.login,
+		Logout:           rt.logout,
+		RefreshAuth:      rt.refreshAuth,
 		FetchUsage: func(ctx context.Context) (agent.UsageReport, error) {
 			return rt.provider.Report(ctx), nil
 		},
@@ -440,10 +603,17 @@ func replSettings(rt *runtime, stdin io.Reader, stdout io.Writer) ui.REPLSetting
 				}
 				rt.config.PermissionMode = rt.policy.Mode()
 			}
+			previousProvider := rt.config.Provider
 			rt.config.Model = session.Model
 			rt.config.Effort = session.Effort
 			rt.config.Context = session.Context
 			rt.config.Fast = session.Fast
+			rt.config.Provider = config.ProviderForModel(session.Model)
+			if rt.config.Provider != previousProvider {
+				if err := rt.swapBackend(); err != nil {
+					return err
+				}
+			}
 			return applyEcoRuntime(rt)
 		},
 	}
@@ -490,16 +660,234 @@ func terminalFile(reader io.Reader) *os.File {
 	return file
 }
 
+func newBackend(settings config.Config, ws *workspace.Workspace) (agent.Backend, error) {
+	instructions := ""
+	if ws != nil {
+		instructions = agent.SystemPrompt(ws, false)
+	}
+	switch config.ProviderForModel(settings.Model) {
+	case config.ProviderAnthropic:
+		provider := anthropicProvider.New(
+			claude.NewSource(nil),
+			settings.Model,
+			instructions,
+			settings.APITimeout,
+		)
+		provider.SetEffort(settings.Effort)
+		provider.SetContext(settings.Context)
+		provider.SetFast(settings.Fast)
+		return provider, nil
+	default:
+		var provider *openaiProvider.Provider
+		if settings.HasOpenAIAPIKey() {
+			provider = openaiProvider.New(
+				settings.APIKey,
+				settings.Model,
+				instructions,
+				settings.APITimeout,
+			)
+		} else if strings.TrimSpace(settings.OpenAITokens.AccessToken) != "" {
+			provider = openaiProvider.NewWithSource(
+				openaiAuth.NewSource(nil),
+				settings.Model,
+				instructions,
+				settings.APITimeout,
+			)
+		} else {
+			provider = openaiProvider.New(
+				"",
+				settings.Model,
+				instructions,
+				settings.APITimeout,
+			)
+		}
+		provider.SetEffort(settings.Effort)
+		provider.SetContext(settings.Context)
+		provider.SetFast(settings.Fast)
+		return provider, nil
+	}
+}
+
+func (rt *runtime) swapBackend() error {
+	backend, err := newBackend(rt.config, rt.workspace)
+	if err != nil {
+		return err
+	}
+	rt.provider = backend
+	if rt.loop != nil {
+		rt.loop.Model = backend
+		rt.loop.Reset()
+	}
+	return nil
+}
+
 func (rt *runtime) saveAPIKey(apiKey string) (string, error) {
 	path, err := config.SaveAPIKey(apiKey)
 	if err != nil {
 		return "", err
 	}
-	if err := rt.provider.SetAPIKey(apiKey); err != nil {
+	rt.config.APIKey = apiKey
+	rt.config.OpenAITokens = config.OpenAITokens{}
+	rt.config.ClaudeTokens = config.ClaudeTokens{}
+	rt.applyAccountModel(config.AccountAPI)
+	if err := rt.swapBackend(); err != nil {
 		return "", err
 	}
-	rt.config.APIKey = apiKey
 	return path, nil
+}
+
+func (rt *runtime) login(ctx context.Context, writer io.Writer, args []string) (string, error) {
+	command, err := auth.ParseCommand(args)
+	if err != nil {
+		return "", err
+	}
+	provider := command.Provider
+	if provider == "" {
+		return "", fmt.Errorf("choose openai, claude, or api (for example `/login openai`)")
+	}
+	switch provider {
+	case auth.ProviderAPI:
+		return "", errors.New("API login is handled by /login api")
+	case auth.ProviderOpenAI:
+		device := command.Device || openaiAuth.PreferDevice()
+		tokens, path, err := openaiAuth.Login(ctx, openaiAuth.NewClient(), writer, device)
+		if err != nil {
+			return "", err
+		}
+		rt.config.OpenAITokens = tokens
+		rt.config.APIKey = ""
+		rt.config.ClaudeTokens = config.ClaudeTokens{}
+		rt.applyAccountModel(config.AccountOpenAI)
+		if err := rt.swapBackend(); err != nil {
+			return "", err
+		}
+		return path, nil
+	default:
+		tokens, path, err := claude.Login(ctx, claude.NewClient(), writer, func() (string, error) {
+			line, err := rt.reader.ReadString('\n')
+			return line, err
+		})
+		if err != nil {
+			return "", err
+		}
+		rt.config.ClaudeTokens = tokens
+		rt.config.APIKey = ""
+		rt.config.OpenAITokens = config.OpenAITokens{}
+		rt.applyAccountModel(config.AccountClaude)
+		if err := rt.swapBackend(); err != nil {
+			return "", err
+		}
+		return path, nil
+	}
+}
+
+func (rt *runtime) logout(args []string) (string, error) {
+	command, err := auth.ParseCommand(args)
+	if err != nil {
+		return "", err
+	}
+	provider := command.Provider
+	if provider == "" {
+		provider = rt.config.ActiveAccount()
+	}
+	if provider == "" {
+		return "", errors.New("no account connected")
+	}
+	switch provider {
+	case auth.ProviderAPI:
+		path, err := config.ClearAPIKey()
+		if err != nil {
+			return "", err
+		}
+		rt.config.APIKey = ""
+		_ = rt.swapBackend()
+		return path, nil
+	case auth.ProviderOpenAI:
+		path, err := openaiAuth.Logout()
+		if err != nil {
+			return "", err
+		}
+		rt.config.OpenAITokens = config.OpenAITokens{}
+		_ = rt.swapBackend()
+		return path, nil
+	default:
+		path, err := claude.Logout()
+		if err != nil {
+			return "", err
+		}
+		rt.config.ClaudeTokens = config.ClaudeTokens{}
+		_ = rt.swapBackend()
+		return path, nil
+	}
+}
+
+func (rt *runtime) refreshAuth(settings *ui.REPLSettings) {
+	if rt == nil || settings == nil {
+		return
+	}
+	loaded := config.Load(rt.config.Workspace)
+	rt.config.APIKey = loaded.APIKey
+	rt.config.OpenAITokens = loaded.OpenAITokens
+	rt.config.ClaudeTokens = loaded.ClaudeTokens
+	if strings.TrimSpace(loaded.Model) != "" {
+		rt.config.Model = loaded.Model
+	}
+	settings.APIKeyConfigured = rt.config.HasOpenAIAPIKey()
+	settings.OpenAIConfigured = rt.config.HasOpenAICredentials()
+	settings.ClaudeConfigured = rt.config.HasClaudeCredentials()
+	settings.ActiveAccount = rt.config.ActiveAccount()
+	settings.Model = rt.config.Model
+	settings.Models = listAccountModels(context.Background(), rt.config)
+}
+
+func (rt *runtime) applyAccountModel(account string) {
+	switch account {
+	case config.AccountClaude:
+		if !config.IsClaudeModel(rt.config.Model) {
+			rt.config.Model = config.DefaultClaudeModel
+		}
+	default:
+		if !config.IsOpenAIModel(rt.config.Model) {
+			rt.config.Model = config.DefaultModel
+		}
+	}
+	_, _ = config.SaveSession(rt.config.Model, rt.config.Effort, rt.config.Context, rt.config.Fast, rt.config.PermissionMode)
+}
+
+func listAccountModels(ctx context.Context, settings config.Config) []string {
+	account := settings.ActiveAccount()
+	live, err := fetchLiveModels(ctx, settings)
+	if err != nil || len(live) == 0 {
+		return models.Catalog(settings.Model, account, nil)
+	}
+	return models.Catalog(settings.Model, account, live)
+}
+
+func fetchLiveModels(ctx context.Context, settings config.Config) ([]string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+	switch settings.ActiveAccount() {
+	case config.AccountClaude:
+		token, err := claude.NewSource(nil).AccessToken(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return anthropicProvider.ListModels(ctx, nil, "", token)
+	case config.AccountAPI:
+		return openaiProvider.ListModels(ctx, nil, "", settings.APIKey)
+	case config.AccountOpenAI:
+		token, err := openaiAuth.NewSource(nil).AccessToken(ctx)
+		if err != nil {
+			return nil, err
+		}
+		ids, err := openaiProvider.ListModels(ctx, nil, openaiProvider.CodexAPIBaseURL(), token)
+		if err != nil || len(ids) == 0 {
+			return nil, err
+		}
+		return ids, nil
+	default:
+		return nil, nil
+	}
 }
 
 func terminalAPIKeyReader(stdin io.Reader, reader *bufio.Reader) func(context.Context) (string, error) {
@@ -553,17 +941,41 @@ func askPrompt(arguments []string, stdin io.Reader, interactive bool) (string, e
 const maxPromptInputBytes = 1024 * 1024
 
 func printRootUsage(writer io.Writer) {
-	fmt.Fprintln(writer, "gxx — small OpenAI coding agent")
+	fmt.Fprintln(writer, "gxx — small coding agent for OpenAI and Claude")
 	fmt.Fprintln(writer)
 	fmt.Fprintln(writer, "Usage:")
 	fmt.Fprintln(writer, "  gxx [flags]                  Start the interactive REPL")
 	fmt.Fprintln(writer, "  gxx ask [flags] <prompt>     Run one request")
+	fmt.Fprintln(writer, "  gxx login [openai|claude|api]  Connect one account")
+	fmt.Fprintln(writer, "  gxx logout                    Clear the connected account")
 	fmt.Fprintln(writer, "  gxx usage                    Show API usage and remaining quota")
 	fmt.Fprintln(writer, "  gxx help                     Show help")
 	fmt.Fprintln(writer, "  gxx version                  Show version")
 	fmt.Fprintln(writer)
 	fmt.Fprintln(writer, "Flags:")
 	printCommonFlags(writer)
+}
+
+func printLoginUsage(writer io.Writer) {
+	fmt.Fprintln(writer, "Usage:")
+	fmt.Fprintln(writer, "  gxx login")
+	fmt.Fprintln(writer, "  gxx login openai [--device]")
+	fmt.Fprintln(writer, "  gxx login claude")
+	fmt.Fprintln(writer, "  gxx login api")
+	fmt.Fprintln(writer)
+	fmt.Fprintln(writer, "Only one account can be connected. A terminal shows a selectable menu;")
+	fmt.Fprintln(writer, "the active row is green. api is hidden after an OpenAI or Claude login.")
+	fmt.Fprintln(writer, "openai uses a ChatGPT account (Codex backend). --device is for SSH / no display.")
+}
+
+func printLogoutUsage(writer io.Writer) {
+	fmt.Fprintln(writer, "Usage:")
+	fmt.Fprintln(writer, "  gxx logout")
+	fmt.Fprintln(writer, "  gxx logout openai")
+	fmt.Fprintln(writer, "  gxx logout claude")
+	fmt.Fprintln(writer)
+	fmt.Fprintln(writer, "Without a provider, a terminal shows a picker. Scripts must pass openai or claude.")
+	fmt.Fprintln(writer, "Removes the saved OAuth tokens from config.json. /config API keys are left in place.")
 }
 
 func printAskUsage(writer io.Writer) {
@@ -577,14 +989,14 @@ func printAskUsage(writer io.Writer) {
 }
 
 func printCommonFlags(writer io.Writer) {
-	fmt.Fprintln(writer, "  --model string          OpenAI model (default: GXX_MODEL, config.json, or gpt-5.6-sol)")
+	fmt.Fprintln(writer, "  --model string          Model (default: GXX_MODEL, config.json, or gpt-5.6-sol)")
 	fmt.Fprintln(writer, "  --effort string         Reasoning effort (default: GXX_EFFORT, config.json, or medium)")
 	fmt.Fprintln(writer, "  --context string        Context window size (default: GXX_CONTEXT, config.json, or 272k)")
 	fmt.Fprintln(writer, "  --permission string     Permission mode (default: GXX_PERMISSION, config.json, or ask)")
-	fmt.Fprintln(writer, "  --fast                  Use OpenAI fast service tier")
+	fmt.Fprintln(writer, "  --fast                  Use the provider fast service tier when available")
 	fmt.Fprintln(writer, "  --max-steps int         Maximum model steps (default: 40)")
 	fmt.Fprintln(writer, "  --command-timeout dur   Maximum command duration (default: 2m)")
-	fmt.Fprintln(writer, "  --api-timeout dur       Timeout per OpenAI response (default: 10m)")
+	fmt.Fprintln(writer, "  --api-timeout dur       Timeout per model response (default: 10m)")
 }
 
 func wantsJSON(arguments []string) bool {

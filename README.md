@@ -26,10 +26,10 @@ inspects git, patches, and runs commands — in that folder only.
 ---
 
 Inspired by [`fx`](https://github.com/vercel-labs/fx), but narrower on purpose:
-**one provider** (OpenAI), **one workspace**, **no TUI**. Just a prompt.
+**OpenAI or Claude**, **one workspace**, **no TUI**. Just a prompt.
 
 ```text
-◆ gxx  v0.0.11
+◆ gxx  v0.0.12
 >
 gpt-5.6-sol · ask · medium · 272k · 0%
 ```
@@ -66,7 +66,7 @@ gxx version
 Pin a release or another directory:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/DeMaarco/gxx/main/install.sh | sh -s -- --version v0.0.11
+curl -fsSL https://raw.githubusercontent.com/DeMaarco/gxx/main/install.sh | sh -s -- --version v0.0.12
 curl -fsSL https://raw.githubusercontent.com/DeMaarco/gxx/main/install.sh | sh -s -- --dir /usr/local/bin
 ```
 
@@ -86,7 +86,7 @@ gxx version
 Pin a release or another directory:
 
 ```powershell
-$env:GXX_VERSION = "v0.0.11"
+$env:GXX_VERSION = "v0.0.12"
 irm https://raw.githubusercontent.com/DeMaarco/gxx/main/install.ps1 | iex
 ```
 
@@ -96,7 +96,7 @@ irm https://raw.githubusercontent.com/DeMaarco/gxx/main/install.ps1 | iex
 
 ## Quick start
 
-You need an [OpenAI API key](https://platform.openai.com/api-keys). Export it, or start `gxx` and run `/config`.
+**OpenAI:** an [API key](https://platform.openai.com/api-keys), or a ChatGPT account (Plus/Pro/Team). Export the key, run `/config`, or log in:
 
 ```sh
 export OPENAI_API_KEY="sk-..."
@@ -104,7 +104,30 @@ cd your-project
 gxx
 ```
 
-PowerShell:
+```sh
+gxx login openai
+cd your-project
+gxx
+```
+
+Account login talks to the ChatGPT Codex backend (undocumented; it can break). `/config` is still the platform API key. `OPENAI_API_KEY` wins over a saved key, and a key wins over OAuth. On SSH or a machine without a display, use `gxx login openai --device`.
+
+**Claude:** a Pro/Max subscription. Run `gxx login claude`, or start `gxx` and run `/login claude`. You can also export a token from `claude setup-token`:
+
+```sh
+gxx login claude
+cd your-project
+gxx --model sonnet
+```
+
+`gxx login` / `/login` without a provider opens a picker in a terminal (`openai` or `claude`). Scripts must pass the provider. `chatgpt` and `codex` are aliases for `openai`.
+
+```sh
+export CLAUDE_CODE_OAUTH_TOKEN="..."
+gxx ask --model opus "explain this repository"
+```
+
+PowerShell (OpenAI):
 
 ```powershell
 $env:OPENAI_API_KEY = "sk-..."
@@ -126,7 +149,7 @@ Drop an `AGENTS.md` in the project root if you want extra instructions loaded in
 ## REPL
 
 ```text
-◆ gxx  v0.0.11     badge and version
+◆ gxx  v0.0.12     badge and version
 >                 type here  ·  becomes  > plan  in plan mode
 gpt-5.6-sol · ask · medium · 272k · 0%
 ```
@@ -148,12 +171,14 @@ Plan mode is session-only. It is not saved to config.
 | Command | What it does |
 | --- | --- |
 | `/help` | Commands |
-| `/model` | GPT-5.6 Sol, Terra, or Luna · Tab for context, effort, fast |
+| `/model` | Models for the connected account only · Tab for context, effort, fast |
 | `/eco` | Caveman input saver · `lite` `full` `ultra` · green on the prompt · session-only |
 | `/mode` | `ask` · `auto-writes` · `auto` |
-| `/config` | Save the API key |
+| `/config` | Save the OpenAI API key |
+| `/login` | Connect one account · openai · claude · api · green marks the active one |
+| `/logout` | Clear the connected account |
 | `/context` | Window occupancy |
-| `/usage` | Tokens and remaining quota |
+| `/usage` | Session tokens and remaining subscription or API quota |
 | `/clear` | Forget this conversation |
 | `/exit` | Quit |
 
@@ -161,6 +186,7 @@ Inline forms work too:
 
 ```text
 /model terra context=1m effort=high fast=on
+/model opus
 /mode auto-writes
 ```
 
@@ -181,10 +207,10 @@ Commands are not OS-sandboxed — review them in `ask`. Changing `/mode` clears 
 
 ## Privacy
 
-- Requests use `store:false`.
-- Only files the tools actually open go to OpenAI.
+- OpenAI requests use `store:false`.
+- Only files the tools actually open go to the active provider.
 - Secret paths (`.env`, keys, credentials) are blocked on file tools, git inspect, and commands that name them.
-- The saved API key is owner-only (`0600` on Unix, a user-only ACL on Windows).
+- The OpenAI API key, ChatGPT Codex OAuth tokens, and Claude OAuth tokens live in the same owner-only `config.json` (`0600` on Unix, a user-only ACL on Windows). They are stripped from child shell environments. gxx does not read `~/.codex/auth.json` or `~/.claude/.credentials.json`.
 - Do not point it at code you cannot send to that account.
 
 ## Build from source

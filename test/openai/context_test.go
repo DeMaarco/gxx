@@ -72,7 +72,7 @@ func TestRespondFailsClosedWhenHistoryExceedsWindow(t *testing.T) {
 func TestEmergencyFitClipsCurrentTurnToolOutput(t *testing.T) {
 	items := []responses.ResponseInputItemUnionParam{
 		responses.ResponseInputItemParamOfMessage("task", responses.EasyInputMessageRoleUser),
-		responses.ResponseInputItemParamOfFunctionCallOutput("call_1", strings.Repeat("a", 2000)),
+		openai.FunctionCallOutputParam("call_1", strings.Repeat("a", 2000)),
 	}
 	got := openai.EmergencyFit(items, 80, "inst")
 	data, _ := json.Marshal(got[len(got)-1])
