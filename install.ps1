@@ -20,13 +20,57 @@ $installDir = if ($env:GXX_INSTALL_DIR) { $env:GXX_INSTALL_DIR } else { Join-Pat
 $version = if ($env:GXX_VERSION) { $env:GXX_VERSION } else { "latest" }
 $token = if ($env:GITHUB_TOKEN) { $env:GITHUB_TOKEN } elseif ($env:GH_TOKEN) { $env:GH_TOKEN } else { "" }
 
+function ConvertTo-NormalizedPath([string]$path) {
+    if (-not $path) {
+        return ""
+    }
+    try {
+        return [System.IO.Path]::GetFullPath($path.Trim()).TrimEnd("\", "/").ToLowerInvariant()
+    } catch {
+        return $path.Trim().TrimEnd("\", "/").ToLowerInvariant()
+    }
+}
+
+function Get-PathEntries([string]$path) {
+    if (-not $path) {
+        return @()
+    }
+    return @($path -split ";" | Where-Object { $_ -and $_.Trim() -ne "" })
+}
+
+function Add-LeadingPathEntry([string]$path, [string]$dir) {
+    $normalized = ConvertTo-NormalizedPath $dir
+    $kept = @()
+    foreach ($entry in (Get-PathEntries $path)) {
+        if ((ConvertTo-NormalizedPath $entry) -ne $normalized) {
+            $kept += $entry
+        }
+    }
+    if ($kept.Count -eq 0) {
+        return $dir
+    }
+    return $dir + ";" + ($kept -join ";")
+}
+
+function Find-GxxOnPath([string]$path) {
+    foreach ($entry in (Get-PathEntries $path)) {
+        foreach ($name in @("gxx.exe", "gxx")) {
+            $candidate = Join-Path $entry $name
+            if (Test-Path -LiteralPath $candidate) {
+                return (Resolve-Path -LiteralPath $candidate).Path
+            }
+        }
+    }
+    return $null
+}
+
 function Show-Usage {
     @"
 Install gxx from GitHub Releases.
 
 Usage:
   irm https://raw.githubusercontent.com/DeMaarco/gxx/main/install.ps1 | iex
-  powershell -File install.ps1 -Version v0.0.12
+  powershell -File install.ps1 -Version v0.0.13
   powershell -File install.ps1 -Dir `$env:LOCALAPPDATA\gxx
 
 Environment:
@@ -122,12 +166,29 @@ try {
         # version print is best-effort
     }
 
-    $onPath = $null -ne (Get-Command gxx -ErrorAction SilentlyContinue)
-    if (-not $onPath) {
+    $env:Path = Add-LeadingPathEntry $env:Path $installDir
+    try {
+        $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+        $newUserPath = Add-LeadingPathEntry $userPath $installDir
+        if ($newUserPath -ne $userPath) {
+            [Environment]::SetEnvironmentVariable("Path", $newUserPath, "User")
+        }
+    } catch {
+        Write-Host "Could not persist PATH: $_"
         Write-Host "Add $installDir to PATH to run gxx:"
         Write-Host "  `$env:Path = `"$installDir;`$env:Path`""
-        Write-Host "Or persist it for your user:"
-        Write-Host "  [Environment]::SetEnvironmentVariable('Path', `"$installDir;`" + [Environment]::GetEnvironmentVariable('Path', 'User'), 'User')"
+    }
+
+    $first = Find-GxxOnPath $env:Path
+    $destFull = (Resolve-Path -LiteralPath $dest).Path
+    if (-not $first) {
+        Write-Host "Add $installDir to PATH to run gxx:"
+        Write-Host "  `$env:Path = `"$installDir;`$env:Path`""
+    } elseif ((ConvertTo-NormalizedPath $first) -ne (ConvertTo-NormalizedPath $destFull)) {
+        Write-Host "warning: another gxx is first on PATH:"
+        Write-Host "  $first"
+        Write-Host "  this install: $destFull"
+        Write-Host "This session prefers $installDir. Open a new terminal, or remove the older copy."
     }
 } finally {
     Remove-Item -Recurse -Force -Path $workdir -ErrorAction SilentlyContinue

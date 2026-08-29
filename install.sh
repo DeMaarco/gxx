@@ -27,7 +27,7 @@ Install gxx from GitHub Releases.
 
 Usage:
   curl -fsSL https://raw.githubusercontent.com/DeMaarco/gxx/main/install.sh | sh
-  sh install.sh --version v0.0.12
+  sh install.sh --version v0.0.13
   sh install.sh --dir /usr/local/bin
 
 Environment:
@@ -207,7 +207,27 @@ fi
 
 echo "Installed gxx to ${dest}"
 "$dest" version || true
-if ! command -v gxx >/dev/null 2>&1; then
+
+first_gxx=""
+old_ifs=$IFS
+IFS=:
+for dir in $PATH; do
+	[ -n "$dir" ] || continue
+	if [ -x "${dir}/gxx" ]; then
+		first_gxx="${dir}/gxx"
+		break
+	fi
+done
+IFS=$old_ifs
+
+dest_dir=$(CDPATH= cd -- "$install_dir" && pwd)
+if [ -z "$first_gxx" ]; then
 	echo "Add ${install_dir} to PATH to run gxx:"
+	echo "  export PATH=\"${install_dir}:\$PATH\""
+elif [ "$(CDPATH= cd -- "$(dirname "$first_gxx")" && pwd)" != "$dest_dir" ]; then
+	echo "warning: another gxx is first on PATH:"
+	echo "  ${first_gxx}"
+	echo "  this install: ${dest}"
+	echo "Put ${install_dir} first:"
 	echo "  export PATH=\"${install_dir}:\$PATH\""
 fi

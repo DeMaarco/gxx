@@ -170,6 +170,29 @@ func TestLiveRendererShowsThinkingThenToolElapsed(t *testing.T) {
 	}
 }
 
+func TestHoldForPromptClearsLiveThenResumeRedraws(t *testing.T) {
+	var output bytes.Buffer
+	renderer := ui.NewRenderer(&output)
+	renderer.SetLive(true)
+	renderer.SetSpinEvery(0)
+
+	renderer.StartTurn()
+	if !strings.Contains(output.String(), "thinking") {
+		t.Fatalf("start = %q, want thinking spinner", output.String())
+	}
+
+	renderer.HoldForPrompt()
+	held := output.String()
+	if strings.HasSuffix(strings.TrimRight(held, "\n"), "thinking") {
+		t.Fatalf("hold left the thinking spinner visible: %q", held)
+	}
+
+	renderer.ResumeAfterPrompt()
+	if !strings.Contains(output.String(), "thinking") {
+		t.Fatalf("resume = %q, want thinking spinner back", output.String())
+	}
+}
+
 func TestLiveRendererStopsThinkingWhenModelStreams(t *testing.T) {
 	var output bytes.Buffer
 	renderer := ui.NewRenderer(&output)

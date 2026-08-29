@@ -24,11 +24,16 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
 	"gxx/internal/osutil"
 )
+
+// staleEmptyWindow treats an empty line that arrives this quickly as leftover
+// input from the raw REPL editor (Enter), not as an intentional deny.
+const staleEmptyWindow = 80 * time.Millisecond
 
 const maxPreviewBytes = 16 * 1024
 
@@ -63,6 +68,7 @@ type Prompt struct {
 	file        *os.File
 	interactive bool
 	code        func() (string, error)
+	hold        func() (resume func())
 	mu          sync.Mutex
 }
 
@@ -79,6 +85,12 @@ func (p *Prompt) SetFile(file *os.File) {
 	p.file = file
 }
 
+// SetHold registers a pause/resume pair so live UI can get out of the way
+// before the challenge is printed. resume runs after the decision.
+func (p *Prompt) SetHold(hold func() (resume func())) {
+	p.hold = hold
+}
+
 func (p *Prompt) Approve(ctx context.Context, action Action) (Decision, error) {
 	if !p.interactive {
 		return Decision{}, nil
@@ -93,10 +105,13 @@ func (p *Prompt) Approve(ctx context.Context, action Action) (Decision, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	if buffered := p.reader.Buffered(); buffered > 0 {
-		if _, err := p.reader.Discard(buffered); err != nil {
-			return Decision{}, fmt.Errorf("discard stale terminal input: %w", err)
+	if p.hold != nil {
+		if resume := p.hold(); resume != nil {
+			defer resume()
 		}
+	}
+	if err := discardStaleInput(p.reader, p.file); err != nil {
+		return Decision{}, err
 	}
 	code, err := p.code()
 	if err != nil {
@@ -128,9 +143,16 @@ func (p *Prompt) Approve(ctx context.Context, action Action) (Decision, error) {
 		return Decision{}, err
 	}
 
+	started := time.Now()
 	answer, err := readLineContext(ctx, p.reader, p.file)
 	if err != nil && err != io.EOF {
 		return Decision{}, err
+	}
+	if isStaleEmptyLine(answer, started, p.reader) {
+		answer, err = readLineContext(ctx, p.reader, p.file)
+		if err != nil && err != io.EOF {
+			return Decision{}, err
+		}
 	}
 	answer = strings.ToLower(strings.TrimSpace(answer))
 	switch answer {
@@ -225,6 +247,29 @@ func CapPreview(preview string) string {
 		keep--
 	}
 	return preview[:keep]
+}
+
+func discardStaleInput(reader *bufio.Reader, file *os.File) error {
+	if reader == nil {
+		return nil
+	}
+	if buffered := reader.Buffered(); buffered > 0 {
+		if _, err := reader.Discard(buffered); err != nil {
+			return fmt.Errorf("discard stale terminal input: %w", err)
+		}
+	}
+	osutil.DrainReadyInput(file)
+	return nil
+}
+
+func isStaleEmptyLine(answer string, started time.Time, reader *bufio.Reader) bool {
+	if strings.TrimSpace(answer) != "" {
+		return false
+	}
+	if reader != nil && reader.Buffered() > 0 {
+		return true
+	}
+	return time.Since(started) < staleEmptyWindow
 }
 
 func displayPreview(preview string) string {

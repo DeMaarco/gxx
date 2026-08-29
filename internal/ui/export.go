@@ -85,6 +85,7 @@ var (
 	RenderPromptFrame   = renderPromptFrame
 	WrapVisible         = wrapVisible
 	PromptHome          = promptHome
+	WindowRange         = windowRange
 )
 
 type ModelCommand = modelCommand

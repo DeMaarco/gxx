@@ -17,11 +17,16 @@ package models
 
 import (
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 
 	"gxx/internal/config"
 )
+
+// MaxCatalogExtras caps live IDs that are not a known family. An unbounded
+// /models dump overflows the picker and the terminal reprint stacks.
+const MaxCatalogExtras = 8
 
 var (
 	BundledOpenAI = []string{
@@ -112,15 +117,19 @@ func Latest(account string, ids []string) []string {
 			delete(best, family)
 		}
 	}
-	for family, item := range best {
-		_ = family
+	extras := make([]string, 0, len(best))
+	for _, item := range best {
 		if _, exists := seen[item.id]; exists {
 			continue
 		}
 		seen[item.id] = struct{}{}
-		out = append(out, item.id)
+		extras = append(extras, item.id)
 	}
-	return out
+	sort.Strings(extras)
+	if len(extras) > MaxCatalogExtras {
+		extras = extras[:MaxCatalogExtras]
+	}
+	return append(out, extras...)
 }
 
 func allowed(account, id string) bool {

@@ -236,6 +236,25 @@ func TestInputStateLoginPickerSelectsAccount(t *testing.T) {
 	}
 }
 
+func TestWindowRangeKeepsSelectionInView(t *testing.T) {
+	start, end := ui.WindowRange(40, 0, 8)
+	if start != 0 || end != 8 {
+		t.Fatalf("top window = %d:%d, want 0:8", start, end)
+	}
+	start, end = ui.WindowRange(40, 39, 8)
+	if start != 32 || end != 40 {
+		t.Fatalf("bottom window = %d:%d, want 32:40", start, end)
+	}
+	start, end = ui.WindowRange(40, 20, 8)
+	if start > 20 || end <= 20 || end-start != 8 {
+		t.Fatalf("mid window = %d:%d, want 8 rows containing 20", start, end)
+	}
+	start, end = ui.WindowRange(5, 2, 8)
+	if start != 0 || end != 5 {
+		t.Fatalf("short list = %d:%d, want 0:5", start, end)
+	}
+}
+
 func TestInputStateTabOnModelCommandOpensPicker(t *testing.T) {
 	state := ui.InputState{}
 	state.SetSession("gpt-5.6-sol", "", "medium", "")

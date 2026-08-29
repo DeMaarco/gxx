@@ -38,3 +38,32 @@ func ClearReadDeadline(file *os.File) {
 	}
 	_ = file.SetReadDeadline(time.Time{})
 }
+
+func isCharDevice(file *os.File) bool {
+	if file == nil {
+		return false
+	}
+	info, err := file.Stat()
+	if err != nil {
+		return false
+	}
+	return info.Mode()&os.ModeCharDevice != 0
+}
+
+// drainDeadline reads and drops bytes that are already waiting, then restores
+// a blocking deadline. Used when leftover Enter is sitting on the tty.
+func drainDeadline(file *os.File) {
+	if !isCharDevice(file) {
+		return
+	}
+	if file.SetReadDeadline(time.Now().Add(2*time.Millisecond)) != nil {
+		return
+	}
+	defer ClearReadDeadline(file)
+	buf := make([]byte, 256)
+	for {
+		if _, err := file.Read(buf); err != nil {
+			return
+		}
+	}
+}

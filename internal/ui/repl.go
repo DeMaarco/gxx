@@ -413,6 +413,31 @@ func (r *Renderer) dropHeldTextLocked() {
 	r.endTextLine()
 }
 
+// HoldForPrompt stops the live spinner and shows the cursor so an approval
+// challenge can be read. Pair with ResumeAfterPrompt.
+func (r *Renderer) HoldForPrompt() {
+	r.stopAnim()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.clearLiveLocked()
+	r.flushPendingDoneLocked()
+	r.endTextLine()
+	r.showCursorLocked()
+}
+
+// ResumeAfterPrompt restarts the live spinner if the turn is still running.
+func (r *Renderer) ResumeAfterPrompt() {
+	r.mu.Lock()
+	spin := r.shouldSpinLocked()
+	if spin {
+		r.drawLiveLocked()
+	}
+	r.mu.Unlock()
+	if spin {
+		r.startAnim()
+	}
+}
+
 func (r *Renderer) Finish(answer string) {
 	r.stopAnim()
 	r.mu.Lock()

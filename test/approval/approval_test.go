@@ -139,6 +139,47 @@ func TestPromptCanBeCancelledWhileWaiting(t *testing.T) {
 	}
 }
 
+func TestPromptHoldRunsAroundTheChallenge(t *testing.T) {
+	var order []string
+	var output bytes.Buffer
+	prompt := testPrompt(bufio.NewReader(strings.NewReader("y-test\n")), &output, true)
+	prompt.SetHold(func() func() {
+		order = append(order, "hold")
+		return func() { order = append(order, "resume") }
+	})
+	decision, err := prompt.Approve(context.Background(), approval.Action{
+		Title:   "Write file",
+		Preview: "+content",
+	})
+	if err != nil {
+		t.Fatalf("Approve() error = %v", err)
+	}
+	if !decision.Approved {
+		t.Fatal("Approve() = false, want true")
+	}
+	if strings.Join(order, ",") != "hold,resume" {
+		t.Fatalf("order = %v, want hold then resume", order)
+	}
+	if !strings.Contains(output.String(), "Type y-test") {
+		t.Fatalf("output = %q, want visible challenge", output.String())
+	}
+}
+
+func TestPromptIgnoresImmediateEmptyLineThenApproves(t *testing.T) {
+	var output bytes.Buffer
+	prompt := testPrompt(bufio.NewReader(strings.NewReader("\ny-test\n")), &output, true)
+	decision, err := prompt.Approve(context.Background(), approval.Action{
+		Title:   "Write file",
+		Preview: "+content",
+	})
+	if err != nil {
+		t.Fatalf("Approve() error = %v", err)
+	}
+	if !decision.Approved {
+		t.Fatal("leftover Enter denied the write")
+	}
+}
+
 func TestPromptDiscardsInputBufferedBeforePreview(t *testing.T) {
 	reader := bufio.NewReader(strings.NewReader("request\ny-test\n"))
 	if _, err := reader.ReadString('\n'); err != nil {

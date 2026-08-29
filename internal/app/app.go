@@ -43,7 +43,7 @@ import (
 	"gxx/internal/workspace"
 )
 
-var Version = "0.0.12"
+var Version = "0.0.13"
 
 type runtime struct {
 	config    config.Config
@@ -510,7 +510,11 @@ func newRuntimeFromConfig(
 	settings.Workspace = ws.Root()
 
 	reader := bufio.NewReader(stdin)
-	prompt := approval.NewPrompt(reader, stderr, interactive)
+	promptOut := stderr
+	if !requireAPIKey {
+		promptOut = stdout
+	}
+	prompt := approval.NewPrompt(reader, promptOut, interactive)
 	if file := terminalFile(stdin); file != nil {
 		prompt.SetFile(file)
 	}
@@ -530,11 +534,16 @@ func newRuntimeFromConfig(
 		Executor: registry,
 		MaxSteps: settings.MaxSteps,
 	}
+	renderer := ui.NewRendererWithColor(stdout, ui.ColorEnabled(stdout))
+	prompt.SetHold(func() func() {
+		renderer.HoldForPrompt()
+		return renderer.ResumeAfterPrompt
+	})
 	return &runtime{
 		config:    settings,
 		loop:      loop,
 		reader:    reader,
-		renderer:  ui.NewRendererWithColor(stdout, ui.ColorEnabled(stdout)),
+		renderer:  renderer,
 		workspace: ws,
 		provider:  model,
 		policy:    policy,

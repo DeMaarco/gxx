@@ -767,6 +767,7 @@ type lineEditor struct {
 	out       io.Writer
 	color     bool
 	columns   int
+	rows      int
 	cursorRow int
 	state     inputState
 }
@@ -792,6 +793,9 @@ func (e *lineEditor) Read(ctx context.Context, settings *REPLSettings) (string, 
 		return "", err
 	}
 	defer term.Restore(fd, state)
+	if file, ok := e.out.(*os.File); ok {
+		defer osutil.EnableConsoleVT(file)()
+	}
 
 	_, _ = io.WriteString(e.out, wrapOff)
 	defer func() { _, _ = io.WriteString(e.out, wrapOn) }()
@@ -953,7 +957,10 @@ func (e *lineEditor) renderPicker(settings REPLSettings) error {
 				body.WriteString(paint(e.color, dim, "  no matching models") + "\r\n")
 			}
 		}
-		for index, model := range visible {
+		width := e.termWidth()
+		start, end := windowRange(len(visible), e.state.modelIndex, e.pickerListLimit(settings, 1))
+		for index := start; index < end; index++ {
+			model := visible[index]
 			marker := "  "
 			label := model
 			note := ""
@@ -964,9 +971,17 @@ func (e *lineEditor) renderPicker(settings REPLSettings) error {
 				marker = paint(e.color, cyan, "▸ ")
 				label = paint(e.color, bold+cyan, model)
 			}
-			body.WriteString(marker + label + note + "\r\n")
+			line := marker + label + note
+			if width > 4 {
+				line = truncateVisible(line, width-1)
+			}
+			body.WriteString(line + "\r\n")
 		}
-		body.WriteString(paint(e.color, dim, "tab options · enter apply · esc cancel") + "\r\n")
+		hint := "tab options · enter apply · esc cancel"
+		if end-start < len(visible) {
+			hint = fmt.Sprintf("%s · %d/%d", hint, e.state.modelIndex+1, len(visible))
+		}
+		body.WriteString(paint(e.color, dim, hint) + "\r\n")
 	}
 	return e.paintFrame(settings, body.String(), strings.Count(body.String(), "\r\n"), true)
 }
@@ -1107,23 +1122,97 @@ func (e *lineEditor) statusLine(settings REPLSettings) string {
 }
 
 func (e *lineEditor) termWidth() int {
-	if e.columns > 0 {
-		return e.columns
+	width, _ := e.termSize()
+	return width
+}
+
+func (e *lineEditor) termHeight() int {
+	_, height := e.termSize()
+	return height
+}
+
+func (e *lineEditor) termSize() (width, height int) {
+	width, height = 80, 24
+	if e.columns > 1 {
+		width = e.columns
 	}
-	if e.in != nil {
-		if width, _, err := term.GetSize(int(e.in.Fd())); err == nil && width > 1 {
-			return width
+	if e.rows > 1 {
+		height = e.rows
+	}
+	if e.columns > 1 && e.rows > 1 {
+		return width, height
+	}
+	readSize := func(file *os.File) (int, int, bool) {
+		if file == nil {
+			return 0, 0, false
+		}
+		w, h, err := term.GetSize(int(file.Fd()))
+		if err != nil || w < 2 {
+			return 0, 0, false
+		}
+		if h < 2 {
+			h = 24
+		}
+		return w, h, true
+	}
+	if e.columns <= 1 || e.rows <= 1 {
+		if w, h, ok := readSize(e.in); ok {
+			if e.columns <= 1 {
+				width = w
+			}
+			if e.rows <= 1 {
+				height = h
+			}
+		} else if file, ok := e.out.(*os.File); ok {
+			if w, h, ok := readSize(file); ok {
+				if e.columns <= 1 {
+					width = w
+				}
+				if e.rows <= 1 {
+					height = h
+				}
+			}
+		} else if cols, err := strconv.Atoi(strings.TrimSpace(os.Getenv("COLUMNS"))); err == nil && cols > 1 && e.columns <= 1 {
+			width = cols
 		}
 	}
-	if file, ok := e.out.(*os.File); ok {
-		if width, _, err := term.GetSize(int(file.Fd())); err == nil && width > 1 {
-			return width
-		}
+	return width, height
+}
+
+func (e *lineEditor) pickerListLimit(settings REPLSettings, extraRows int) int {
+	width, height := e.termSize()
+	prefix := promptPrefix(settings)
+	cells := visibleWidth(prefix + string(e.state.buffer))
+	promptRows := promptRowCount(cells, width)
+	reserved := promptRows + extraRows + 1
+	limit := height - reserved
+	if limit < 3 {
+		return 3
 	}
-	if cols, err := strconv.Atoi(strings.TrimSpace(os.Getenv("COLUMNS"))); err == nil && cols > 1 {
-		return cols
+	return limit
+}
+
+func windowRange(n, index, limit int) (start, end int) {
+	if n <= 0 {
+		return 0, 0
 	}
-	return 80
+	if index < 0 {
+		index = 0
+	}
+	if index >= n {
+		index = n - 1
+	}
+	if limit < 1 || n <= limit {
+		return 0, n
+	}
+	start = index - limit/2
+	if start < 0 {
+		start = 0
+	}
+	if start+limit > n {
+		start = n - limit
+	}
+	return start, start + limit
 }
 
 func promptRowCount(cells, width int) int {

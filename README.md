@@ -29,7 +29,7 @@ Inspired by [`fx`](https://github.com/vercel-labs/fx), but narrower on purpose:
 **OpenAI or Claude**, **one workspace**, **no TUI**. Just a prompt.
 
 ```text
-◆ gxx  v0.0.12
+◆ gxx  v0.0.13
 >
 gpt-5.6-sol · ask · medium · 272k · 0%
 ```
@@ -56,7 +56,7 @@ macOS and Linux, amd64 and arm64:
 curl -fsSL https://raw.githubusercontent.com/DeMaarco/gxx/main/install.sh | sh
 ```
 
-That puts `gxx` in `~/.local/bin`. If the shell cannot find it:
+That puts `gxx` in `~/.local/bin`. If the shell cannot find it, or another `gxx` is first on PATH:
 
 ```sh
 export PATH="$HOME/.local/bin:$PATH"
@@ -66,7 +66,7 @@ gxx version
 Pin a release or another directory:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/DeMaarco/gxx/main/install.sh | sh -s -- --version v0.0.12
+curl -fsSL https://raw.githubusercontent.com/DeMaarco/gxx/main/install.sh | sh -s -- --version v0.0.13
 curl -fsSL https://raw.githubusercontent.com/DeMaarco/gxx/main/install.sh | sh -s -- --dir /usr/local/bin
 ```
 
@@ -76,17 +76,12 @@ Windows, amd64 and arm64 (PowerShell):
 irm https://raw.githubusercontent.com/DeMaarco/gxx/main/install.ps1 | iex
 ```
 
-That puts `gxx.exe` in `%LOCALAPPDATA%\gxx`. If the shell cannot find it:
-
-```powershell
-$env:Path = "$env:LOCALAPPDATA\gxx;$env:Path"
-gxx version
-```
+That puts `gxx.exe` in `%LOCALAPPDATA%\gxx` and puts that folder first on your user PATH and this session. If `gxx version` still shows an older build, another `gxx.exe` is first on PATH (`Get-Command gxx`).
 
 Pin a release or another directory:
 
 ```powershell
-$env:GXX_VERSION = "v0.0.12"
+$env:GXX_VERSION = "v0.0.13"
 irm https://raw.githubusercontent.com/DeMaarco/gxx/main/install.ps1 | iex
 ```
 
@@ -149,7 +144,7 @@ Drop an `AGENTS.md` in the project root if you want extra instructions loaded in
 ## REPL
 
 ```text
-◆ gxx  v0.0.12     badge and version
+◆ gxx  v0.0.13     badge and version
 >                 type here  ·  becomes  > plan  in plan mode
 gpt-5.6-sol · ask · medium · 272k · 0%
 ```

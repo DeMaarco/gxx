@@ -15,6 +15,7 @@
 package models_test
 
 import (
+	"fmt"
 	"reflect"
 	"testing"
 
@@ -54,6 +55,26 @@ func TestCatalogClaudeDropsLegacyIDs(t *testing.T) {
 	})
 	if len(got) != 1 || got[0] != "claude-sonnet-5" {
 		t.Fatalf("latest = %#v", got)
+	}
+}
+
+func TestCatalogCapsAndSortsExtraLiveModels(t *testing.T) {
+	live := []string{"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"}
+	for i := 30; i >= 0; i-- {
+		live = append(live, fmt.Sprintf("gpt-5.extra-%02d", i))
+	}
+	got := models.Latest(config.AccountAPI, live)
+	if len(got) > 3+models.MaxCatalogExtras {
+		t.Fatalf("latest len = %d, want at most %d", len(got), 3+models.MaxCatalogExtras)
+	}
+	for i := 1; i < len(got); i++ {
+		if got[i-1] == got[i] {
+			t.Fatalf("latest has a duplicate: %#v", got)
+		}
+	}
+	again := models.Latest(config.AccountAPI, live)
+	if !reflect.DeepEqual(got, again) {
+		t.Fatalf("latest shuffled extras: %#v then %#v", got, again)
 	}
 }
 
