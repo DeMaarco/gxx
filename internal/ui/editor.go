@@ -28,6 +28,7 @@ import (
 	"golang.org/x/term"
 
 	"gxx/internal/config"
+	"gxx/internal/osutil"
 )
 
 const (
@@ -718,12 +719,12 @@ func (e *lineEditor) Read(ctx context.Context, settings *REPLSettings) (string, 
 		var event keyEvent
 		select {
 		case <-ctx.Done():
-			_ = e.in.SetReadDeadline(time.Now())
+			osutil.InterruptRead(e.in)
 			select {
 			case <-read:
 			case <-time.After(200 * time.Millisecond):
 			}
-			_ = e.in.SetReadDeadline(time.Time{})
+			osutil.ClearReadDeadline(e.in)
 			e.finish(*settings, "")
 			return "", ctx.Err()
 		case value := <-read:

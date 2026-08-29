@@ -150,7 +150,7 @@ func (w *Workspace) ApplyTransaction(changes []FileChange) error {
 			return fail(fmt.Errorf("close backup placeholder for %s: %w", change.cleanPath, err))
 		}
 		change.backupPath = backupPath
-		if err := w.guard.Rename(change.cleanPath, backupPath); err != nil {
+		if err := w.replace(change.cleanPath, backupPath); err != nil {
 			_ = w.guard.Remove(backupPath)
 			change.backupPath = ""
 			return fail(fmt.Errorf("capture original %s: %w", change.cleanPath, err))
@@ -186,7 +186,7 @@ func (w *Workspace) ApplyTransaction(changes []FileChange) error {
 		} else if !errors.Is(err, os.ErrNotExist) {
 			return fail(fmt.Errorf("inspect transaction target %s: %w", change.cleanPath, err))
 		}
-		if err := w.guard.Rename(change.stagePath, change.cleanPath); err != nil {
+		if err := w.replace(change.stagePath, change.cleanPath); err != nil {
 			return fail(fmt.Errorf("install %s: %w", change.cleanPath, err))
 		}
 		change.stagePath = ""
@@ -314,7 +314,7 @@ func (w *Workspace) cleanupTransaction(
 	for index := len(changes) - 1; index >= 0; index-- {
 		change := &changes[index]
 		if change.backedUp && change.backupPath != "" {
-			record("restore", change.cleanPath, w.guard.Rename(change.backupPath, change.cleanPath))
+			record("restore", change.cleanPath, w.replace(change.backupPath, change.cleanPath))
 			change.backedUp = false
 			change.backupPath = ""
 			change.installed = false

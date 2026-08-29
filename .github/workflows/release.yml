@@ -25,16 +25,24 @@ jobs:
           set -eux
           version=${GITHUB_REF_NAME#v}
           mkdir -p dist
-          for os in darwin linux; do
+          for os in darwin linux windows; do
             for arch in amd64 arm64; do
+              ext=""
+              if [ "$os" = "windows" ]; then
+                ext=".exe"
+              fi
               CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go build \
                 -trimpath \
                 -ldflags "-s -w -X gxx/internal/app.Version=${version}" \
-                -o "dist/gxx-${os}-${arch}" \
+                -o "dist/gxx-${os}-${arch}${ext}" \
                 ./cmd/gxx
             done
           done
-          (cd dist && sha256sum gxx-darwin-amd64 gxx-darwin-arm64 gxx-linux-amd64 gxx-linux-arm64 > checksums.txt)
+          (cd dist && sha256sum \
+            gxx-darwin-amd64 gxx-darwin-arm64 \
+            gxx-linux-amd64 gxx-linux-arm64 \
+            gxx-windows-amd64.exe gxx-windows-arm64.exe \
+            > checksums.txt)
 
       - name: Publish GitHub Release
         env:
@@ -45,6 +53,8 @@ jobs:
             dist/gxx-darwin-arm64 \
             dist/gxx-linux-amd64 \
             dist/gxx-linux-arm64 \
+            dist/gxx-windows-amd64.exe \
+            dist/gxx-windows-arm64.exe \
             dist/checksums.txt \
             --generate-notes \
             --verify-tag

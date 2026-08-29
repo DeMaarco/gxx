@@ -64,7 +64,7 @@ func TestSystemPromptRejectsOutsideSymlink(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := os.Symlink(outside, filepath.Join(root, "AGENTS.md")); err != nil {
-		t.Fatal(err)
+		t.Skipf("symlinks not available: %v", err)
 	}
 	ws, err := workspace.New(root)
 	if err != nil {

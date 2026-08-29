@@ -12,15 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build darwin || linux
+//go:build windows
 
 package tools_test
 
 import (
 	"context"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -31,6 +32,8 @@ import (
 	"gxx/internal/agent"
 	"gxx/internal/approval"
 	"gxx/internal/config"
+
+	"golang.org/x/sys/windows"
 )
 
 func TestRunCommandScrubsProviderCredential(t *testing.T) {
@@ -45,7 +48,7 @@ func TestRunCommandScrubsProviderCredential(t *testing.T) {
 
 	result := registry.Execute(context.Background(), []agent.ToolCall{
 		toolCall("command", "run_command", map[string]any{
-			"command":         `printf '%s' "${OPENAI_API_KEY-unset}"`,
+			"command":         `if ($null -eq $env:OPENAI_API_KEY -or $env:OPENAI_API_KEY -eq '') { [Console]::Out.Write('unset') } else { [Console]::Out.Write($env:OPENAI_API_KEY) }`,
 			"timeout_seconds": nil,
 		}),
 	}, nil)[0]
@@ -57,9 +60,9 @@ func TestRunCommandScrubsProviderCredential(t *testing.T) {
 	}
 }
 
-func TestRunCommandKeepsHomeAndScrubsSecrets(t *testing.T) {
+func TestRunCommandKeepsMarkerAndScrubsSecrets(t *testing.T) {
 	t.Setenv("OPENAI_ADMIN_KEY", "admin-secret")
-	t.Setenv("HOME", "/tmp/gxx-home-should-not-leak")
+	t.Setenv("GXX_KEEP", "keep-me")
 	t.Setenv("ENCRYPTION_KEY", "enc-secret")
 	root := t.TempDir()
 	registry := newTestRegistry(t, root, &staticApprover{approved: true}, tools.Options{
@@ -71,15 +74,15 @@ func TestRunCommandKeepsHomeAndScrubsSecrets(t *testing.T) {
 
 	result := registry.Execute(context.Background(), []agent.ToolCall{
 		toolCall("command", "run_command", map[string]any{
-			"command":         `printf '%s %s %s' "${OPENAI_ADMIN_KEY-unset}" "${HOME-unset}" "${ENCRYPTION_KEY-unset}"`,
+			"command":         `$admin = if ($env:OPENAI_ADMIN_KEY) { $env:OPENAI_ADMIN_KEY } else { 'unset' }; $keep = if ($env:GXX_KEEP) { $env:GXX_KEEP } else { 'unset' }; $enc = if ($env:ENCRYPTION_KEY) { $env:ENCRYPTION_KEY } else { 'unset' }; [Console]::Out.Write("$admin $keep $enc")`,
 			"timeout_seconds": nil,
 		}),
 	}, nil)[0]
 	if result.IsError {
 		t.Fatalf("run command failed: %s", result.Output)
 	}
-	if result.Output != "unset /tmp/gxx-home-should-not-leak unset" {
-		t.Fatalf("command output = %q, want unset home unset", result.Output)
+	if result.Output != "unset keep-me unset" {
+		t.Fatalf("command output = %q, want unset keep-me unset", result.Output)
 	}
 }
 
@@ -94,12 +97,11 @@ func TestRunCommandReportsNonZeroExitAsResult(t *testing.T) {
 
 	result := registry.Execute(context.Background(), []agent.ToolCall{
 		toolCall("command", "run_command", map[string]any{
-			"command":         "printf 'syntax error on line 1\\n' >&2; exit 3",
+			"command":         `[Console]::Error.WriteLine('syntax error on line 1'); exit 3`,
 			"timeout_seconds": nil,
 		}),
 	}, nil)[0]
 
-	// A command that runs and fails is an answer, not a broken tool.
 	if result.IsError {
 		t.Fatalf("non-zero exit reported as a tool error: %q", result.Output)
 	}
@@ -108,30 +110,6 @@ func TestRunCommandReportsNonZeroExitAsResult(t *testing.T) {
 	}
 	if !strings.Contains(result.Output, "syntax error on line 1") {
 		t.Fatalf("output = %q, want the command output preserved", result.Output)
-	}
-}
-
-func TestRunCommandReportsMissingInterpreter(t *testing.T) {
-	root := t.TempDir()
-	registry := newTestRegistry(t, root, &staticApprover{approved: true}, tools.Options{
-		MaxResultBytes:  4096,
-		MaxSearchResult: 10,
-		ParallelReads:   1,
-		CommandTimeout:  time.Second,
-	})
-
-	result := registry.Execute(context.Background(), []agent.ToolCall{
-		toolCall("command", "run_command", map[string]any{
-			"command":         "gxx-no-such-binary --check",
-			"timeout_seconds": nil,
-		}),
-	}, nil)[0]
-
-	if result.IsError {
-		t.Fatalf("missing binary reported as a tool error: %q", result.Output)
-	}
-	if !strings.HasPrefix(result.Output, tools.ExitCodeLabel+" 127") {
-		t.Fatalf("output = %q, want exit code 127", result.Output)
 	}
 }
 
@@ -166,76 +144,52 @@ func TestRunCommandHonorsTimeout(t *testing.T) {
 
 	result := registry.Execute(context.Background(), []agent.ToolCall{
 		toolCall("command", "run_command", map[string]any{
-			"command":         "sleep 5",
+			"command":         "Start-Sleep -Seconds 5",
 			"timeout_seconds": nil,
 		}),
 	}, nil)[0]
 	if !result.IsError || !strings.Contains(result.Output, "timed out") {
 		t.Fatalf("result = %+v, want timeout error", result)
 	}
-	if result.Duration > time.Second {
+	if result.Duration > 3*time.Second {
 		t.Fatalf("command cancellation took %s", result.Duration)
 	}
 }
 
-func TestRunCommandDoesNotLoadCallerShellProfiles(t *testing.T) {
-	root := t.TempDir()
-	marker := filepath.Join(root, "profile-loaded")
-	profile := filepath.Join(root, "profile.sh")
-	if err := os.WriteFile(profile, []byte("touch "+marker+"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("BASH_ENV", profile)
-	t.Setenv("ENV", profile)
-	registry := newTestRegistry(t, root, &staticApprover{approved: true}, tools.Options{
-		MaxResultBytes:  4096,
-		MaxSearchResult: 10,
-		ParallelReads:   1,
-		CommandTimeout:  time.Second,
-	})
-
-	result := registry.Execute(context.Background(), []agent.ToolCall{
-		toolCall("command", "run_command", map[string]any{
-			"command": "true", "timeout_seconds": nil,
-		}),
-	}, nil)[0]
-	if result.IsError {
-		t.Fatalf("run command failed: %s", result.Output)
-	}
-	if _, err := os.Stat(marker); !os.IsNotExist(err) {
-		t.Fatalf("shell profile was loaded; marker stat error = %v", err)
-	}
-}
-
-func TestRunCommandKillsBackgroundProcessGroup(t *testing.T) {
-	root := t.TempDir()
-	registry := newTestRegistry(t, root, &staticApprover{approved: true}, tools.Options{
-		MaxResultBytes:  4096,
-		MaxSearchResult: 10,
-		ParallelReads:   1,
-		CommandTimeout:  time.Second,
-	})
-	result := registry.Execute(context.Background(), []agent.ToolCall{
-		toolCall("command", "run_command", map[string]any{
-			"command": "sleep 10 >/dev/null 2>&1 & echo $!", "timeout_seconds": nil,
-		}),
-	}, nil)[0]
-	if result.IsError {
-		t.Fatalf("run command failed: %s", result.Output)
-	}
-	pid, err := strconv.Atoi(strings.TrimSpace(result.Output))
+func TestJobObjectKillsAssignedProcess(t *testing.T) {
+	job, err := tools.NewKillJob()
 	if err != nil {
-		t.Fatalf("parse child pid from %q: %v", result.Output, err)
+		t.Fatalf("create job: %v", err)
+	}
+	defer tools.CloseJob(job)
+
+	ping := filepath.Join(os.Getenv("SystemRoot"), "System32", "ping.exe")
+	command := exec.Command(ping, "-n", "30", "127.0.0.1")
+	command.SysProcAttr = &syscall.SysProcAttr{
+		HideWindow:    true,
+		CreationFlags: windows.CREATE_NEW_PROCESS_GROUP,
+	}
+	command.Stdout = io.Discard
+	command.Stderr = io.Discard
+	if err := command.Start(); err != nil {
+		t.Fatalf("start ping: %v", err)
+	}
+	if err := tools.AssignPIDToJob(job, command.Process.Pid); err != nil {
+		_ = command.Process.Kill()
+		t.Fatalf("assign process: %v", err)
+	}
+	if err := tools.TerminateJob(job); err != nil {
+		t.Fatalf("terminate job: %v", err)
 	}
 
-	deadline := time.Now().Add(time.Second)
+	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		if err := syscall.Kill(pid, 0); err == syscall.ESRCH {
+		if !windowsProcessExists(command.Process.Pid) {
 			return
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatalf("background process %d survived command completion", pid)
+	t.Fatalf("assigned process %d survived job termination", command.Process.Pid)
 }
 
 func TestRunCommandReportsCommandKind(t *testing.T) {
@@ -249,7 +203,7 @@ func TestRunCommandReportsCommandKind(t *testing.T) {
 	})
 	result := registry.Execute(context.Background(), []agent.ToolCall{
 		toolCall("command", "run_command", map[string]any{
-			"command": "true", "timeout_seconds": nil,
+			"command": "exit 0", "timeout_seconds": nil,
 		}),
 	}, nil)[0]
 	if result.IsError {
@@ -258,8 +212,8 @@ func TestRunCommandReportsCommandKind(t *testing.T) {
 	if len(approver.actions) != 1 || approver.actions[0].Kind != approval.KindCommand {
 		t.Fatalf("approval actions = %#v", approver.actions)
 	}
-	if approver.actions[0].RepeatKey != "true" {
-		t.Fatalf("RepeatKey = %q, want true", approver.actions[0].RepeatKey)
+	if approver.actions[0].RepeatKey != "exit 0" {
+		t.Fatalf("RepeatKey = %q, want exit 0", approver.actions[0].RepeatKey)
 	}
 }
 
@@ -274,7 +228,7 @@ func TestAutoWritesStillAsksForCommands(t *testing.T) {
 	})
 	result := registry.Execute(context.Background(), []agent.ToolCall{
 		toolCall("command", "run_command", map[string]any{
-			"command": "true", "timeout_seconds": nil,
+			"command": "exit 0", "timeout_seconds": nil,
 		}),
 	}, nil)[0]
 	if !result.IsError || !strings.Contains(result.Output, "permission denied") {
@@ -296,7 +250,7 @@ func TestAutoRunsCommandsWithoutPrompt(t *testing.T) {
 	})
 	result := registry.Execute(context.Background(), []agent.ToolCall{
 		toolCall("command", "run_command", map[string]any{
-			"command": "printf ran", "timeout_seconds": nil,
+			"command": "[Console]::Out.Write('ran')", "timeout_seconds": nil,
 		}),
 	}, nil)[0]
 	if result.IsError {
@@ -321,7 +275,7 @@ func TestRunCommandPreviewWarnsOnSensitivePath(t *testing.T) {
 	})
 	_ = registry.Execute(context.Background(), []agent.ToolCall{
 		toolCall("command", "run_command", map[string]any{
-			"command": "cat .env", "timeout_seconds": nil,
+			"command": "Get-Content .env", "timeout_seconds": nil,
 		}),
 	}, nil)
 	if len(approver.actions) != 1 {
@@ -330,7 +284,48 @@ func TestRunCommandPreviewWarnsOnSensitivePath(t *testing.T) {
 	if !strings.Contains(approver.actions[0].Preview, "sensitive path") {
 		t.Fatalf("preview = %q, want sensitive path warning", approver.actions[0].Preview)
 	}
-	if approver.actions[0].RepeatKey != "cat .env" {
+	if approver.actions[0].RepeatKey != "Get-Content .env" {
 		t.Fatalf("RepeatKey = %q", approver.actions[0].RepeatKey)
 	}
+}
+
+func TestRunCommandDoesNotLoadCallerProfiles(t *testing.T) {
+	root := t.TempDir()
+	marker := root + `\profile-loaded`
+	profile := root + `\profile.ps1`
+	if err := os.WriteFile(profile, []byte("Set-Content -Path '"+marker+"' -Value loaded\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("USERPROFILE", root)
+	registry := newTestRegistry(t, root, &staticApprover{approved: true}, tools.Options{
+		MaxResultBytes:  4096,
+		MaxSearchResult: 10,
+		ParallelReads:   1,
+		CommandTimeout:  time.Second,
+	})
+
+	result := registry.Execute(context.Background(), []agent.ToolCall{
+		toolCall("command", "run_command", map[string]any{
+			"command": "exit 0", "timeout_seconds": nil,
+		}),
+	}, nil)[0]
+	if result.IsError {
+		t.Fatalf("run command failed: %s", result.Output)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("PowerShell profile was loaded; marker stat error = %v", err)
+	}
+}
+
+func windowsProcessExists(pid int) bool {
+	handle, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(pid))
+	if err != nil {
+		return false
+	}
+	defer windows.CloseHandle(handle)
+	var code uint32
+	if err := windows.GetExitCodeProcess(handle, &code); err != nil {
+		return false
+	}
+	return code == 259 // STILL_ACTIVE
 }

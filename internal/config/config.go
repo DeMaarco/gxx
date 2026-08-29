@@ -23,8 +23,9 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
+
+	"gxx/internal/osutil"
 )
 
 const (
@@ -220,7 +221,16 @@ func loadPersistent() (persistentConfig, error) {
 	if err != nil {
 		return stored, err
 	}
-	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK|syscall.O_NOFOLLOW, 0)
+	if info, err := os.Lstat(path); err == nil {
+		if info.Mode()&os.ModeSymlink != 0 {
+			return stored, errors.New("config is a symlink")
+		}
+	} else if errors.Is(err, os.ErrNotExist) {
+		return stored, nil
+	} else {
+		return stored, fmt.Errorf("inspect config: %w", err)
+	}
+	file, err := os.OpenFile(path, osutil.ReadNoFollowFlags(), 0)
 	if errors.Is(err, os.ErrNotExist) {
 		return stored, nil
 	}
@@ -236,7 +246,7 @@ func loadPersistent() (persistentConfig, error) {
 	if !info.Mode().IsRegular() {
 		return stored, errors.New("config is not a regular file")
 	}
-	if info.Mode().Perm()&0o077 != 0 {
+	if osutil.UnixPermissions() && info.Mode().Perm()&0o077 != 0 {
 		return stored, fmt.Errorf("config permissions are %04o; expected 0600", info.Mode().Perm())
 	}
 
@@ -270,7 +280,7 @@ func savePersistent(mutate func(*persistentConfig) error) (string, error) {
 	if err := os.MkdirAll(directory, 0o700); err != nil {
 		return "", fmt.Errorf("create config directory: %w", err)
 	}
-	if err := os.Chmod(directory, 0o700); err != nil {
+	if err := os.Chmod(directory, 0o700); err != nil && osutil.UnixPermissions() {
 		return "", fmt.Errorf("secure config directory: %w", err)
 	}
 	if info, err := os.Lstat(path); err == nil {
@@ -293,7 +303,7 @@ func savePersistent(mutate func(*persistentConfig) error) (string, error) {
 		_ = temp.Close()
 		_ = os.Remove(tempPath)
 	}
-	if err := temp.Chmod(0o600); err != nil {
+	if err := temp.Chmod(0o600); err != nil && osutil.UnixPermissions() {
 		cleanup()
 		return "", fmt.Errorf("secure temporary config: %w", err)
 	}
@@ -307,11 +317,11 @@ func savePersistent(mutate func(*persistentConfig) error) (string, error) {
 		cleanup()
 		return "", fmt.Errorf("close config: %w", err)
 	}
-	if err := os.Rename(tempPath, path); err != nil {
+	if err := osutil.ReplaceFile(tempPath, path); err != nil {
 		cleanup()
 		return "", fmt.Errorf("replace config: %w", err)
 	}
-	if err := os.Chmod(path, 0o600); err != nil {
+	if err := os.Chmod(path, 0o600); err != nil && osutil.UnixPermissions() {
 		return "", fmt.Errorf("secure config: %w", err)
 	}
 	return path, nil

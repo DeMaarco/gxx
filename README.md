@@ -19,7 +19,7 @@ inspects git, patches, and runs commands — in that folder only.
 [![Release](https://img.shields.io/github/v/release/DeMaarco/gxx?style=flat-square&color=a855f7)](https://github.com/DeMaarco/gxx/releases)
 [![License](https://img.shields.io/badge/license-Apache%202.0-0ea5e9?style=flat-square)](LICENSE)
 [![Go](https://img.shields.io/badge/go-1.27+-00ADD8?style=flat-square&logo=go&logoColor=white)](https://go.dev)
-[![Platform](https://img.shields.io/badge/macOS%20%7C%20Linux-111827?style=flat-square)](#install)
+[![Platform](https://img.shields.io/badge/macOS%20%7C%20Linux%20%7C%20Windows-111827?style=flat-square)](#install)
 
 </div>
 
@@ -29,7 +29,7 @@ Inspired by [`fx`](https://github.com/vercel-labs/fx), but narrower on purpose:
 **one provider** (OpenAI), **one workspace**, **no TUI**. Just a prompt.
 
 ```text
-◆ gxx  v0.0.10
+◆ gxx  v0.0.11
 >
 gpt-5.6-sol · ask · medium · 272k · 0%
 ```
@@ -66,9 +66,31 @@ gxx version
 Pin a release or another directory:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/DeMaarco/gxx/main/install.sh | sh -s -- --version v0.0.10
+curl -fsSL https://raw.githubusercontent.com/DeMaarco/gxx/main/install.sh | sh -s -- --version v0.0.11
 curl -fsSL https://raw.githubusercontent.com/DeMaarco/gxx/main/install.sh | sh -s -- --dir /usr/local/bin
 ```
+
+Windows, amd64 and arm64 (PowerShell):
+
+```powershell
+irm https://raw.githubusercontent.com/DeMaarco/gxx/main/install.ps1 | iex
+```
+
+That puts `gxx.exe` in `%LOCALAPPDATA%\gxx`. If the shell cannot find it:
+
+```powershell
+$env:Path = "$env:LOCALAPPDATA\gxx;$env:Path"
+gxx version
+```
+
+Pin a release or another directory:
+
+```powershell
+$env:GXX_VERSION = "v0.0.11"
+irm https://raw.githubusercontent.com/DeMaarco/gxx/main/install.ps1 | iex
+```
+
+`run_command` uses PowerShell. The git tools need [Git for Windows](https://git-scm.com/download/win) on PATH.
 
 ## Quick start
 
@@ -76,6 +98,14 @@ You need an [OpenAI API key](https://platform.openai.com/api-keys). Export it, o
 
 ```sh
 export OPENAI_API_KEY="sk-..."
+cd your-project
+gxx
+```
+
+PowerShell:
+
+```powershell
+$env:OPENAI_API_KEY = "sk-..."
 cd your-project
 gxx
 ```
@@ -94,7 +124,7 @@ Drop an `AGENTS.md` in the project root if you want extra instructions loaded in
 ## REPL
 
 ```text
-◆ gxx  v0.0.10     badge and version
+◆ gxx  v0.0.11     badge and version
 >                 type here  ·  becomes  > plan  in plan mode
 gpt-5.6-sol · ask · medium · 272k · 0%
 ```
@@ -145,7 +175,7 @@ Reads always run. Writes and shell commands follow the mode, unless plan is on.
 | `auto` | Apply | Apply |
 
 Piped `gxx ask` stays on `ask` and denies mutations unless you pass `--permission`.
-Commands are not OS-sandboxed — review them in `ask`. Changing `/mode` clears the session command allowlist.
+Commands are not OS-sandboxed — review them in `ask`. Changing `/mode` clears the session command allowlist. On Windows they run under PowerShell (`pwsh` if present, otherwise `powershell.exe`).
 
 ## Privacy
 

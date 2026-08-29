@@ -12,7 +12,13 @@ jobs:
   test:
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        include:
+          - os: ubuntu-latest
+            race: "-race"
+          - os: macos-latest
+            race: "-race"
+          - os: windows-latest
+            race: ""
     runs-on: ${{ matrix.os }}
     steps:
       - name: Check out
@@ -24,4 +30,4 @@ jobs:
           go-version-file: go.mod
 
       - name: Test
-        run: go test -race ./test/...
+        run: go test ${{ matrix.race }} ./test/...

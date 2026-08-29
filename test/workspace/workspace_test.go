@@ -17,6 +17,7 @@ package workspace_test
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"gxx/internal/workspace"
@@ -28,9 +29,7 @@ func TestWorkspaceRejectsTraversalAndOutsideSymlink(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(outside, "secret.txt"), []byte("secret"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(outside, filepath.Join(root, "escape")); err != nil {
-		t.Fatal(err)
-	}
+	requireSymlink(t, outside, filepath.Join(root, "escape"))
 
 	ws, err := workspace.New(root)
 	if err != nil {
@@ -66,9 +65,7 @@ func TestWorkspaceRejectsSymlinkInsideWorkspace(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(target, "file.txt"), []byte("ok"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(target, filepath.Join(root, "inside")); err != nil {
-		t.Fatal(err)
-	}
+	requireSymlink(t, target, filepath.Join(root, "inside"))
 
 	ws, err := workspace.New(root)
 	if err != nil {
@@ -114,7 +111,14 @@ func TestAtomicWriteCreatesParentsAndPreservesMode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0o700 {
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o700 {
 		t.Fatalf("mode = %o, want 700", info.Mode().Perm())
+	}
+}
+
+func requireSymlink(t *testing.T, oldname, newname string) {
+	t.Helper()
+	if err := os.Symlink(oldname, newname); err != nil {
+		t.Skipf("symlinks not available: %v", err)
 	}
 }
