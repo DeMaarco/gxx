@@ -21,6 +21,7 @@ import "golang.org/x/sys/windows"
 var (
 	NewKillJob     = newKillJob
 	AssignPIDToJob = assignPIDToJob
+	ResumeProcess  = resumeProcess
 )
 
 func TerminateJob(job windows.Handle) error {

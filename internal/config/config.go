@@ -21,6 +21,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -165,21 +166,88 @@ type persistentConfig struct {
 	Permission   string `json:"permission,omitempty"`
 }
 
-// Path returns the cross-platform gxx config path requested by the MVP.
+// Path returns the preferred gxx config file. XDG_CONFIG_HOME wins on every
+// OS. Otherwise Windows uses %APPDATA%\gxx; Unix uses ~/.config/gxx.
 func Path() (string, error) {
-	base := strings.TrimSpace(os.Getenv("XDG_CONFIG_HOME"))
-	if base != "" {
+	if base := strings.TrimSpace(os.Getenv("XDG_CONFIG_HOME")); base != "" {
 		if !filepath.IsAbs(base) {
 			return "", errors.New("XDG_CONFIG_HOME must be an absolute path")
 		}
-	} else {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "", fmt.Errorf("find home directory: %w", err)
-		}
-		base = filepath.Join(home, ".config")
+		return filepath.Join(base, "gxx", "config.json"), nil
+	}
+	if runtime.GOOS == "windows" {
+		return windowsConfigPath()
+	}
+	return unixConfigPath()
+}
+
+func windowsConfigPath() (string, error) {
+	base, err := os.UserConfigDir()
+	if err != nil {
+		return "", fmt.Errorf("find config directory: %w", err)
+	}
+	base = strings.TrimSpace(base)
+	if base == "" {
+		return "", errors.New("APPDATA is not set")
+	}
+	if !filepath.IsAbs(base) {
+		return "", errors.New("APPDATA must be an absolute path")
 	}
 	return filepath.Join(base, "gxx", "config.json"), nil
+}
+
+func unixConfigPath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("find home directory: %w", err)
+	}
+	return filepath.Join(home, ".config", "gxx", "config.json"), nil
+}
+
+// existingConfigPath prefers Path(). On Windows, a leftover ~/.config/gxx
+// file from earlier builds is still read until the next save migrates it.
+func existingConfigPath() (string, error) {
+	path, err := Path()
+	if err != nil {
+		return "", err
+	}
+	exists, err := configExists(path)
+	if err != nil {
+		return "", err
+	}
+	if exists || runtime.GOOS != "windows" || strings.TrimSpace(os.Getenv("XDG_CONFIG_HOME")) != "" {
+		return path, nil
+	}
+	legacy, err := unixConfigPath()
+	if err != nil {
+		return path, nil
+	}
+	if configPathsEqual(path, legacy) {
+		return path, nil
+	}
+	exists, err = configExists(legacy)
+	if err != nil {
+		return "", err
+	}
+	if exists {
+		return legacy, nil
+	}
+	return path, nil
+}
+
+func configExists(path string) (bool, error) {
+	_, err := os.Lstat(path)
+	if err == nil {
+		return true, nil
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	return false, fmt.Errorf("inspect config: %w", err)
+}
+
+func configPathsEqual(a, b string) bool {
+	return strings.EqualFold(filepath.Clean(a), filepath.Clean(b))
 }
 
 // LoadAPIKey reads a private API key from the persistent config, if present.
@@ -217,7 +285,7 @@ func SaveSession(model, effort, contextValue string, fast bool, permission strin
 
 func loadPersistent() (persistentConfig, error) {
 	var stored persistentConfig
-	path, err := Path()
+	path, err := existingConfigPath()
 	if err != nil {
 		return stored, err
 	}

@@ -92,6 +92,8 @@ irm https://raw.githubusercontent.com/DeMaarco/gxx/main/install.ps1 | iex
 
 `run_command` uses PowerShell. The git tools need [Git for Windows](https://git-scm.com/download/win) on PATH.
 
+`/config` writes `%APPDATA%\gxx\config.json`. An older `%USERPROFILE%\.config\gxx\config.json` is still read until the next save.
+
 ## Quick start
 
 You need an [OpenAI API key](https://platform.openai.com/api-keys). Export it, or start `gxx` and run `/config`.

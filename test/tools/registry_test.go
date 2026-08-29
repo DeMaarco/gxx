@@ -21,6 +21,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -1014,6 +1015,53 @@ func TestApplyPatchRejectsMixedActionsOnSamePath(t *testing.T) {
 		t.Fatalf("result = %+v, want mixed-action error", result)
 	}
 	assertToolFileContents(t, filepath.Join(root, "file.txt"), "before\n")
+}
+
+func TestApplyPatchAcceptsDotSlashPaths(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, root, "src/file.txt", "before\n")
+	registry := newTestRegistry(t, root, &staticApprover{approved: true}, tools.Options{
+		MaxResultBytes:  4096,
+		MaxSearchResult: 10,
+		ParallelReads:   1,
+		CommandTimeout:  time.Second,
+	})
+	result := registry.Execute(context.Background(), []agent.ToolCall{
+		toolCall("patch", "apply_patch", map[string]any{
+			"changes": []map[string]any{{
+				"path": "./src/file.txt", "action": "update", "old_text": "before", "new_text": "after",
+			}},
+		}),
+	}, nil)[0]
+	if result.IsError {
+		t.Fatalf("apply_patch failed: %s", result.Output)
+	}
+	assertToolFileContents(t, filepath.Join(root, "src", "file.txt"), "after\n")
+}
+
+func TestApplyPatchAcceptsWindowsSeparators(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("backslash separators")
+	}
+	root := t.TempDir()
+	writeTestFile(t, root, "src/file.txt", "before\n")
+	registry := newTestRegistry(t, root, &staticApprover{approved: true}, tools.Options{
+		MaxResultBytes:  4096,
+		MaxSearchResult: 10,
+		ParallelReads:   1,
+		CommandTimeout:  time.Second,
+	})
+	result := registry.Execute(context.Background(), []agent.ToolCall{
+		toolCall("patch", "apply_patch", map[string]any{
+			"changes": []map[string]any{{
+				"path": `src\file.txt`, "action": "update", "old_text": "before", "new_text": "after",
+			}},
+		}),
+	}, nil)[0]
+	if result.IsError {
+		t.Fatalf("apply_patch failed: %s", result.Output)
+	}
+	assertToolFileContents(t, filepath.Join(root, "src", "file.txt"), "after\n")
 }
 
 func TestListAndSearchEmitProgress(t *testing.T) {

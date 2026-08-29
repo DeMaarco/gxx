@@ -378,3 +378,102 @@ func TestSaveAPIKeyRejectsSymlinkedConfig(t *testing.T) {
 		t.Fatalf("outside file changed: %q", data)
 	}
 }
+
+func TestPathUsesAppDataOnWindows(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows config path")
+	}
+	t.Setenv("XDG_CONFIG_HOME", "")
+	appdata := t.TempDir()
+	t.Setenv("APPDATA", appdata)
+
+	path, err := config.Path()
+	if err != nil {
+		t.Fatalf("Path() error = %v", err)
+	}
+	want := filepath.Join(appdata, "gxx", "config.json")
+	if path != want {
+		t.Fatalf("Path() = %q, want %q", path, want)
+	}
+}
+
+func TestLoadFallsBackToLegacyWindowsConfig(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows legacy config")
+	}
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("GXX_MODEL", "")
+	t.Setenv("GXX_EFFORT", "")
+	t.Setenv("GXX_CONTEXT", "")
+	t.Setenv("GXX_FAST", "")
+	t.Setenv("GXX_PERMISSION", "")
+	t.Setenv("APPDATA", t.TempDir())
+	t.Setenv("USERPROFILE", t.TempDir())
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyDir := filepath.Join(home, ".config", "gxx")
+	if err := os.MkdirAll(legacyDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(legacyDir, "config.json"), []byte(`{"openai_api_key":"legacy-key","model":"gpt-5.6-terra"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	settings := config.Load(t.TempDir())
+	if settings.APIKey != "legacy-key" {
+		t.Fatalf("APIKey = %q, want legacy-key", settings.APIKey)
+	}
+	if settings.Model != "gpt-5.6-terra" {
+		t.Fatalf("Model = %q, want gpt-5.6-terra", settings.Model)
+	}
+}
+
+func TestSaveMigratesLegacyWindowsConfig(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows config migration")
+	}
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("OPENAI_API_KEY", "")
+	appdata := t.TempDir()
+	t.Setenv("APPDATA", appdata)
+	t.Setenv("USERPROFILE", t.TempDir())
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyDir := filepath.Join(home, ".config", "gxx")
+	if err := os.MkdirAll(legacyDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(legacyDir, "config.json"), []byte(`{"openai_api_key":"legacy-key"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	path, err := config.SaveAPIKey("new-key")
+	if err != nil {
+		t.Fatalf("SaveAPIKey() error = %v", err)
+	}
+	want := filepath.Join(appdata, "gxx", "config.json")
+	if path != want {
+		t.Fatalf("save path = %q, want %q", path, want)
+	}
+	key, err := config.LoadAPIKey()
+	if err != nil {
+		t.Fatalf("LoadAPIKey() error = %v", err)
+	}
+	if key != "new-key" {
+		t.Fatalf("key = %q, want new-key", key)
+	}
+	data, err := os.ReadFile(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "new-key") {
+		t.Fatalf("preferred config = %q", data)
+	}
+}

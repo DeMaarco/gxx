@@ -202,15 +202,13 @@ func (r *Registry) applyPatchChange(
 	if action != "add" && action != "update" && action != "delete" {
 		return nil, fmt.Errorf("unsupported action %q", change.Action)
 	}
-	if strings.TrimSpace(change.Path) == "" {
+	path := strings.TrimSpace(change.Path)
+	if path == "" {
 		return nil, errors.New("path cannot be empty")
 	}
-	clean, err := r.workspace.Clean(change.Path)
+	clean, err := r.workspace.Clean(path)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", change.Path, err)
-	}
-	if clean != change.Path || strings.TrimSpace(change.Path) != change.Path {
-		return nil, fmt.Errorf("patch path must already be normalized: %q", change.Path)
+		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 	if isSensitivePath(clean) {
 		return nil, fmt.Errorf("refusing to patch sensitive path: %s", clean)

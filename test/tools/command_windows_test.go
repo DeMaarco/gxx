@@ -22,6 +22,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -167,7 +168,7 @@ func TestJobObjectKillsAssignedProcess(t *testing.T) {
 	command := exec.Command(ping, "-n", "30", "127.0.0.1")
 	command.SysProcAttr = &syscall.SysProcAttr{
 		HideWindow:    true,
-		CreationFlags: windows.CREATE_NEW_PROCESS_GROUP,
+		CreationFlags: windows.CREATE_NEW_PROCESS_GROUP | windows.CREATE_SUSPENDED,
 	}
 	command.Stdout = io.Discard
 	command.Stderr = io.Discard
@@ -177,6 +178,10 @@ func TestJobObjectKillsAssignedProcess(t *testing.T) {
 	if err := tools.AssignPIDToJob(job, command.Process.Pid); err != nil {
 		_ = command.Process.Kill()
 		t.Fatalf("assign process: %v", err)
+	}
+	if err := tools.ResumeProcess(command.Process.Pid); err != nil {
+		_ = command.Process.Kill()
+		t.Fatalf("resume process: %v", err)
 	}
 	if err := tools.TerminateJob(job); err != nil {
 		t.Fatalf("terminate job: %v", err)
@@ -315,6 +320,91 @@ func TestRunCommandDoesNotLoadCallerProfiles(t *testing.T) {
 	if _, err := os.Stat(marker); !os.IsNotExist(err) {
 		t.Fatalf("PowerShell profile was loaded; marker stat error = %v", err)
 	}
+}
+
+func TestResumeProcessStartsSuspendedProcess(t *testing.T) {
+	ping := filepath.Join(os.Getenv("SystemRoot"), "System32", "ping.exe")
+	command := exec.Command(ping, "-n", "1", "127.0.0.1")
+	command.SysProcAttr = &syscall.SysProcAttr{
+		HideWindow:    true,
+		CreationFlags: windows.CREATE_SUSPENDED,
+	}
+	command.Stdout = io.Discard
+	command.Stderr = io.Discard
+	if err := command.Start(); err != nil {
+		t.Fatalf("start ping: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- command.Wait() }()
+	select {
+	case err := <-done:
+		t.Fatalf("suspended process exited: %v", err)
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	if err := tools.ResumeProcess(command.Process.Pid); err != nil {
+		_ = command.Process.Kill()
+		t.Fatalf("resume process: %v", err)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("wait after resume: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		_ = command.Process.Kill()
+		t.Fatal("process did not exit after resume")
+	}
+}
+
+func TestRunCommandTimeoutKillsSpawnedChild(t *testing.T) {
+	ping := filepath.Join(os.Getenv("SystemRoot"), "System32", "ping.exe")
+	root := t.TempDir()
+	registry := newTestRegistry(t, root, &staticApprover{approved: true}, tools.Options{
+		MaxResultBytes:  4096,
+		MaxSearchResult: 10,
+		ParallelReads:   1,
+		CommandTimeout:  800 * time.Millisecond,
+	})
+
+	script := `$psi = New-Object System.Diagnostics.ProcessStartInfo; $psi.FileName = '` + ping + `'; $psi.Arguments = '-n 40 127.0.0.1'; $psi.UseShellExecute = $false; $psi.CreateNoWindow = $true; $p = [Diagnostics.Process]::Start($psi); Set-Content -Path 'child.pid' -Value $p.Id; $p.WaitForExit()`
+	result := registry.Execute(context.Background(), []agent.ToolCall{
+		toolCall("command", "run_command", map[string]any{
+			"command": script, "timeout_seconds": nil,
+		}),
+	}, nil)[0]
+	if !result.IsError || !strings.Contains(result.Output, "timed out") {
+		t.Fatalf("result = %+v, want timeout error", result)
+	}
+
+	pidPath := filepath.Join(root, "child.pid")
+	deadline := time.Now().Add(2 * time.Second)
+	var pidBytes []byte
+	var err error
+	for time.Now().Before(deadline) {
+		pidBytes, err = os.ReadFile(pidPath)
+		if err == nil && strings.TrimSpace(string(pidBytes)) != "" {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if err != nil {
+		t.Fatalf("read child pid: %v", err)
+	}
+	pid, convErr := strconv.Atoi(strings.TrimSpace(string(pidBytes)))
+	if convErr != nil {
+		t.Fatalf("child pid %q: %v", pidBytes, convErr)
+	}
+
+	deadline = time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if !windowsProcessExists(pid) {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("spawned child %d survived command timeout", pid)
 }
 
 func windowsProcessExists(pid int) bool {

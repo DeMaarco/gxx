@@ -45,35 +45,26 @@ func (r *Registry) runCommand(ctx context.Context, raw json.RawMessage) (string,
 	commandContext, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	command := exec.Command(shell, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", args.Command)
-	command.Dir = r.workspace.Root()
-	command.Env = sanitizedEnvironment(os.Environ())
-	command.SysProcAttr = &syscall.SysProcAttr{
-		HideWindow:    true,
-		CreationFlags: windows.CREATE_NEW_PROCESS_GROUP,
-	}
-	command.WaitDelay = 2 * time.Second
-
 	output := &limitedWriter{limit: r.maxResultBytes * 2}
-	command.Stdout = output
-	command.Stderr = output
+	command, err := startPowerShell(shell, r.workspace.Root(), args.Command, output)
+	if err != nil {
+		return "", err
+	}
 
 	job, err := newKillJob()
 	if err != nil {
+		_ = command.Process.Kill()
 		return "", fmt.Errorf("create process job: %w", err)
 	}
 	defer windows.CloseHandle(job)
 
-	if err := command.Start(); err != nil {
-		return "", fmt.Errorf("start command: %w", err)
-	}
-	if err := assignPIDToJob(job, command.Process.Pid); err != nil {
-		_ = windows.TerminateJobObject(job, 1)
+	if err := assignAndResume(job, command.Process); err != nil {
+		killWindowsCommand(job, command.Process.Pid)
 		_ = command.Process.Kill()
-		return "", fmt.Errorf("confine command process: %w", err)
+		return "", err
 	}
 
-	// Kill the job as soon as PowerShell exits so leftover children cannot
+	// Kill leftover children as soon as PowerShell exits so they cannot
 	// hold stdout/stderr open and stall exec.Cmd.Wait (WaitDelay).
 	go terminateJobWhenProcessExits(job, command.Process.Pid)
 
@@ -84,10 +75,10 @@ func (r *Registry) runCommand(ctx context.Context, raw json.RawMessage) (string,
 
 	select {
 	case err := <-waited:
-		_ = windows.TerminateJobObject(job, 1)
+		killWindowsCommand(job, command.Process.Pid)
 		return finishWindowsCommand(output.String(), err, command.ProcessState)
 	case <-commandContext.Done():
-		_ = windows.TerminateJobObject(job, 1)
+		killWindowsCommand(job, command.Process.Pid)
 		<-waited
 		if errors.Is(commandContext.Err(), context.DeadlineExceeded) {
 			return output.String(), fmt.Errorf("command timed out after %s", timeout)
@@ -123,6 +114,44 @@ func isWaitDelayError(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "WaitDelay")
 }
 
+func startPowerShell(shell, dir, script string, output *limitedWriter) (*exec.Cmd, error) {
+	env := sanitizedEnvironment(os.Environ())
+	command, err := startPowerShellWithFlags(shell, dir, script, env, output, windows.CREATE_BREAKAWAY_FROM_JOB)
+	if err == nil {
+		return command, nil
+	}
+	command, err = startPowerShellWithFlags(shell, dir, script, env, output, 0)
+	if err != nil {
+		return nil, fmt.Errorf("start command: %w", err)
+	}
+	return command, nil
+}
+
+func startPowerShellWithFlags(
+	shell, dir, script string,
+	env []string,
+	output *limitedWriter,
+	extraFlags uint32,
+) (*exec.Cmd, error) {
+	command := exec.Command(shell, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script)
+	command.Dir = dir
+	command.Env = env
+	command.SysProcAttr = &syscall.SysProcAttr{
+		HideWindow: true,
+		// Suspend until the process is in the kill-on-close job so children
+		// cannot start outside it. Break away from a parent job when allowed
+		// so grandchildren inherit this job instead of a nested outer one.
+		CreationFlags: windows.CREATE_NEW_PROCESS_GROUP | windows.CREATE_SUSPENDED | extraFlags,
+	}
+	command.WaitDelay = 2 * time.Second
+	command.Stdout = output
+	command.Stderr = output
+	if err := command.Start(); err != nil {
+		return nil, err
+	}
+	return command, nil
+}
+
 func terminateJobWhenProcessExits(job windows.Handle, pid int) {
 	handle, err := windows.OpenProcess(windows.SYNCHRONIZE, false, uint32(pid))
 	if err != nil {
@@ -130,7 +159,86 @@ func terminateJobWhenProcessExits(job windows.Handle, pid int) {
 	}
 	defer windows.CloseHandle(handle)
 	_, _ = windows.WaitForSingleObject(handle, windows.INFINITE)
+	killWindowsCommand(job, pid)
+}
+
+func killWindowsCommand(job windows.Handle, pid int) {
+	children := processDescendants(pid)
 	_ = windows.TerminateJobObject(job, 1)
+	for _, child := range children {
+		terminatePID(child)
+	}
+	terminatePID(pid)
+}
+
+func terminatePID(pid int) {
+	if pid <= 0 {
+		return
+	}
+	handle, err := windows.OpenProcess(windows.PROCESS_TERMINATE, false, uint32(pid))
+	if err != nil {
+		return
+	}
+	defer windows.CloseHandle(handle)
+	_ = windows.TerminateProcess(handle, 1)
+}
+
+func processDescendants(root int) []int {
+	if root <= 0 {
+		return nil
+	}
+	parents, err := processParents()
+	if err != nil {
+		return nil
+	}
+	rootID := uint32(root)
+	var children []int
+	for pid := range parents {
+		if pid == rootID {
+			continue
+		}
+		if hasAncestor(parents, pid, rootID) {
+			children = append(children, int(pid))
+		}
+	}
+	return children
+}
+
+func processParents() (map[uint32]uint32, error) {
+	snapshot, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPPROCESS, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer windows.CloseHandle(snapshot)
+
+	entry := windows.ProcessEntry32{Size: uint32(unsafe.Sizeof(windows.ProcessEntry32{}))}
+	if err := windows.Process32First(snapshot, &entry); err != nil {
+		return nil, err
+	}
+	parents := make(map[uint32]uint32)
+	for {
+		parents[entry.ProcessID] = entry.ParentProcessID
+		if err := windows.Process32Next(snapshot, &entry); err != nil {
+			break
+		}
+	}
+	return parents, nil
+}
+
+func hasAncestor(parents map[uint32]uint32, pid, ancestor uint32) bool {
+	seen := map[uint32]bool{}
+	for pid != 0 && !seen[pid] {
+		if pid == ancestor {
+			return true
+		}
+		seen[pid] = true
+		next, ok := parents[pid]
+		if !ok || next == pid {
+			return false
+		}
+		pid = next
+	}
+	return false
 }
 
 func lookPowerShell() (string, error) {
@@ -165,6 +273,19 @@ func newKillJob() (windows.Handle, error) {
 	return job, nil
 }
 
+func assignAndResume(job windows.Handle, process *os.Process) error {
+	if process == nil {
+		return errors.New("command process is nil")
+	}
+	if err := assignPIDToJob(job, process.Pid); err != nil {
+		return fmt.Errorf("confine command process: %w", err)
+	}
+	if err := resumeProcess(process.Pid); err != nil {
+		return fmt.Errorf("resume command process: %w", err)
+	}
+	return nil
+}
+
 func assignPIDToJob(job windows.Handle, pid int) error {
 	handle, err := windows.OpenProcess(windows.PROCESS_SET_QUOTA|windows.PROCESS_TERMINATE, false, uint32(pid))
 	if err != nil {
@@ -172,6 +293,21 @@ func assignPIDToJob(job windows.Handle, pid int) error {
 	}
 	defer windows.CloseHandle(handle)
 	return windows.AssignProcessToJobObject(job, handle)
+}
+
+var ntResumeProcess = windows.NewLazySystemDLL("ntdll.dll").NewProc("NtResumeProcess")
+
+func resumeProcess(pid int) error {
+	handle, err := windows.OpenProcess(windows.PROCESS_SUSPEND_RESUME, false, uint32(pid))
+	if err != nil {
+		return err
+	}
+	defer windows.CloseHandle(handle)
+	status, _, _ := ntResumeProcess.Call(uintptr(handle))
+	if status != 0 {
+		return fmt.Errorf("NtResumeProcess status 0x%x", status)
+	}
+	return nil
 }
 
 func signaledExitLabel(*exec.ExitError) string {
