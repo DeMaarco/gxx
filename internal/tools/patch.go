@@ -59,9 +59,9 @@ func (r *Registry) applyPatchSpec() toolSpec {
 			Description: `Create, update, or delete workspace files in one approved transaction.
 Pass changes as an array of objects:
 - action add: create a new file; content is the full file; fails if the path exists.
-- action update: replace old_text with new_text. Prefer unique old_text. A long unique string (for example a URL) is replaced everywhere it appears. Multiple updates to the same path apply in order.
-- action delete: remove an existing file.
-Do not mix add, update, and delete on the same path. Prefer one apply_patch call for related files.`,
+- action update: edit an existing file in place. Prefer old_text/new_text for a unique span. Pass content to rewrite the whole file. Never delete a file and add it again to edit it.
+- action delete: remove an existing file that should stay gone.
+Multiple updates to the same path apply in order. Prefer one apply_patch call for related files.`,
 			ReadOnly: false,
 			Parameters: objectSchema(map[string]any{
 				"changes": map[string]any{
@@ -77,15 +77,15 @@ Do not mix add, update, and delete on the same path. Prefer one apply_patch call
 						},
 						"content": map[string]any{
 							"type":        []string{"string", "null"},
-							"description": "Full file contents for add, or null otherwise.",
+							"description": "Full file contents for add, or to rewrite a file on update. Null otherwise.",
 						},
 						"old_text": map[string]any{
 							"type":        []string{"string", "null"},
-							"description": "Exact text to replace for update, or null otherwise. Prefer unique text; long unique strings replace every copy.",
+							"description": "Exact text to replace for a surgical update, or null for a full-file rewrite. Prefer unique text; long unique strings replace every copy.",
 						},
 						"new_text": map[string]any{
 							"type":        []string{"string", "null"},
-							"description": "Replacement text for update, or null otherwise.",
+							"description": "Replacement text for a surgical update, or null otherwise.",
 						},
 					}, "path", "action", "content", "old_text", "new_text"),
 					"description": "File operations to apply together.",
@@ -215,20 +215,25 @@ func (r *Registry) applyPatchChange(
 	}
 
 	work, seen := byPath[clean]
-	if seen && work.action != action {
+	if seen && work.action != action && !(work.action == "delete" && action == "add") {
 		return nil, fmt.Errorf("cannot mix %s and %s on %s", work.action, action, clean)
 	}
 
 	switch action {
 	case "add":
-		if seen {
-			return nil, fmt.Errorf("duplicate add for %s", clean)
-		}
 		if change.Content == nil {
 			return nil, fmt.Errorf("add requires content for %s", clean)
 		}
 		if len(*change.Content) > maxWriteBytes {
 			return nil, fmt.Errorf("content exceeds %d bytes", maxWriteBytes)
+		}
+		if seen && work.action == "delete" {
+			work.action = "update"
+			work.after = []byte(*change.Content)
+			return work, nil
+		}
+		if seen {
+			return nil, fmt.Errorf("duplicate add for %s", clean)
 		}
 		if _, err := r.workspace.Lstat(clean); err == nil {
 			return nil, fmt.Errorf("cannot add existing path %q", clean)
@@ -248,12 +253,6 @@ func (r *Registry) applyPatchChange(
 		if change.NewText != nil {
 			newText = *change.NewText
 		}
-		if oldText == "" {
-			return nil, fmt.Errorf("update requires old_text for %s", clean)
-		}
-		if len(oldText)+len(newText) > maxEditableFile {
-			return nil, errors.New("edit payload is too large")
-		}
 		if !seen {
 			before, err := r.workspace.ReadRegularFile(clean, maxEditableFile)
 			if err != nil {
@@ -262,6 +261,19 @@ func (r *Registry) applyPatchChange(
 			work = &patchFileWork{path: clean, action: "update", before: before, after: append([]byte(nil), before...)}
 			byPath[clean] = work
 			*works = append(*works, work)
+		}
+		if oldText == "" {
+			if change.Content == nil {
+				return nil, fmt.Errorf("update requires old_text or content for %s", clean)
+			}
+			if len(*change.Content) > maxWriteBytes {
+				return nil, fmt.Errorf("content exceeds %d bytes", maxWriteBytes)
+			}
+			work.after = []byte(*change.Content)
+			break
+		}
+		if len(oldText)+len(newText) > maxEditableFile {
+			return nil, errors.New("edit payload is too large")
 		}
 		count, needle := matchOldText(work.after, []byte(oldText))
 		if count == 0 {

@@ -121,7 +121,7 @@ func writeSessionUsage(output *strings.Builder, color bool, report agent.UsageRe
 		fmt.Fprintf(output, "%s  %s\n", paint(color, dim, "session"), paint(color, dim, "idle"))
 		return
 	}
-	writeUsageSection(output, color, "session", []usageRow{
+	rows := []usageRow{
 		{label: "requests", value: formatCount(report.SessionRequests)},
 		{label: "input", value: formatCount(report.Session.InputTokens)},
 		{label: "cached", value: formatCount(report.Session.CachedTokens)},
@@ -129,7 +129,11 @@ func writeSessionUsage(output *strings.Builder, color bool, report agent.UsageRe
 		{label: "output", value: formatCount(report.Session.OutputTokens)},
 		{label: "reasoning", value: formatCount(report.Session.ReasoningTokens)},
 		{label: "total", value: formatCount(report.Session.TotalTokens), tone: cyan},
-	})
+	}
+	if report.HasSessionCost {
+		rows = append(rows, usageRow{label: "cost", value: formatCostUSD(report.SessionCostUSD), tone: cyan})
+	}
+	writeUsageSection(output, color, "session", rows)
 }
 
 func writeMonthlyAccount(output *strings.Builder, color bool, account agent.AccountUsage) {
@@ -330,6 +334,17 @@ func formatQuota(remaining, limit int64, reset string) string {
 
 func formatUSD(value float64) string {
 	return fmt.Sprintf("$%.2f", value)
+}
+
+func formatCostUSD(value float64) string {
+	switch {
+	case value < 0.01:
+		return fmt.Sprintf("$%.4f", value)
+	case value < 1:
+		return fmt.Sprintf("$%.3f", value)
+	default:
+		return fmt.Sprintf("$%.2f", value)
+	}
 }
 
 func formatCount(n int64) string {

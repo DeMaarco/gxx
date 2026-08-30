@@ -59,6 +59,7 @@ var (
 	FormatToolDuration  = formatToolDuration
 	FormatCompactTokens = formatCompactTokens
 	FormatTurnUsage     = formatTurnUsage
+	FormatCostUSD       = formatCostUSD
 	HoldModelText       = holdModelText
 	FormatMarkdown      = formatMarkdown
 	ToolHint            = toolHint

@@ -36,6 +36,8 @@ type Options struct {
 	MaxSearchResult int
 	ParallelReads   int
 	CommandTimeout  time.Duration
+	ImageTimeout    time.Duration
+	GenerateImage   func(context.Context, ImageRequest) (ImageResult, error)
 }
 
 type toolSpec struct {
@@ -54,6 +56,8 @@ type Registry struct {
 	maxSearchResults int
 	parallelReads    int
 	commandTimeout   time.Duration
+	imageTimeout     time.Duration
+	generateImage    func(context.Context, ImageRequest) (ImageResult, error)
 	specs            map[string]toolSpec
 	plan             atomic.Bool
 }
@@ -66,6 +70,8 @@ func NewRegistry(ws *workspace.Workspace, approver approval.Approver, options Op
 		maxSearchResults: max(options.MaxSearchResult, 1),
 		parallelReads:    max(options.ParallelReads, 1),
 		commandTimeout:   options.CommandTimeout,
+		imageTimeout:     options.ImageTimeout,
+		generateImage:    options.GenerateImage,
 		specs:            make(map[string]toolSpec),
 	}
 	for _, spec := range []toolSpec{
@@ -76,6 +82,7 @@ func NewRegistry(ws *workspace.Workspace, approver approval.Approver, options Op
 		r.gitDiffSpec(),
 		r.gitLogSpec(),
 		r.applyPatchSpec(),
+		r.generateImageSpec(),
 		r.runCommandSpec(),
 	} {
 		r.specs[spec.definition.Name] = spec
@@ -95,6 +102,10 @@ func (r *Registry) SetMaxResultBytes(n int) {
 	r.maxResultBytes = max(n, 1024)
 }
 
+func (r *Registry) SetGenerateImage(fn func(context.Context, ImageRequest) (ImageResult, error)) {
+	r.generateImage = fn
+}
+
 func (r *Registry) Definitions() []agent.ToolDefinition {
 	order := []string{
 		"list_files",
@@ -104,6 +115,7 @@ func (r *Registry) Definitions() []agent.ToolDefinition {
 		"git_diff",
 		"git_log",
 		"apply_patch",
+		"generate_image",
 		"run_command",
 	}
 	plan := r.plan.Load()

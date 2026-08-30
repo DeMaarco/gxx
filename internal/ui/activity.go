@@ -61,6 +61,8 @@ func toolVerb(name string) string {
 		return "git log"
 	case "apply_patch":
 		return "writing"
+	case "generate_image":
+		return "generating"
 	case "run_command":
 		return "running"
 	case "":
@@ -72,7 +74,7 @@ func toolVerb(name string) string {
 
 func verbColor(name string) string {
 	switch strings.TrimSpace(name) {
-	case "apply_patch":
+	case "apply_patch", "generate_image":
 		return yellow
 	case "run_command":
 		return magenta

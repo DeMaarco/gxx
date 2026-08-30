@@ -156,6 +156,41 @@ func TestApplyTransactionRemovesCreatedParentsOnFailure(t *testing.T) {
 	assertNoTransactionArtifacts(t, root)
 }
 
+func TestApplyTransactionRestoresUpdateWhenLaterChangeFails(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "keep.txt"), []byte("before\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(root, "blocked"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ws, err := workspace.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ws.Close()
+
+	err = ws.ApplyTransaction([]workspace.FileChange{
+		{
+			Path:           "keep.txt",
+			Data:           []byte("after\n"),
+			Expected:       []byte("before\n"),
+			ExpectedExists: true,
+		},
+		{
+			Path:           "blocked",
+			Data:           []byte("not-a-file\n"),
+			Expected:       []byte("x"),
+			ExpectedExists: true,
+		},
+	})
+	if err == nil {
+		t.Fatal("ApplyTransaction() succeeded, want later-change failure")
+	}
+	assertFileContents(t, filepath.Join(root, "keep.txt"), "before\n")
+	assertNoTransactionArtifacts(t, root)
+}
+
 func TestApplyTransactionRejectsNestedTargetPaths(t *testing.T) {
 	root := t.TempDir()
 	ws, err := workspace.New(root)

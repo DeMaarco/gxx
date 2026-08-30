@@ -21,6 +21,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -173,6 +174,60 @@ func TestRunREPLShowsUsage(t *testing.T) {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("output = %q, want %q", text, expected)
 		}
+	}
+}
+
+type pricedModel struct{}
+
+func (pricedModel) Respond(
+	_ context.Context,
+	_ agent.ModelInput,
+	_ []agent.ToolDefinition,
+	emit agent.EmitFunc,
+) (agent.ModelResponse, error) {
+	usage := agent.Usage{InputTokens: 8100, OutputTokens: 4300, TotalTokens: 12400}
+	agent.Emit(emit, agent.Event{Kind: agent.EventTextDelta, Text: "world"})
+	agent.Emit(emit, agent.Event{Kind: agent.EventUsage, Usage: usage})
+	return agent.ModelResponse{Text: "world", Usage: usage}, nil
+}
+
+func (pricedModel) Reset()                               {}
+func (pricedModel) AbsorbToolResults([]agent.ToolResult) {}
+func (pricedModel) CloseOpenToolCalls(string)            {}
+
+func TestRunREPLShowsTurnCostAfterPrompt(t *testing.T) {
+	var refreshed atomic.Int32
+	loop := &agent.Loop{Model: pricedModel{}, Executor: emptyExecutor{}, MaxSteps: 2}
+	input := bufio.NewReader(strings.NewReader("hello\n/exit\n"))
+	var output bytes.Buffer
+
+	err := ui.RunREPL(
+		context.Background(),
+		loop,
+		input,
+		ui.NewRenderer(&output),
+		&output,
+		ui.REPLSettings{
+			Version:        "0.0.1",
+			Model:          "gpt-5.6-sol",
+			PermissionMode: config.PermissionAsk,
+			RefreshPricing: func(context.Context) { refreshed.Add(1) },
+			QuoteCost: func(usage agent.Usage) (float64, bool) {
+				if usage.TotalTokens == 0 {
+					return 0, false
+				}
+				return 0.042, true
+			},
+		},
+	)
+	if err != nil {
+		t.Fatalf("RunREPL() error = %v", err)
+	}
+	if refreshed.Load() < 1 {
+		t.Fatalf("pricing refresh count = %d, want at least one after the prompt", refreshed.Load())
+	}
+	if !strings.Contains(output.String(), "$0.042") {
+		t.Fatalf("output = %q, want turn cost", output.String())
 	}
 }
 

@@ -649,18 +649,18 @@ func splitHeld(value string) (emit, hold string) {
 }
 
 var leakToolNames = []string{
-	"apply_patch", "read_file", "list_files", "search_files", "run_command",
+	"apply_patch", "generate_image", "read_file", "list_files", "search_files", "run_command",
 	"functions", "multi_tool_use", "parallel",
 }
 
 var leakMarkers = []string{
-	"to=functions", "to=multi_tool_use", "to=apply_patch", "to=read_file",
+	"to=functions", "to=multi_tool_use", "to=apply_patch", "to=generate_image", "to=read_file",
 	"to=list_files", "to=search_files", "to=run_command", "to=parallel",
 	"<|recipient|>", "<|content|>", "<|constrain|>",
 	"<function=", "</function>",
-	"functions.apply_patch", "functions.read_file", "functions.list_files",
+	"functions.apply_patch", "functions.generate_image", "functions.read_file", "functions.list_files",
 	"functions.search_files", "functions.run_command",
-	"recipient=functions", "recipient=apply_patch", "recipient=read_file",
+	"recipient=functions", "recipient=apply_patch", "recipient=generate_image", "recipient=read_file",
 	"```tool", "```json",
 }
 

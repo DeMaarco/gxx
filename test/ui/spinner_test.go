@@ -308,6 +308,32 @@ func TestLiveRendererShowsUsageOnSpinnerAndFinish(t *testing.T) {
 	}
 }
 
+func TestLiveRendererShowsUpdatedCostOnFinish(t *testing.T) {
+	var output bytes.Buffer
+	renderer := ui.NewRenderer(&output)
+	renderer.SetQuote(func(usage agent.Usage) (float64, bool) {
+		if usage.TotalTokens == 0 {
+			return 0, false
+		}
+		return 0.042, true
+	})
+
+	renderer.StartTurn()
+	renderer.Event(agent.Event{
+		Kind: agent.EventUsage,
+		Usage: agent.Usage{
+			InputTokens:  8100,
+			OutputTokens: 4300,
+			TotalTokens:  12400,
+		},
+	})
+	renderer.Event(agent.Event{Kind: agent.EventTextDelta, Text: "ok"})
+	renderer.Finish("")
+	if !strings.Contains(output.String(), "12.4k tok · 8.1k in · 4.3k out · $0.042") {
+		t.Fatalf("finish = %q, want priced turn footer", output.String())
+	}
+}
+
 func TestRendererGroupsSequentialReadsAcrossThinking(t *testing.T) {
 	var output bytes.Buffer
 	renderer := ui.NewRenderer(&output)

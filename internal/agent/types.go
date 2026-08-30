@@ -134,6 +134,8 @@ type UsageReport struct {
 	Source          string       `json:"source,omitempty"`
 	Session         Usage        `json:"session"`
 	SessionRequests int64        `json:"session_requests"`
+	SessionCostUSD  float64      `json:"session_cost_usd,omitempty"`
+	HasSessionCost  bool         `json:"has_session_cost,omitempty"`
 	RateLimit       RateLimit    `json:"rate_limit"`
 	Account         AccountUsage `json:"account"`
 }

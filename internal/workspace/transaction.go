@@ -24,7 +24,6 @@ import (
 )
 
 // FileChange describes one file in an all-or-nothing workspace transaction.
-// Expected is compared after the original path is atomically moved aside.
 type FileChange struct {
 	Path           string
 	Data           []byte
@@ -35,17 +34,15 @@ type FileChange struct {
 
 type stagedFileChange struct {
 	FileChange
-	cleanPath  string
-	mode       os.FileMode
-	stagePath  string
-	backupPath string
-	installed  bool
-	backedUp   bool
+	cleanPath string
+	mode      os.FileMode
+	stagePath string
+	applied   bool
 }
 
-// ApplyTransaction stages every new file, atomically captures existing files,
-// verifies their exact approved snapshots, and then installs all results. Any
-// failure before completion restores captured originals.
+// ApplyTransaction stages new contents, re-checks approved snapshots in
+// place, then installs every result. Updates replace the existing file
+// without moving it aside first. Any failure restores prior contents.
 func (w *Workspace) ApplyTransaction(changes []FileChange) error {
 	if len(changes) == 0 {
 		return errors.New("transaction contains no file changes")
@@ -117,22 +114,11 @@ func (w *Workspace) ApplyTransaction(changes []FileChange) error {
 			return fail(fmt.Errorf("prepare parent for %s: %w", clean, err))
 		}
 
-		stagePath, file, err := w.createTemp(parent, mode)
+		stagePath, err := w.writeStageFile(parent, mode, change.Data)
 		if err != nil {
 			return fail(fmt.Errorf("stage %s: %w", clean, err))
 		}
 		staged[index].stagePath = stagePath
-		if err := file.Chmod(mode); err != nil {
-			_ = file.Close()
-			return fail(fmt.Errorf("set staged mode for %s: %w", clean, err))
-		}
-		if _, err := file.Write(change.Data); err != nil {
-			_ = file.Close()
-			return fail(fmt.Errorf("stage %s: %w", clean, err))
-		}
-		if err := file.Close(); err != nil {
-			return fail(fmt.Errorf("close staged %s: %w", clean, err))
-		}
 	}
 
 	for index := range staged {
@@ -140,79 +126,62 @@ func (w *Workspace) ApplyTransaction(changes []FileChange) error {
 		if !change.ExpectedExists {
 			continue
 		}
-		parent := filepath.Dir(change.cleanPath)
-		backupPath, placeholder, err := w.createTemp(parent, change.mode)
-		if err != nil {
-			return fail(fmt.Errorf("reserve backup for %s: %w", change.cleanPath, err))
-		}
-		if err := placeholder.Close(); err != nil {
-			_ = w.guard.Remove(backupPath)
-			return fail(fmt.Errorf("close backup placeholder for %s: %w", change.cleanPath, err))
-		}
-		change.backupPath = backupPath
-		if err := w.replace(change.cleanPath, backupPath); err != nil {
-			_ = w.guard.Remove(backupPath)
-			change.backupPath = ""
-			return fail(fmt.Errorf("capture original %s: %w", change.cleanPath, err))
-		}
-		change.backedUp = true
-
-		capturedInfo, err := w.guard.Lstat(backupPath)
-		if err != nil {
-			return fail(fmt.Errorf("inspect captured %s: %w", change.cleanPath, err))
-		}
-		if capturedInfo.Size() != int64(len(change.Expected)) {
-			return fail(fmt.Errorf("%s changed after approval; patch was not applied", change.cleanPath))
-		}
-		captured, err := w.ReadRegularFile(
-			backupPath,
-			int64(len(change.Expected))+1,
-		)
-		if err != nil || !bytes.Equal(captured, change.Expected) {
-			if err != nil {
-				return fail(fmt.Errorf("verify captured %s: %w", change.cleanPath, err))
+		if _, err := w.validateTransactionSnapshot(change.cleanPath, change.FileChange); err != nil {
+			if strings.Contains(err.Error(), "changed before transaction") {
+				return fail(fmt.Errorf("%s changed after approval; patch was not applied", change.cleanPath))
 			}
-			return fail(fmt.Errorf("%s changed after approval; patch was not applied", change.cleanPath))
+			return fail(err)
 		}
 	}
 
 	for index := range staged {
 		change := &staged[index]
 		if change.Delete {
+			if err := w.guard.Remove(change.cleanPath); err != nil {
+				return fail(fmt.Errorf("delete %s: %w", change.cleanPath, err))
+			}
+			change.applied = true
 			continue
 		}
-		if _, err := w.guard.Lstat(change.cleanPath); err == nil {
-			return fail(fmt.Errorf("%s appeared during patch transaction", change.cleanPath))
-		} else if !errors.Is(err, os.ErrNotExist) {
-			return fail(fmt.Errorf("inspect transaction target %s: %w", change.cleanPath, err))
+		if !change.ExpectedExists {
+			if _, err := w.guard.Lstat(change.cleanPath); err == nil {
+				return fail(fmt.Errorf("%s appeared during patch transaction", change.cleanPath))
+			} else if !errors.Is(err, os.ErrNotExist) {
+				return fail(fmt.Errorf("inspect transaction target %s: %w", change.cleanPath, err))
+			}
 		}
 		if err := w.replace(change.stagePath, change.cleanPath); err != nil {
 			return fail(fmt.Errorf("install %s: %w", change.cleanPath, err))
 		}
 		change.stagePath = ""
-		change.installed = true
-	}
-
-	var cleanupErrors []string
-	for index := range staged {
-		change := &staged[index]
-		if change.backupPath == "" {
-			continue
-		}
-		if err := w.guard.Remove(change.backupPath); err != nil {
-			cleanupErrors = append(cleanupErrors, fmt.Sprintf("%s: %v", change.cleanPath, err))
-			continue
-		}
-		change.backupPath = ""
-		change.backedUp = false
-	}
-	if len(cleanupErrors) > 0 {
-		return fmt.Errorf(
-			"patch applied but backup cleanup failed: %s",
-			strings.Join(cleanupErrors, "; "),
-		)
+		change.applied = true
 	}
 	return nil
+}
+
+func (w *Workspace) writeStageFile(parent string, mode os.FileMode, data []byte) (string, error) {
+	if mode == 0 {
+		mode = 0o644
+	}
+	stagePath, file, err := w.createTemp(parent, mode)
+	if err != nil {
+		return "", err
+	}
+	if err := file.Chmod(mode); err != nil {
+		_ = file.Close()
+		_ = w.guard.Remove(stagePath)
+		return "", fmt.Errorf("set staged mode: %w", err)
+	}
+	if _, err := file.Write(data); err != nil {
+		_ = file.Close()
+		_ = w.guard.Remove(stagePath)
+		return "", err
+	}
+	if err := file.Close(); err != nil {
+		_ = w.guard.Remove(stagePath)
+		return "", err
+	}
+	return stagePath, nil
 }
 
 func (w *Workspace) validateTransactionSnapshot(
@@ -313,14 +282,13 @@ func (w *Workspace) cleanupTransaction(
 
 	for index := len(changes) - 1; index >= 0; index-- {
 		change := &changes[index]
-		if change.backedUp && change.backupPath != "" {
-			record("restore", change.cleanPath, w.replace(change.backupPath, change.cleanPath))
-			change.backedUp = false
-			change.backupPath = ""
-			change.installed = false
-		} else if change.installed {
-			record("remove installed", change.cleanPath, w.guard.Remove(change.cleanPath))
-			change.installed = false
+		if change.applied {
+			if change.ExpectedExists {
+				record("restore", change.cleanPath, w.restoreFile(change.cleanPath, change.Expected, change.mode))
+			} else {
+				record("remove installed", change.cleanPath, w.guard.Remove(change.cleanPath))
+			}
+			change.applied = false
 		}
 		if change.stagePath != "" {
 			record("remove staged", change.stagePath, w.guard.Remove(change.stagePath))
@@ -333,6 +301,19 @@ func (w *Workspace) cleanupTransaction(
 	}
 	if len(cleanupErrors) > 0 {
 		return errors.New(strings.Join(cleanupErrors, "; "))
+	}
+	return nil
+}
+
+func (w *Workspace) restoreFile(path string, data []byte, mode os.FileMode) error {
+	parent := filepath.Dir(path)
+	stagePath, err := w.writeStageFile(parent, mode, data)
+	if err != nil {
+		return err
+	}
+	if err := w.replace(stagePath, path); err != nil {
+		_ = w.guard.Remove(stagePath)
+		return err
 	}
 	return nil
 }

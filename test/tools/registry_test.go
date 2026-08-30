@@ -778,10 +778,14 @@ func TestPlanModeHidesWritesAndRejectsMutations(t *testing.T) {
 			}},
 		}),
 		toolCall("run", "run_command", map[string]any{"command": "echo hi", "timeout_seconds": nil}),
+		toolCall("img", "generate_image", map[string]any{
+			"prompt": "x", "path": "out.png", "model": nil, "size": nil, "quality": nil,
+			"output_format": nil, "background": nil,
+		}),
 		toolCall("read", "read_file", map[string]any{"path": "main.go", "offset_line": 1, "limit_lines": 4}),
 	}, nil)
-	if len(results) != 3 {
-		t.Fatalf("len(results) = %d, want 3", len(results))
+	if len(results) != 4 {
+		t.Fatalf("len(results) = %d, want 4", len(results))
 	}
 	if !results[0].IsError || !strings.Contains(results[0].Output, "plan mode") {
 		t.Fatalf("write in plan mode = %#v", results[0])
@@ -789,11 +793,17 @@ func TestPlanModeHidesWritesAndRejectsMutations(t *testing.T) {
 	if !results[1].IsError || !strings.Contains(results[1].Output, "plan mode") {
 		t.Fatalf("command in plan mode = %#v", results[1])
 	}
-	if results[2].IsError || !strings.Contains(results[2].Output, "package main") {
-		t.Fatalf("read in plan mode = %#v", results[2])
+	if !results[2].IsError || !strings.Contains(results[2].Output, "plan mode") {
+		t.Fatalf("image in plan mode = %#v", results[2])
+	}
+	if results[3].IsError || !strings.Contains(results[3].Output, "package main") {
+		t.Fatalf("read in plan mode = %#v", results[3])
 	}
 	if _, err := os.Stat(filepath.Join(root, "created.go")); !os.IsNotExist(err) {
 		t.Fatalf("plan mode created a file: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "out.png")); !os.IsNotExist(err) {
+		t.Fatalf("plan mode wrote an image: %v", err)
 	}
 	approver.mu.Lock()
 	actions := len(approver.actions)
@@ -804,13 +814,20 @@ func TestPlanModeHidesWritesAndRejectsMutations(t *testing.T) {
 
 	registry.SetPlan(false)
 	foundPatch := false
+	foundImage := false
 	for _, def := range registry.Definitions() {
 		if def.Name == "apply_patch" {
 			foundPatch = true
 		}
+		if def.Name == "generate_image" {
+			foundImage = true
+		}
 	}
 	if !foundPatch {
 		t.Fatal("agent mode hid apply_patch")
+	}
+	if !foundImage {
+		t.Fatal("agent mode hid generate_image")
 	}
 }
 
@@ -992,6 +1009,51 @@ func TestApplyPatchMatchesCRLFOldText(t *testing.T) {
 		t.Fatalf("apply_patch failed: %s", result.Output)
 	}
 	assertToolFileContents(t, filepath.Join(root, "file.txt"), "ALPHA\r\nBETA\r\n")
+}
+
+func TestApplyPatchRewritesExistingFileInPlace(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, root, "file.txt", "before\nkeep\n")
+	registry := newTestRegistry(t, root, &staticApprover{approved: true}, tools.Options{
+		MaxResultBytes:  4096,
+		MaxSearchResult: 10,
+		ParallelReads:   1,
+		CommandTimeout:  time.Second,
+	})
+	result := registry.Execute(context.Background(), []agent.ToolCall{
+		toolCall("patch", "apply_patch", map[string]any{
+			"changes": []map[string]any{{
+				"path": "file.txt", "action": "update", "content": "rewritten\n",
+			}},
+		}),
+	}, nil)[0]
+	if result.IsError {
+		t.Fatalf("apply_patch failed: %s", result.Output)
+	}
+	assertToolFileContents(t, filepath.Join(root, "file.txt"), "rewritten\n")
+}
+
+func TestApplyPatchDeleteThenAddRewritesInPlace(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, root, "file.txt", "before\n")
+	registry := newTestRegistry(t, root, &staticApprover{approved: true}, tools.Options{
+		MaxResultBytes:  4096,
+		MaxSearchResult: 10,
+		ParallelReads:   1,
+		CommandTimeout:  time.Second,
+	})
+	result := registry.Execute(context.Background(), []agent.ToolCall{
+		toolCall("patch", "apply_patch", map[string]any{
+			"changes": []map[string]any{
+				{"path": "file.txt", "action": "delete"},
+				{"path": "file.txt", "action": "add", "content": "after\n"},
+			},
+		}),
+	}, nil)[0]
+	if result.IsError {
+		t.Fatalf("apply_patch failed: %s", result.Output)
+	}
+	assertToolFileContents(t, filepath.Join(root, "file.txt"), "after\n")
 }
 
 func TestApplyPatchRejectsMixedActionsOnSamePath(t *testing.T) {

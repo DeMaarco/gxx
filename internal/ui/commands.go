@@ -33,7 +33,7 @@ var slashCommands = []slashCommand{
 	{name: "/login", help: "Connect one account: openai, claude, or api"},
 	{name: "/logout", help: "Clear the connected account"},
 	{name: "/context", help: "Show context window occupancy"},
-	{name: "/usage", help: "Show token usage and remaining API quota"},
+	{name: "/usage", help: "Show token usage, estimated cost, and remaining API quota"},
 	{name: "/clear", help: "Clear in-memory conversation"},
 	{name: "/exit", help: "Exit gxx (Ctrl+C twice)"},
 }

@@ -35,6 +35,8 @@ func TestFormatUsageShowsSessionAccountAndRemainingQuota(t *testing.T) {
 			TotalTokens:      24650,
 		},
 		SessionRequests: 3,
+		SessionCostUSD:  1.23,
+		HasSessionCost:  true,
 		RateLimit: agent.RateLimit{
 			Known:             true,
 			RequestsLimit:     5000,
@@ -67,6 +69,7 @@ func TestFormatUsageShowsSessionAccountAndRemainingQuota(t *testing.T) {
 		"output       4,210",
 		"reasoning    8,100",
 		"total        24,650",
+		"cost         $1.23",
 		"account August 2026",
 		"requests     142",
 		"input        1,200,000",
@@ -111,6 +114,22 @@ func TestFormatTurnUsageOmitsZeroTotals(t *testing.T) {
 	got := ui.FormatTurnUsage(false, agent.Usage{InputTokens: 8100, OutputTokens: 4300, TotalTokens: 12400})
 	if got != "12.4k tok · 8.1k in · 4.3k out" {
 		t.Fatalf("turn usage = %q", got)
+	}
+}
+
+func TestFormatCostUSD(t *testing.T) {
+	tests := []struct {
+		n    float64
+		want string
+	}{
+		{n: 0.0042, want: "$0.0042"},
+		{n: 0.042, want: "$0.042"},
+		{n: 1.2, want: "$1.20"},
+	}
+	for _, test := range tests {
+		if got := ui.FormatCostUSD(test.n); got != test.want {
+			t.Fatalf("formatCostUSD(%v) = %q, want %q", test.n, got, test.want)
+		}
 	}
 }
 

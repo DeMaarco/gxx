@@ -60,6 +60,8 @@ type REPLSettings struct {
 	FetchUsage          func(context.Context) (agent.UsageReport, error)
 	FetchContext        func() agent.ContextUsage
 	RefreshInstructions func()
+	RefreshPricing      func(context.Context)
+	QuoteCost           func(agent.Usage) (float64, bool)
 	SyncSession         func(REPLSettings) error
 	SetPlan             func(bool) error
 	SetEco              func(int) error
@@ -91,6 +93,7 @@ type Renderer struct {
 	runeHold   string
 	md         markdownState
 	usage      agent.Usage
+	quote      func(agent.Usage) (float64, bool)
 
 	animMu   sync.Mutex
 	animStop chan struct{}
@@ -108,6 +111,12 @@ func NewRendererWithColor(writer io.Writer, color bool) *Renderer {
 		live:      liveOutput(writer),
 		spinEvery: 80 * time.Millisecond,
 	}
+}
+
+func (r *Renderer) SetQuote(quote func(agent.Usage) (float64, bool)) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.quote = quote
 }
 
 func (r *Renderer) StartTurn() {
@@ -462,6 +471,11 @@ func (r *Renderer) Finish(answer string) {
 	r.flushMarkdownLocked()
 	r.endTextLine()
 	if line := formatTurnUsage(r.color, r.usage); line != "" {
+		if r.quote != nil {
+			if cost, ok := r.quote(r.usage); ok {
+				line += paint(r.color, dim, " · ") + paint(r.color, dim, formatCostUSD(cost))
+			}
+		}
 		_, _ = fmt.Fprintln(r.writer, line)
 	}
 }
@@ -485,9 +499,15 @@ func RunREPL(
 		fmt.Fprintln(writer, paint(settings.Color, dim, hint))
 		fmt.Fprintln(writer)
 	}
+	if settings.QuoteCost != nil {
+		renderer.SetQuote(settings.QuoteCost)
+	}
 
 	sessionCtx, cancelSession := context.WithCancel(ctx)
 	defer cancelSession()
+	if settings.RefreshPricing != nil {
+		go settings.RefreshPricing(sessionCtx)
+	}
 	interrupts := make(chan os.Signal, 1)
 	signal.Notify(interrupts, os.Interrupt)
 	defer signal.Stop(interrupts)
@@ -644,6 +664,9 @@ func runREPLTurn(
 	}
 	renderer.StartTurn()
 	result, err := loop.Run(turnCtx, prompt, renderer.Event)
+	if settings.RefreshPricing != nil {
+		settings.RefreshPricing(turnCtx)
+	}
 	renderer.Finish(result.Answer)
 	finishTurn()
 	if sessionCtx.Err() != nil {
@@ -897,6 +920,15 @@ func showUsage(ctx context.Context, writer io.Writer, settings REPLSettings) err
 	report, err := settings.FetchUsage(ctx)
 	if err != nil {
 		return err
+	}
+	if settings.RefreshPricing != nil {
+		settings.RefreshPricing(ctx)
+	}
+	if settings.QuoteCost != nil {
+		if cost, ok := settings.QuoteCost(report.Session); ok {
+			report.SessionCostUSD = cost
+			report.HasSessionCost = true
+		}
 	}
 	printUsage(writer, settings.Color, report)
 	return nil

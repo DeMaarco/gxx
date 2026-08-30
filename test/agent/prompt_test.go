@@ -49,6 +49,9 @@ func TestSystemPromptReadsOnlyBoundedWorkspaceInstructions(t *testing.T) {
 	if !strings.Contains(prompt, "make the in-scope local changes") {
 		t.Fatalf("prompt = %q, want agent instructions", prompt)
 	}
+	if !strings.Contains(prompt, "generate_image") || !strings.Contains(prompt, "gpt-image-2") {
+		t.Fatalf("prompt = %q, want image generation instructions", prompt)
+	}
 
 	if err := os.WriteFile(
 		filepath.Join(root, "AGENTS.md"),

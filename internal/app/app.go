@@ -38,12 +38,13 @@ import (
 	"gxx/internal/config"
 	"gxx/internal/models"
 	openaiProvider "gxx/internal/openai"
+	"gxx/internal/pricing"
 	"gxx/internal/tools"
 	"gxx/internal/ui"
 	"gxx/internal/workspace"
 )
 
-var Version = "0.0.14"
+var Version = "0.0.15"
 
 type runtime struct {
 	config    config.Config
@@ -63,6 +64,7 @@ type jsonResult struct {
 	Steps       int                `json:"steps"`
 	Usage       agent.Usage        `json:"usage"`
 	ToolResults []agent.ToolResult `json:"tool_results,omitempty"`
+	CostUSD     *float64           `json:"cost_usd,omitempty"`
 	Error       string             `json:"error,omitempty"`
 }
 
@@ -203,10 +205,14 @@ func runAsk(
 	var emit agent.EmitFunc
 	if !settings.json {
 		_ = ui.WriteAskHeader(stdout, replSettings(rt, stdin, stdout))
+		rt.renderer.SetQuote(func(usage agent.Usage) (float64, bool) {
+			return quoteCost(rt, usage)
+		})
 		rt.renderer.StartTurn()
 		emit = rt.renderer.Event
 	}
 	result, runErr := rt.loop.Run(ctx, prompt, emit)
+	refreshPricing(ctx)
 
 	if settings.json {
 		output := jsonResult{
@@ -215,6 +221,9 @@ func runAsk(
 			Steps:       result.Steps,
 			Usage:       result.Usage,
 			ToolResults: result.ToolResults,
+		}
+		if cost, ok := quoteCost(rt, result.Usage); ok {
+			output.CostUSD = &cost
 		}
 		if runErr != nil {
 			output.Error = runErr.Error()
@@ -257,8 +266,8 @@ func runUsage(
 			fmt.Fprintln(stdout, "Usage:")
 			fmt.Fprintln(stdout, "  gxx usage")
 			fmt.Fprintln(stdout)
-			fmt.Fprintln(stdout, "Show session token usage, organization spend for the current month,")
-			fmt.Fprintln(stdout, "remaining spend quota, and remaining rate-limit quota.")
+			fmt.Fprintln(stdout, "Show session token usage, estimated USD cost, organization spend")
+			fmt.Fprintln(stdout, "for the current month, remaining spend quota, and remaining rate-limit quota.")
 			return 0
 		}
 		fmt.Fprintf(stderr, "gxx usage: unexpected argument %q\n", args[0])
@@ -281,7 +290,17 @@ func runUsage(
 		fmt.Fprintf(stderr, "gxx usage: %v\n", err)
 		return 2
 	}
-	fmt.Fprint(stdout, ui.FormatUsage(provider.Report(ctx), ui.ColorEnabled(stdout)))
+	refreshPricing(ctx)
+	report := provider.Report(ctx)
+	if cost, ok := pricing.Default().Estimate(pricing.Query{
+		Model: settings.Model,
+		Fast:  settings.Fast,
+		Usage: report.Session,
+	}); ok {
+		report.SessionCostUSD = cost
+		report.HasSessionCost = true
+	}
+	fmt.Fprint(stdout, ui.FormatUsage(report, ui.ColorEnabled(stdout)))
 	return 0
 }
 
@@ -543,7 +562,7 @@ func newRuntimeFromConfig(
 		renderer.HoldForPrompt()
 		return renderer.ResumeAfterPrompt
 	})
-	return &runtime{
+	rt := &runtime{
 		config:    settings,
 		loop:      loop,
 		reader:    reader,
@@ -552,6 +571,33 @@ func newRuntimeFromConfig(
 		provider:  model,
 		policy:    policy,
 		registry:  registry,
+	}
+	registry.SetGenerateImage(rt.generateImage)
+	return rt, nil
+}
+
+func (rt *runtime) generateImage(ctx context.Context, req tools.ImageRequest) (tools.ImageResult, error) {
+	key := strings.TrimSpace(rt.config.APIKey)
+	if key == "" {
+		return tools.ImageResult{}, errors.New("image generation needs an OpenAI platform API key (not ChatGPT login); run /config or export OPENAI_API_KEY")
+	}
+	result, err := openaiProvider.GenerateImage(ctx, key, openaiProvider.ImageRequest{
+		Prompt:     req.Prompt,
+		Model:      req.Model,
+		Size:       req.Size,
+		Quality:    req.Quality,
+		Format:     req.Format,
+		Background: req.Background,
+	})
+	if err != nil {
+		return tools.ImageResult{}, err
+	}
+	return tools.ImageResult{
+		Data:    result.Data,
+		Model:   result.Model,
+		Size:    result.Size,
+		Quality: result.Quality,
+		Format:  result.Format,
 	}, nil
 }
 
@@ -578,6 +624,10 @@ func replSettings(rt *runtime, stdin io.Reader, stdout io.Writer) ui.REPLSetting
 		RefreshAuth:      rt.refreshAuth,
 		FetchUsage: func(ctx context.Context) (agent.UsageReport, error) {
 			return rt.provider.Report(ctx), nil
+		},
+		RefreshPricing: refreshPricing,
+		QuoteCost: func(usage agent.Usage) (float64, bool) {
+			return quoteCost(rt, usage)
 		},
 		FetchContext: func() agent.ContextUsage {
 			return rt.provider.ContextSnapshot()
@@ -851,6 +901,30 @@ func (rt *runtime) refreshAuth(settings *ui.REPLSettings) {
 	settings.ActiveAccount = rt.config.ActiveAccount()
 	settings.Model = rt.config.Model
 	settings.Models = listAccountModels(context.Background(), rt.config)
+}
+
+func refreshPricing(ctx context.Context) {
+	timeout := 5 * time.Second
+	var priceCtx context.Context
+	var cancel context.CancelFunc
+	if ctx != nil && ctx.Err() == nil {
+		priceCtx, cancel = context.WithTimeout(ctx, timeout)
+	} else {
+		priceCtx, cancel = context.WithTimeout(context.Background(), timeout)
+	}
+	defer cancel()
+	_ = pricing.Default().RefreshIfStale(priceCtx, time.Minute)
+}
+
+func quoteCost(rt *runtime, usage agent.Usage) (float64, bool) {
+	if rt == nil {
+		return 0, false
+	}
+	return pricing.Default().Estimate(pricing.Query{
+		Model: rt.config.Model,
+		Fast:  rt.config.Fast,
+		Usage: usage,
+	})
 }
 
 func (rt *runtime) applyAccountModel(account string) {

@@ -12,7 +12,7 @@
 **A small coding agent for the terminal.**
 
 Open a repo, type what you want, and it lists, searches, reads,
-inspects git, patches, and runs commands — in that folder only.
+inspects git, patches, generates images, and runs commands — in that folder only.
 
 [Install](#install) · [Quick start](#quick-start) · [REPL](#repl) · [Permissions](#permissions)
 
@@ -29,13 +29,16 @@ Inspired by [`fx`](https://github.com/vercel-labs/fx), but narrower on purpose:
 **OpenAI or Claude**, **one workspace**, **no TUI**. Just a prompt.
 
 ```text
-◆ gxx  v0.0.14
+◆ gxx  v0.0.15
 >
 gpt-5.6-sol · ask · medium · 272k · 0%
 ```
 
 The status line is model · permission mode · effort · context size · window fill.
 `auto` paints red. Context turns yellow at 70% and red at 90%.
+After each turn the footer adds estimated USD. Rates are re-read from the
+official OpenAI and Anthropic pricing pages so a price change is picked up
+without a new gxx release.
 
 ## Features
 
@@ -45,6 +48,7 @@ The status line is model · permission mode · effort · context size · window 
 | **Ask before it writes** | Default `ask` mode previews file edits and shell commands until you approve. Arrow keys choose deny, approve, or allow that exact command for the rest of the session. |
 | **Plan mode** | `Shift+Tab` for a read-only pass: inspect and design, no writes and no shell. After the plan, arrow keys choose execute, request changes, or cancel. |
 | **Git inspect** | `git_status`, `git_diff`, and `git_log` are read-only and stay inside the workspace. |
+| **Images** | `generate_image` calls GPT Image 2 (or another GPT image model) through the OpenAI Images API and writes the file in the workspace. Needs a platform API key. |
 | **One-shot CLI** | `gxx ask` for scripts and pipes. `--json` when you want a machine-readable result. |
 | **Secret-aware** | `.env`, keys, and credential paths are blocked on read, search, list, patch, git inspect, and shell commands that name them. Requests go out with `store:false`. |
 
@@ -66,7 +70,7 @@ gxx version
 Pin a release or another directory:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/DeMaarco/gxx/main/install.sh | sh -s -- --version v0.0.14
+curl -fsSL https://raw.githubusercontent.com/DeMaarco/gxx/main/install.sh | sh -s -- --version v0.0.15
 curl -fsSL https://raw.githubusercontent.com/DeMaarco/gxx/main/install.sh | sh -s -- --dir /usr/local/bin
 ```
 
@@ -81,7 +85,7 @@ That puts `gxx.exe` in `%LOCALAPPDATA%\gxx` and puts that folder first on your u
 Pin a release or another directory:
 
 ```powershell
-$env:GXX_VERSION = "v0.0.14"
+$env:GXX_VERSION = "v0.0.15"
 irm https://raw.githubusercontent.com/DeMaarco/gxx/main/install.ps1 | iex
 ```
 
@@ -144,7 +148,7 @@ Drop an `AGENTS.md` in the project root if you want extra instructions loaded in
 ## REPL
 
 ```text
-◆ gxx  v0.0.14     badge and version
+◆ gxx  v0.0.15     badge and version
 >                 type here  ·  becomes  > plan  in plan mode
 gpt-5.6-sol · ask · medium · 272k · 0%
 ```
@@ -173,7 +177,7 @@ Plan mode is session-only. It is not saved to config. After a plan is generated,
 | `/login` | Connect one account · openai · claude · api · green marks the active one |
 | `/logout` | Clear the connected account |
 | `/context` | Window occupancy |
-| `/usage` | Session tokens and remaining subscription or API quota |
+| `/usage` | Session tokens, estimated cost, and remaining subscription or API quota |
 | `/clear` | Forget this conversation |
 | `/exit` | Quit |
 
@@ -205,7 +209,8 @@ Commands are not OS-sandboxed — review them in `ask`. Changing `/mode` clears 
 
 - OpenAI requests use `store:false`.
 - Only files the tools actually open go to the active provider.
-- Secret paths (`.env`, keys, credentials) are blocked on file tools, git inspect, and commands that name them.
+- Secret paths (`.env`, keys, credentials) are blocked on file tools, image writes, git inspect, and commands that name them.
+- Image generation uses the platform Images API with the OpenAI API key. ChatGPT login is not enough for `generate_image`.
 - The OpenAI API key, ChatGPT Codex OAuth tokens, and Claude OAuth tokens live in the same owner-only `config.json` (`0600` on Unix, a user-only ACL on Windows). They are stripped from child shell environments. gxx does not read `~/.codex/auth.json` or `~/.claude/.credentials.json`.
 - Do not point it at code you cannot send to that account.
 
