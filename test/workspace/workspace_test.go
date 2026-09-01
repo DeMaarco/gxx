@@ -116,6 +116,24 @@ func TestAtomicWriteCreatesParentsAndPreservesMode(t *testing.T) {
 	}
 }
 
+func TestWorkspaceHasGit(t *testing.T) {
+	root := t.TempDir()
+	ws, err := workspace.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ws.Close()
+	if ws.HasGit() {
+		t.Fatal("empty workspace reported a git repository")
+	}
+	if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if !ws.HasGit() {
+		t.Fatal("workspace with .git did not report a git repository")
+	}
+}
+
 func requireSymlink(t *testing.T, oldname, newname string) {
 	t.Helper()
 	if err := os.Symlink(oldname, newname); err != nil {

@@ -116,6 +116,160 @@ func TestLoopExecutesToolsAndReturnsFinalAnswer(t *testing.T) {
 	}
 }
 
+func TestLoopReusesIdenticalToolCallsInTheSameTurn(t *testing.T) {
+	first := agent.ToolCall{ID: "call-1", Name: "read_file", Arguments: json.RawMessage(`{"path":"README.md"}`)}
+	second := agent.ToolCall{ID: "call-2", Name: "read_file", Arguments: json.RawMessage(`{ "path": "README.md" }`)}
+	model := &fakeModel{responses: []agent.ModelResponse{
+		{ToolCalls: []agent.ToolCall{first}},
+		{ToolCalls: []agent.ToolCall{second}},
+		{Text: "Done."},
+	}}
+	executor := &countingExecutor{
+		definitions: []agent.ToolDefinition{{Name: "read_file", ReadOnly: true}},
+	}
+	loop := &agent.Loop{Model: model, Executor: executor, MaxSteps: 4}
+
+	var events []agent.Event
+	result, err := loop.Run(context.Background(), "Inspect the README", func(event agent.Event) {
+		events = append(events, event)
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if result.Answer != "Done." {
+		t.Fatalf("Answer = %q, want Done.", result.Answer)
+	}
+	if len(executor.calls) != 1 || len(executor.calls[0]) != 1 || executor.calls[0][0].ID != "call-1" {
+		t.Fatalf("executor calls = %#v, want the first call only", executor.calls)
+	}
+	if len(result.ToolResults) != 2 {
+		t.Fatalf("tool results = %#v, want 2", result.ToolResults)
+	}
+	if result.ToolResults[0].Output != "payload" {
+		t.Fatalf("first result = %#v", result.ToolResults[0])
+	}
+	if !strings.HasPrefix(result.ToolResults[1].Output, "Repeated call with the same arguments") {
+		t.Fatalf("reused result = %q, want repeated-call notice", result.ToolResults[1].Output)
+	}
+	if !strings.HasSuffix(result.ToolResults[1].Output, "payload") {
+		t.Fatalf("reused result = %q, want original payload", result.ToolResults[1].Output)
+	}
+	if strings.Count(result.ToolResults[1].Output, "Repeated call") != 1 {
+		t.Fatalf("reused result stacked notices: %q", result.ToolResults[1].Output)
+	}
+
+	var started, done int
+	for _, event := range events {
+		if event.Kind == agent.EventToolStarted {
+			started++
+		}
+		if event.Kind == agent.EventToolDone {
+			done++
+		}
+	}
+	if started < 1 || done < 1 {
+		t.Fatalf("reuse events started=%d done=%d, want reused tool visible in the UI", started, done)
+	}
+}
+
+func TestLoopReusesIdenticalToolCallsInTheSameBatch(t *testing.T) {
+	calls := []agent.ToolCall{
+		{ID: "call-1", Name: "list_files", Arguments: json.RawMessage(`{"path":null}`)},
+		{ID: "call-2", Name: "list_files", Arguments: json.RawMessage(`{"path":null}`)},
+	}
+	model := &fakeModel{responses: []agent.ModelResponse{
+		{ToolCalls: calls},
+		{Text: "Listed."},
+	}}
+	executor := &countingExecutor{
+		definitions: []agent.ToolDefinition{{Name: "list_files", ReadOnly: true}},
+	}
+	loop := &agent.Loop{Model: model, Executor: executor, MaxSteps: 3}
+
+	result, err := loop.Run(context.Background(), "list", nil)
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if len(executor.calls) != 1 || len(executor.calls[0]) != 1 {
+		t.Fatalf("executor calls = %#v, want one unique call", executor.calls)
+	}
+	if len(result.ToolResults) != 2 || result.ToolResults[1].CallID != "call-2" {
+		t.Fatalf("tool results = %#v", result.ToolResults)
+	}
+	if !strings.Contains(result.ToolResults[1].Output, "Repeated call with the same arguments") {
+		t.Fatalf("second result = %q, want reuse notice", result.ToolResults[1].Output)
+	}
+}
+
+func TestLoopExecutesDistinctToolArguments(t *testing.T) {
+	model := &fakeModel{responses: []agent.ModelResponse{
+		{ToolCalls: []agent.ToolCall{
+			{ID: "call-1", Name: "read_file", Arguments: json.RawMessage(`{"path":"a.go"}`)},
+			{ID: "call-2", Name: "read_file", Arguments: json.RawMessage(`{"path":"b.go"}`)},
+		}},
+		{Text: "Done."},
+	}}
+	executor := &countingExecutor{
+		definitions: []agent.ToolDefinition{{Name: "read_file", ReadOnly: true}},
+	}
+	loop := &agent.Loop{Model: model, Executor: executor, MaxSteps: 3}
+
+	if _, err := loop.Run(context.Background(), "read both", nil); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if len(executor.calls) != 1 || len(executor.calls[0]) != 2 {
+		t.Fatalf("executor calls = %#v, want both distinct reads", executor.calls)
+	}
+}
+
+func TestLoopPrependsWorkspaceOverview(t *testing.T) {
+	model := &fakeModel{responses: []agent.ModelResponse{{Text: "ok"}}}
+	loop := &agent.Loop{
+		Model:    model,
+		Executor: &fakeExecutor{},
+		MaxSteps: 2,
+		Overview: func(context.Context) string {
+			return "[workspace]\ngit: no\nfiles: 1 (depth 2)\nREADME.md"
+		},
+	}
+	if _, err := loop.Run(context.Background(), "hello", nil); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if len(model.inputs) != 1 {
+		t.Fatalf("inputs = %#v", model.inputs)
+	}
+	got := model.inputs[0].UserText
+	if !strings.Contains(got, "[workspace]") || !strings.Contains(got, "hello") {
+		t.Fatalf("UserText = %q, want snapshot then prompt", got)
+	}
+	if !strings.HasPrefix(got, "[workspace]") {
+		t.Fatalf("UserText = %q, want snapshot prepended", got)
+	}
+}
+
+type countingExecutor struct {
+	definitions []agent.ToolDefinition
+	calls       [][]agent.ToolCall
+}
+
+func (e *countingExecutor) Definitions() []agent.ToolDefinition {
+	return e.definitions
+}
+
+func (e *countingExecutor) Execute(
+	_ context.Context,
+	calls []agent.ToolCall,
+	_ agent.EmitFunc,
+) []agent.ToolResult {
+	copied := append([]agent.ToolCall(nil), calls...)
+	e.calls = append(e.calls, copied)
+	results := make([]agent.ToolResult, len(calls))
+	for i, call := range calls {
+		results[i] = agent.ToolResult{CallID: call.ID, Name: call.Name, Output: "payload"}
+	}
+	return results
+}
+
 func TestLoopEmitsCumulativeUsageAfterEachStep(t *testing.T) {
 	call := agent.ToolCall{ID: "call-1", Name: "read_file", Arguments: json.RawMessage(`{"path":"README.md"}`)}
 	model := &fakeModel{responses: []agent.ModelResponse{

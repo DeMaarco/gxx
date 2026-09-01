@@ -25,6 +25,8 @@ import (
 
 var (
 	DropOldReasoning        = dropOldReasoning
+	DropOldPrograms         = dropOldPrograms
+	DropAllPrograms         = dropAllPrograms
 	DropAllReasoning        = dropAllReasoning
 	KeepLatestReasoning     = keepLatestReasoning
 	SlimInput               = slimInput
@@ -33,6 +35,7 @@ var (
 	SummarizeDropped        = summarizeDropped
 	UnmatchedCallIDs        = unmatchedCallIDs
 	OutputItemParam         = outputItemParam
+	ToolCallFromOutput      = toolCallFromOutput
 	ResponseText            = responseText
 	FetchAccountUsage       = fetchAccountUsage
 	FetchChatGPTUsage       = fetchChatGPTUsage
@@ -50,7 +53,7 @@ var (
 )
 
 func ToolParams(definitions []agent.ToolDefinition) []responses.ToolUnionParam {
-	return toolParams(definitions, 0, true)
+	return toolParams(definitions, 0, true, false)
 }
 
 func (p *Provider) SetHistory(items []responses.ResponseInputItemUnionParam) {
@@ -99,6 +102,14 @@ func CodexOriginator() string {
 
 func CodexBetaHeader() string {
 	return codexBetaHeader
+}
+
+func CodexResponsesLiteHeader() string {
+	return codexResponsesLiteHeader
+}
+
+func UsesResponsesLite(model string) bool {
+	return usesResponsesLite(model)
 }
 
 func (p *Provider) ContextTokens() int {

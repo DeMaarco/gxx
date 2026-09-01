@@ -29,12 +29,12 @@ Inspired by [`fx`](https://github.com/vercel-labs/fx), but narrower on purpose:
 **OpenAI or Claude**, **one workspace**, **no TUI**. Just a prompt.
 
 ```text
-◆ gxx  v0.0.16
-> ask
-gpt-5.6-sol · ask · medium · 272k · 0%
+◆ gxx  v0.0.17
+>
+gpt-5.6-sol · auto · medium · 272k · 0%
 ```
 
-The prompt badge is the session (`ask`, `plan`, or plain `>` for agent).
+The prompt badge is the session: plain `>` is agent, `> ask` and `> plan` after `Shift+Tab`.
 The status line is model · permission mode · effort · context size · window fill.
 `auto` paints red. Context turns yellow at 70% and red at 90%.
 After each turn the footer adds estimated USD. Rates are re-read from the
@@ -46,8 +46,7 @@ without a new gxx release.
 | | What you get |
 | --- | --- |
 | **Workspace-bound** | The directory you start in is the whole world. No traversal, no outside symlinks. |
-| **Ask** | Default session. Lists, searches, reads, and inspects git. No patches, images, or shell. `Shift+Tab` cycles ask → plan → agent. |
-| **Plan** | Read-only design pass. After the plan, arrow keys choose execute, request changes, or cancel. Execute leaves plan and enters agent. |
+| **Ask / Plan** | `Shift+Tab` from agent enters ask or plan; from ask or plan, one press returns to agent. They are read-only and never overlap. After a plan, arrow keys choose execute, request changes, or cancel. Execute enters agent. |
 | **Git inspect** | `git_status`, `git_diff`, and `git_log` are read-only and stay inside the workspace. |
 | **Images** | `generate_image` calls GPT Image 2 (or another GPT image model) through the OpenAI Images API and writes the file in the workspace. Needs a platform API key. |
 | **One-shot CLI** | `gxx ask` for scripts and pipes. `--json` when you want a machine-readable result. |
@@ -71,7 +70,7 @@ gxx version
 Pin a release or another directory:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/DeMaarco/gxx/main/install.sh | sh -s -- --version v0.0.16
+curl -fsSL https://raw.githubusercontent.com/DeMaarco/gxx/main/install.sh | sh -s -- --version v0.0.17
 curl -fsSL https://raw.githubusercontent.com/DeMaarco/gxx/main/install.sh | sh -s -- --dir /usr/local/bin
 ```
 
@@ -86,7 +85,7 @@ That puts `gxx.exe` in `%LOCALAPPDATA%\gxx` and puts that folder first on your u
 Pin a release or another directory:
 
 ```powershell
-$env:GXX_VERSION = "v0.0.16"
+$env:GXX_VERSION = "v0.0.17"
 irm https://raw.githubusercontent.com/DeMaarco/gxx/main/install.ps1 | iex
 ```
 
@@ -149,20 +148,20 @@ Drop an `AGENTS.md` in the project root if you want extra instructions loaded in
 ## REPL
 
 ```text
-◆ gxx  v0.0.16     badge and version
-> ask             type here  ·  becomes  > plan  in plan  ·  plain > in agent
-gpt-5.6-sol · ask · medium · 272k · 0%
+◆ gxx  v0.0.17     badge and version
+>                 type here  ·  Shift+Tab →  > ask  ·  Shift+Tab →  agent again
+gpt-5.6-sol · auto · medium · 272k · 0%
 ```
 
 | Key | Action |
 | --- | --- |
 | `/` | Slash commands |
 | `Tab` | Complete, or open pickers |
-| `Shift+Tab` | Cycle ask → plan → agent → ask |
+| `Shift+Tab` | From ask/plan, back to agent. From agent, cycle ask and plan |
 | `Ctrl+C` | Clear, cancel, or confirm exit |
 | `Ctrl+D` | Exit |
 
-Ask and plan are separate session modes. They never overlap. Both are read-only: only file reads and git inspect, with no approval prompt. They are session-only and not saved to config.
+`gxx` starts in agent, so `/mode` (`ask`, `auto-writes`, `auto`) applies. Ask and plan are separate session modes on `Shift+Tab`. They never overlap. One press from ask or plan returns to agent. Both are read-only: only file reads and git inspect, with no approval prompt. They are session-only and not saved to config.
 
 After a plan is generated, a terminal shows an arrow-key menu: execute the plan, request changes, or cancel. Request changes stays in plan so you can send a revision. Execute switches to agent and implements, using the current permission mode.
 

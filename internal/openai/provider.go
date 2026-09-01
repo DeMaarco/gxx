@@ -221,6 +221,7 @@ func (p *Provider) Respond(
 		p.mu.Unlock()
 		return result, errors.New("model input contains neither a user message nor tool results")
 	}
+	p.history = dropOldPrograms(dropOldReasoning(p.history))
 
 	staged := slimInput(
 		append([]responses.ResponseInputItemUnionParam(nil), p.history...),
@@ -285,13 +286,8 @@ func (p *Provider) Respond(
 		if ok {
 			outputItems = append(outputItems, param)
 		}
-		if item.Type == "function_call" {
-			call := item.AsFunctionCall()
-			result.ToolCalls = append(result.ToolCalls, agent.ToolCall{
-				ID:        call.CallID,
-				Name:      call.Name,
-				Arguments: json.RawMessage(call.Arguments),
-			})
+		if call, ok := toolCallFromOutput(item); ok {
+			result.ToolCalls = append(result.ToolCalls, call)
 		}
 	}
 
@@ -303,6 +299,12 @@ func (p *Provider) Respond(
 		CachedTokens:     completed.Usage.InputTokensDetails.CachedTokens,
 		CacheWriteTokens: completed.Usage.InputTokensDetails.CacheWriteTokens,
 		TotalTokens:      completed.Usage.TotalTokens,
+	}
+	if result.Text == "" && len(result.ToolCalls) == 0 {
+		agent.Emit(emit, agent.Event{
+			Kind: agent.EventNotice,
+			Text: emptyOutputNotice(completed.Output),
+		})
 	}
 	if p.generation == generation {
 		p.history = append(staged, outputItems...)
@@ -322,23 +324,38 @@ func (p *Provider) requestParamsLocked(
 	if p.oauth && strings.TrimSpace(instructions) == "" {
 		instructions = defaultCodexInstructions
 	}
+	lite := p.oauth && usesResponsesLite(p.model)
+	tools := toolParams(definitions, p.ecoLevel, !p.oauth, lite)
+	input := staged
+	if lite && len(tools) > 0 {
+		input = append([]responses.ResponseInputItemUnionParam{
+			responses.ResponseInputItemParamOfAdditionalTools(tools),
+		}, staged...)
+	}
 	params := responses.ResponseNewParams{
 		Model:             shared.ResponsesModel(p.model),
 		Instructions:      openaisdk.String(instructions),
 		Store:             openaisdk.Bool(false),
-		ParallelToolCalls: openaisdk.Bool(true),
+		ParallelToolCalls: openaisdk.Bool(!lite),
 		PromptCacheKey:    openaisdk.String(promptCacheKey(p.model, instructions)),
 		Reasoning: shared.ReasoningParam{
 			Effort: shared.ReasoningEffort(p.effort),
 		},
 		Input: responses.ResponseNewParamsInputUnion{
-			OfInputItemList: staged,
+			OfInputItemList: input,
 		},
-		Tools: toolParams(definitions, p.ecoLevel, !p.oauth),
+		Tools: tools,
+	}
+	if lite && len(tools) > 0 {
+		// Responses Lite already has the catalog in additional_tools.
+		params.Tools = nil
+	}
+	if lite {
+		params.Reasoning.Context = shared.ReasoningContextAllTurns
 	}
 	if p.oauth {
 		params.PromptCacheKey = openaisdk.String(p.sessionID)
-		if len(params.Tools) > 0 && !finalStep {
+		if len(tools) > 0 && !finalStep {
 			params.ToolChoice = responses.ResponseNewParamsToolChoiceUnion{
 				OfToolChoiceMode: openaisdk.Opt(responses.ToolChoiceOptionsAuto),
 			}
@@ -497,7 +514,7 @@ func (p *Provider) Reset() {
 	p.refreshContextLocked()
 }
 
-func toolParams(definitions []agent.ToolDefinition, eco int, strict bool) []responses.ToolUnionParam {
+func toolParams(definitions []agent.ToolDefinition, eco int, strict, programmatic bool) []responses.ToolUnionParam {
 	if len(definitions) == 0 {
 		// An empty slice serializes to "tools": [], which withdraws the tool
 		// namespace. Omit the field instead.
@@ -518,6 +535,9 @@ func toolParams(definitions []agent.ToolDefinition, eco int, strict bool) []resp
 		}
 		if strict {
 			function.Strict = openaisdk.Bool(true)
+		}
+		if programmatic {
+			function.AllowedCallers = []string{"direct", "programmatic"}
 		}
 		params = append(params, responses.ToolUnionParam{OfFunction: &function})
 	}
@@ -558,12 +578,183 @@ func outputItemParam(item responses.ResponseOutputItemUnion) (responses.Response
 	case "function_call":
 		call := item.AsFunctionCall().ToParam()
 		return responses.ResponseInputItemUnionParam{OfFunctionCall: &call}, true
+	case "custom_tool_call":
+		call := item.AsCustomToolCall()
+		return responses.ResponseInputItemParamOfFunctionCall(call.Input, call.CallID, call.Name), true
+	case "shell_call":
+		call, ok := toolCallFromOutput(item)
+		if !ok {
+			return responses.ResponseInputItemUnionParam{}, false
+		}
+		return responses.ResponseInputItemParamOfFunctionCall(string(call.Arguments), call.ID, call.Name), true
+	case "local_shell_call":
+		call, ok := toolCallFromOutput(item)
+		if !ok {
+			return responses.ResponseInputItemUnionParam{}, false
+		}
+		return responses.ResponseInputItemParamOfFunctionCall(string(call.Arguments), call.ID, call.Name), true
+	case "apply_patch_call":
+		call, ok := toolCallFromOutput(item)
+		if !ok {
+			return responses.ResponseInputItemUnionParam{}, false
+		}
+		return responses.ResponseInputItemParamOfFunctionCall(string(call.Arguments), call.ID, call.Name), true
+	case "program":
+		program := item.AsProgram()
+		param := responses.ResponseInputItemProgramParam{
+			ID:          program.ID,
+			CallID:      program.CallID,
+			Code:        program.Code,
+			Fingerprint: program.Fingerprint,
+		}
+		return responses.ResponseInputItemUnionParam{OfProgram: &param}, true
+	case "program_output":
+		output := item.AsProgramOutput()
+		param := responses.ResponseInputItemProgramOutputParam{
+			ID:     output.ID,
+			CallID: output.CallID,
+			Result: output.Result,
+			Status: output.Status,
+		}
+		return responses.ResponseInputItemUnionParam{OfProgramOutput: &param}, true
 	case "reasoning":
 		reasoning := item.AsReasoning().ToParam()
 		return responses.ResponseInputItemUnionParam{OfReasoning: &reasoning}, true
 	default:
 		return responses.ResponseInputItemUnionParam{}, false
 	}
+}
+
+func toolCallFromOutput(item responses.ResponseOutputItemUnion) (agent.ToolCall, bool) {
+	name := strings.TrimSpace(item.Name)
+	id := strings.TrimSpace(item.CallID)
+	args := item.Arguments.OfString
+	switch item.Type {
+	case "function_call":
+		call := item.AsFunctionCall()
+		if name == "" {
+			name = strings.TrimSpace(call.Name)
+		}
+		if id == "" {
+			id = strings.TrimSpace(call.CallID)
+		}
+		if args == "" {
+			args = call.Arguments
+		}
+	case "custom_tool_call":
+		call := item.AsCustomToolCall()
+		if name == "" {
+			name = strings.TrimSpace(call.Name)
+		}
+		if id == "" {
+			id = strings.TrimSpace(call.CallID)
+		}
+		if args == "" {
+			args = call.Input
+		}
+		if args == "" {
+			args = item.Input
+		}
+	case "shell_call":
+		call := item.AsShellCall()
+		if id == "" {
+			id = strings.TrimSpace(call.CallID)
+		}
+		name = "run_command"
+		command := strings.Join(call.Action.Commands, " && ")
+		if strings.TrimSpace(command) == "" {
+			return agent.ToolCall{}, false
+		}
+		encoded, err := json.Marshal(map[string]any{"command": command})
+		if err != nil {
+			return agent.ToolCall{}, false
+		}
+		args = string(encoded)
+	case "local_shell_call":
+		call := item.AsLocalShellCall()
+		if id == "" {
+			id = strings.TrimSpace(call.CallID)
+		}
+		name = "run_command"
+		command := strings.Join(call.Action.Command, " ")
+		if strings.TrimSpace(command) == "" {
+			return agent.ToolCall{}, false
+		}
+		encoded, err := json.Marshal(map[string]any{"command": command})
+		if err != nil {
+			return agent.ToolCall{}, false
+		}
+		args = string(encoded)
+	case "apply_patch_call":
+		call := item.AsApplyPatchCall()
+		if id == "" {
+			id = strings.TrimSpace(call.CallID)
+		}
+		mapped, ok := applyPatchCallArgs(call)
+		if !ok {
+			return agent.ToolCall{}, false
+		}
+		name = "apply_patch"
+		args = mapped
+	default:
+		return agent.ToolCall{}, false
+	}
+	if name == "" {
+		return agent.ToolCall{}, false
+	}
+	if args == "" {
+		args = "{}"
+	}
+	if !json.Valid([]byte(args)) {
+		encoded, err := json.Marshal(args)
+		if err != nil {
+			return agent.ToolCall{}, false
+		}
+		args = string(encoded)
+	}
+	return agent.ToolCall{ID: id, Name: name, Arguments: json.RawMessage(args)}, true
+}
+
+func applyPatchCallArgs(call responses.ResponseApplyPatchToolCall) (string, bool) {
+	path := strings.TrimSpace(call.Operation.Path)
+	if path == "" {
+		return "", false
+	}
+	change := map[string]any{"path": path}
+	switch call.Operation.Type {
+	case "delete_file":
+		change["action"] = "delete"
+	case "create_file":
+		change["action"] = "add"
+		change["content"] = call.Operation.Diff
+	default:
+		return "", false
+	}
+	encoded, err := json.Marshal(map[string]any{"changes": []map[string]any{change}})
+	if err != nil {
+		return "", false
+	}
+	return string(encoded), true
+}
+
+func emptyOutputNotice(items []responses.ResponseOutputItemUnion) string {
+	if len(items) == 0 {
+		return "Model finished without text or tool calls."
+	}
+	seen := make(map[string]bool, len(items))
+	kinds := make([]string, 0, len(items))
+	for _, item := range items {
+		kind := strings.TrimSpace(item.Type)
+		if kind == "" {
+			kind = "unknown"
+		}
+		if seen[kind] {
+			continue
+		}
+		seen[kind] = true
+		kinds = append(kinds, kind)
+	}
+	return "Model finished without text or tool calls (output: " + strings.Join(kinds, ", ") + ")."
 }
 
 func responseStatusError(response responses.Response) error {

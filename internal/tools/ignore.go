@@ -31,6 +31,7 @@ __pycache__/
 .idea/
 .cache/
 .next/
+*.tsbuildinfo
 `
 )
 

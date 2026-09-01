@@ -139,10 +139,14 @@ func (r *Registry) Definitions() []agent.ToolDefinition {
 		"run_command",
 	}
 	readOnly := r.readOnlySession()
+	hasGit := r.workspace != nil && r.workspace.HasGit()
 	definitions := make([]agent.ToolDefinition, 0, len(order))
 	for _, name := range order {
 		spec := r.specs[name]
 		if readOnly && !spec.definition.ReadOnly {
+			continue
+		}
+		if !hasGit && (name == "git_status" || name == "git_diff" || name == "git_log") {
 			continue
 		}
 		definitions = append(definitions, spec.definition)

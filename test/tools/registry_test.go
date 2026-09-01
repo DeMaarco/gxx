@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -996,6 +997,90 @@ func TestSearchFilesSupportsRegexGlobAndLiteralFallback(t *testing.T) {
 	}
 }
 
+func TestSearchFilesTruncatesDenseMatches(t *testing.T) {
+	root := t.TempDir()
+	var css strings.Builder
+	for i := 0; i < 40; i++ {
+		css.WriteString(".widget" + strings.Repeat("-x", 200) + "{color:red}\n")
+	}
+	writeTestFile(t, root, "src/app.css", css.String())
+	registry := newTestRegistry(t, root, &staticApprover{}, tools.Options{
+		MaxResultBytes:  64 * 1024,
+		MaxSearchResult: 100,
+		ParallelReads:   1,
+		CommandTimeout:  time.Second,
+	})
+	result := registry.Execute(context.Background(), []agent.ToolCall{
+		toolCall("search", "search_files", map[string]any{
+			"query": "widget", "path": "src", "glob": nil, "max_results": nil, "case_sensitive": nil,
+		}),
+	}, nil)[0]
+	if result.IsError {
+		t.Fatalf("search failed: %s", result.Output)
+	}
+	if !strings.Contains(result.Output, "src/app.css") {
+		t.Fatalf("search = %q, want css hits", result.Output)
+	}
+	if !strings.Contains(result.Output, "search result truncated") {
+		t.Fatalf("search = %q, want byte truncation", result.Output)
+	}
+	if len(result.Output) > 6*1024 {
+		t.Fatalf("search length = %d, want capped near 4KB", len(result.Output))
+	}
+}
+
+func TestSearchFilesTODODoesNotMatchSpanishTodo(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, root, "src/copy.go", "package src\n\nconst n = \"Ponerlo todo en una sola apuesta\"\n")
+	writeTestFile(t, root, "src/todo.go", "package src\n\n// TODO: handle timeout\n")
+	registry := newTestRegistry(t, root, &staticApprover{}, tools.Options{
+		MaxResultBytes:  4096,
+		MaxSearchResult: 20,
+		ParallelReads:   1,
+		CommandTimeout:  time.Second,
+	})
+
+	result := registry.Execute(context.Background(), []agent.ToolCall{
+		toolCall("search", "search_files", map[string]any{
+			"query": "TODO", "path": "src", "glob": nil, "max_results": nil, "case_sensitive": nil,
+		}),
+	}, nil)[0]
+	if result.IsError {
+		t.Fatalf("search failed: %s", result.Output)
+	}
+	if !strings.Contains(result.Output, "src/todo.go") {
+		t.Fatalf("search = %q, want TODO marker", result.Output)
+	}
+	if strings.Contains(result.Output, "copy.go") {
+		t.Fatalf("search = %q, should not match Spanish todo", result.Output)
+	}
+
+	insensitive := registry.Execute(context.Background(), []agent.ToolCall{
+		toolCall("search", "search_files", map[string]any{
+			"query": "TODO", "path": "src", "glob": nil, "max_results": nil, "case_sensitive": false,
+		}),
+	}, nil)[0]
+	if insensitive.IsError || !strings.Contains(insensitive.Output, "copy.go") {
+		t.Fatalf("explicit case-insensitive TODO = %+v, want Spanish todo", insensitive)
+	}
+
+	writeTestFile(t, root, "src/helpers.go", "package src\n\nfunc helpers() {}\nfunc helper() {}\n")
+	word := registry.Execute(context.Background(), []agent.ToolCall{
+		toolCall("search", "search_files", map[string]any{
+			"query": "helper", "path": "src", "glob": nil, "max_results": nil, "case_sensitive": nil,
+		}),
+	}, nil)[0]
+	if word.IsError {
+		t.Fatalf("identifier search failed: %s", word.Output)
+	}
+	if !strings.Contains(word.Output, "func helper()") {
+		t.Fatalf("identifier search = %q, want whole word helper", word.Output)
+	}
+	if strings.Contains(word.Output, "func helpers()") {
+		t.Fatalf("identifier search = %q, should not match helpers", word.Output)
+	}
+}
+
 func TestApplyPatchRejectsLegacyPatchDocument(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "file.txt", "before\n")
@@ -1321,6 +1406,197 @@ func TestListFilesDoesNotSkipVendorByDefault(t *testing.T) {
 	}
 	if !strings.Contains(result.Output, "vendor/pkg.go") {
 		t.Fatalf("list = %q, want vendor/pkg.go", result.Output)
+	}
+}
+
+func TestListFilesReportsIgnoredDirectory(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, root, "node_modules/pkg/index.js", "module.exports = 1\n")
+	writeTestFile(t, root, "src/main.go", "package main\n")
+	registry := newTestRegistry(t, root, &staticApprover{}, tools.Options{
+		MaxResultBytes:  4096,
+		MaxSearchResult: 10,
+		ParallelReads:   1,
+		CommandTimeout:  time.Second,
+	})
+	result := registry.Execute(context.Background(), []agent.ToolCall{
+		toolCall("list", "list_files", map[string]any{"path": "node_modules", "max_depth": 2}),
+	}, nil)[0]
+	if result.IsError {
+		t.Fatalf("list ignored dir failed: %s", result.Output)
+	}
+	if !strings.Contains(result.Output, "ignored") {
+		t.Fatalf("list node_modules = %q, want ignored notice", result.Output)
+	}
+	if strings.Contains(result.Output, "No files found") {
+		t.Fatalf("list node_modules = %q, should not look empty", result.Output)
+	}
+}
+
+func TestWorkspaceOverviewListsDepthThreeAndGitFlag(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, root, "README.md", "hello\n")
+	writeTestFile(t, root, "src/main.go", "package main\n")
+	writeTestFile(t, root, "src/pkg/nested.go", "package pkg\n")
+	writeTestFile(t, root, "src/pkg/more/deep.go", "package more\n")
+	writeTestFile(t, root, "node_modules/pkg/index.js", "module.exports = 1\n")
+	registry := newTestRegistry(t, root, &staticApprover{}, tools.Options{
+		MaxResultBytes:  4096,
+		MaxSearchResult: 10,
+		ParallelReads:   1,
+		CommandTimeout:  time.Second,
+	})
+
+	plain := registry.WorkspaceOverview(context.Background())
+	if !strings.Contains(plain, "git: no") {
+		t.Fatalf("overview = %q, want git: no", plain)
+	}
+	if !strings.Contains(plain, "README.md") || !strings.Contains(plain, "src/main.go") || !strings.Contains(plain, "src/pkg/nested.go") {
+		t.Fatalf("overview = %q, want depth-3 files", plain)
+	}
+	if strings.Contains(plain, "deep.go") {
+		t.Fatalf("overview = %q, should omit depth-4 files", plain)
+	}
+	if strings.Contains(plain, "node_modules/pkg") {
+		t.Fatalf("overview = %q, should not list ignored contents", plain)
+	}
+	if !strings.Contains(plain, "ignored:") || !strings.Contains(plain, "node_modules/") {
+		t.Fatalf("overview = %q, want ignored top-level dirs", plain)
+	}
+
+	if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	withGit := registry.WorkspaceOverview(context.Background())
+	if !strings.Contains(withGit, "git: yes") {
+		t.Fatalf("overview = %q, want git: yes", withGit)
+	}
+	if strings.Contains(withGit, ".git/config") || strings.Contains(withGit, ".git/HEAD") {
+		t.Fatalf("overview = %q, should not list .git contents", withGit)
+	}
+	if !strings.Contains(withGit, "ignored:") || !strings.Contains(withGit, ".git/") {
+		t.Fatalf("overview = %q, want .git in ignored", withGit)
+	}
+}
+
+func TestWorkspaceOverviewOmitsGeneratedSiblingScripts(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, root, "vite.config.ts", "export default {}\n")
+	writeTestFile(t, root, "vite.config.js", "export default {}\n")
+	writeTestFile(t, root, "vite.config.d.ts", "export {}\n")
+	writeTestFile(t, root, "plain.js", "console.log(1)\n")
+	writeTestFile(t, root, "package-lock.json", "{}\n")
+	writeTestFile(t, root, "big.css", strings.Repeat("x", 20*1024)+"\n")
+	registry := newTestRegistry(t, root, &staticApprover{}, tools.Options{
+		MaxResultBytes:  4096,
+		MaxSearchResult: 10,
+		ParallelReads:   1,
+		CommandTimeout:  time.Second,
+	})
+	got := registry.WorkspaceOverview(context.Background())
+	if !strings.Contains(got, "vite.config.ts") || !strings.Contains(got, "plain.js") {
+		t.Fatalf("overview = %q, want source files", got)
+	}
+	if strings.Contains(got, "vite.config.js") || strings.Contains(got, "vite.config.d.ts") {
+		t.Fatalf("overview = %q, should omit compiled siblings", got)
+	}
+	if strings.Contains(got, "package-lock.json") {
+		t.Fatalf("overview = %q, should omit lockfiles", got)
+	}
+	if !strings.Contains(got, "big.css (20KB)") {
+		t.Fatalf("overview = %q, want size for large files", got)
+	}
+}
+
+func TestReadFileStopsAroundByteBudget(t *testing.T) {
+	root := t.TempDir()
+	var builder strings.Builder
+	for i := 0; i < 80; i++ {
+		builder.WriteString(strings.Repeat("a", 200))
+		builder.WriteByte('\n')
+	}
+	writeTestFile(t, root, "wide.css", builder.String())
+	registry := newTestRegistry(t, root, &staticApprover{}, tools.Options{
+		MaxResultBytes:  64 * 1024,
+		MaxSearchResult: 10,
+		ParallelReads:   1,
+		CommandTimeout:  time.Second,
+	})
+	result := registry.Execute(context.Background(), []agent.ToolCall{
+		toolCall("read", "read_file", map[string]any{
+			"path": "wide.css", "offset_line": nil, "limit_lines": nil,
+		}),
+	}, nil)[0]
+	if result.IsError {
+		t.Fatalf("read failed: %s", result.Output)
+	}
+	if !strings.Contains(result.Output, "truncated at 12KB") {
+		t.Fatalf("read = %q, want byte budget notice", result.Output)
+	}
+	if len(result.Output) > 16*1024 {
+		t.Fatalf("read length = %d, want capped near 12KB", len(result.Output))
+	}
+}
+
+func TestReadFileSamplesDenseFilesAndRefusesPaging(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, root, "min.css", strings.Repeat("a{x:1}", 2000)+"\n/* Footer styles */\n"+strings.Repeat("b{y:2}", 2000)+"\n")
+	registry := newTestRegistry(t, root, &staticApprover{}, tools.Options{
+		MaxResultBytes:  64 * 1024,
+		MaxSearchResult: 10,
+		ParallelReads:   1,
+		CommandTimeout:  time.Second,
+	})
+	first := registry.Execute(context.Background(), []agent.ToolCall{
+		toolCall("read", "read_file", map[string]any{
+			"path": "min.css", "offset_line": nil, "limit_lines": nil,
+		}),
+	}, nil)[0]
+	if first.IsError {
+		t.Fatalf("dense read failed: %s", first.Output)
+	}
+	if !strings.Contains(first.Output, "dense file") {
+		t.Fatalf("dense read = %q, want dense notice", first.Output)
+	}
+	if !strings.Contains(first.Output, "Footer styles") {
+		t.Fatalf("dense read = %q, want later comment markers", first.Output)
+	}
+	if len(first.Output) > 14*1024 {
+		t.Fatalf("dense read length = %d, want a single sample", len(first.Output))
+	}
+	second := registry.Execute(context.Background(), []agent.ToolCall{
+		toolCall("read", "read_file", map[string]any{
+			"path": "min.css", "offset_line": 2, "limit_lines": nil,
+		}),
+	}, nil)[0]
+	if second.IsError {
+		t.Fatalf("dense page failed: %s", second.Output)
+	}
+	if !strings.Contains(second.Output, "Do not page") {
+		t.Fatalf("dense page = %q, want paging refusal", second.Output)
+	}
+	if len(second.Output) > 512 {
+		t.Fatalf("dense page length = %d, want a short refusal", len(second.Output))
+	}
+}
+
+func TestWorkspaceOverviewTruncatesLargeTrees(t *testing.T) {
+	root := t.TempDir()
+	for i := 0; i < 50; i++ {
+		writeTestFile(t, root, filepath.Join("f", fmt.Sprintf("%02d.txt", i)), "x\n")
+	}
+	registry := newTestRegistry(t, root, &staticApprover{}, tools.Options{
+		MaxResultBytes:  4096,
+		MaxSearchResult: 10,
+		ParallelReads:   1,
+		CommandTimeout:  time.Second,
+	})
+	got := registry.WorkspaceOverview(context.Background())
+	if !strings.Contains(got, "… truncated") {
+		t.Fatalf("overview = %q, want truncation marker", got)
+	}
+	if strings.Count(got, ".txt") > 40 {
+		t.Fatalf("overview listed too many files: %q", got)
 	}
 }
 

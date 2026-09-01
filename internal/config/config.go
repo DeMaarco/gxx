@@ -44,7 +44,7 @@ const (
 	PermissionAutoWrites      = "auto-writes"
 	PermissionAuto            = "auto"
 	DefaultPermissionMode     = PermissionAsk
-	DefaultMaxSteps           = 40
+	DefaultMaxSteps           = 12
 	DefaultMaxToolResultBytes = 64 * 1024
 	DefaultMaxSearchResults   = 100
 	DefaultParallelReads      = 4

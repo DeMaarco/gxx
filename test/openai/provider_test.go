@@ -134,6 +134,131 @@ func TestFunctionCallOutputCanBeReplayed(t *testing.T) {
 	}
 }
 
+func TestProgramOutputCanBeReplayed(t *testing.T) {
+	var item responses.ResponseOutputItemUnion
+	err := json.Unmarshal([]byte(`{
+		"id":"prg_1",
+		"type":"program",
+		"call_id":"call_prog",
+		"code":"await tools.list_files({});",
+		"fingerprint":"fp_1"
+	}`), &item)
+	if err != nil {
+		t.Fatal(err)
+	}
+	param, ok := openai.OutputItemParam(item)
+	if !ok {
+		t.Fatal("outputItemParam() rejected program item")
+	}
+	data, err := json.Marshal(param)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{`"type":"program"`, `"call_id":"call_prog"`, `"fingerprint":"fp_1"`} {
+		if !strings.Contains(string(data), expected) {
+			t.Fatalf("program JSON = %s, want %s", data, expected)
+		}
+	}
+}
+
+func TestShellCallMapsToRunCommand(t *testing.T) {
+	var item responses.ResponseOutputItemUnion
+	err := json.Unmarshal([]byte(`{
+		"id":"shell_1",
+		"type":"shell_call",
+		"call_id":"call_shell",
+		"status":"completed",
+		"action":{"commands":["rm -rf assets","rm index.html"],"timeout_ms":0,"max_output_length":0},
+		"environment":{"type":"local"}
+	}`), &item)
+	if err != nil {
+		t.Fatal(err)
+	}
+	call, ok := openai.ToolCallFromOutput(item)
+	if !ok {
+		t.Fatal("toolCallFromOutput() rejected shell_call")
+	}
+	if call.Name != "run_command" || call.ID != "call_shell" {
+		t.Fatalf("call = %+v", call)
+	}
+	if !strings.Contains(string(call.Arguments), `"rm -rf assets && rm index.html"`) &&
+		!strings.Contains(string(call.Arguments), "rm -rf assets") {
+		t.Fatalf("arguments = %s", call.Arguments)
+	}
+}
+
+func TestApplyPatchCallDeleteMapsToApplyPatch(t *testing.T) {
+	var item responses.ResponseOutputItemUnion
+	err := json.Unmarshal([]byte(`{
+		"id":"ap_1",
+		"type":"apply_patch_call",
+		"call_id":"call_patch",
+		"status":"completed",
+		"operation":{"type":"delete_file","path":"index.html"}
+	}`), &item)
+	if err != nil {
+		t.Fatal(err)
+	}
+	call, ok := openai.ToolCallFromOutput(item)
+	if !ok {
+		t.Fatal("toolCallFromOutput() rejected apply_patch_call")
+	}
+	if call.Name != "apply_patch" {
+		t.Fatalf("name = %q", call.Name)
+	}
+	if !strings.Contains(string(call.Arguments), `"action":"delete"`) ||
+		!strings.Contains(string(call.Arguments), `"path":"index.html"`) {
+		t.Fatalf("arguments = %s", call.Arguments)
+	}
+}
+
+func TestProviderRecoversFunctionCallFromOutputItemDone(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Content-Type", "text/event-stream")
+		writeSSE(t, writer, map[string]any{
+			"type": "response.output_item.done",
+			"item": map[string]any{
+				"id":        "fc_1",
+				"type":      "function_call",
+				"call_id":   "call_1",
+				"name":      "list_files",
+				"arguments": `{"path":null,"max_depth":null}`,
+				"status":    "completed",
+			},
+		})
+		writeSSE(t, writer, map[string]any{
+			"type":     "response.completed",
+			"response": responseFixture(nil),
+		})
+		_, _ = fmt.Fprint(writer, "data: [DONE]\n\n")
+	}))
+	defer server.Close()
+
+	provider := testStreamingProvider(t, server, "instructions")
+	result, err := provider.Respond(
+		context.Background(),
+		agent.ModelInput{UserText: "list files"},
+		[]agent.ToolDefinition{{
+			Name:        "list_files",
+			Description: "List files",
+			Parameters: map[string]any{
+				"type":                 "object",
+				"properties":           map[string]any{},
+				"required":             []string{},
+				"additionalProperties": false,
+			},
+			ReadOnly: true,
+		}},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("Respond() error = %v", err)
+	}
+	if len(result.ToolCalls) != 1 || result.ToolCalls[0].Name != "list_files" {
+		t.Fatalf("tool calls = %+v", result.ToolCalls)
+	}
+}
+
 func TestProviderStreamsAndResendsStatelessHistory(t *testing.T) {
 	var requests []map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
@@ -1016,6 +1141,9 @@ func TestCodexClientSendsAccountHeaders(t *testing.T) {
 	if got.Header.Get("OpenAI-Beta") != openai.CodexBetaHeader() {
 		t.Fatalf("OpenAI-Beta = %q", got.Header.Get("OpenAI-Beta"))
 	}
+	if got.Header.Get(openai.CodexResponsesLiteHeader()) != "true" {
+		t.Fatalf("lite header = %q", got.Header.Get(openai.CodexResponsesLiteHeader()))
+	}
 	if got.Header.Get("session-id") == "" {
 		t.Fatal("missing session-id")
 	}
@@ -1036,6 +1164,91 @@ func TestCodexClientSendsAccountHeaders(t *testing.T) {
 		default:
 			t.Fatalf("unsupported Codex field %q in %s", key, body)
 		}
+	}
+}
+
+func TestCodexLiteRequestPutsToolsInAdditionalTools(t *testing.T) {
+	var body []byte
+	var got http.Header
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		body, _ = io.ReadAll(request.Body)
+		got = request.Header.Clone()
+		writeCompletedText(t, writer, "ok")
+	}))
+	defer server.Close()
+
+	provider := openai.NewWithSource(
+		staticTokens{token: "oauth-token", account: "acct-123"},
+		"gpt-5.6-luna",
+		"instructions",
+		time.Second,
+	)
+	provider.SetBaseURL(server.URL)
+	_, err := provider.Respond(
+		context.Background(),
+		agent.ModelInput{UserText: "hello"},
+		[]agent.ToolDefinition{{
+			Name:        "list_files",
+			Description: "List files",
+			Parameters: map[string]any{
+				"type":                 "object",
+				"properties":           map[string]any{},
+				"required":             []string{},
+				"additionalProperties": false,
+			},
+			ReadOnly: true,
+		}},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("Respond() error = %v", err)
+	}
+	if got.Get(openai.CodexResponsesLiteHeader()) != "true" {
+		t.Fatalf("lite header = %q", got.Get(openai.CodexResponsesLiteHeader()))
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatalf("body = %s", body)
+	}
+	if payload["parallel_tool_calls"] != false {
+		t.Fatalf("parallel_tool_calls = %v, want false", payload["parallel_tool_calls"])
+	}
+	if !strings.Contains(string(body), `"context":"all_turns"`) {
+		t.Fatalf("body = %s, want reasoning.context all_turns", body)
+	}
+	input, _ := payload["input"].([]any)
+	if len(input) < 1 {
+		t.Fatalf("input = %s", body)
+	}
+	first, _ := input[0].(map[string]any)
+	if first["type"] != "additional_tools" {
+		t.Fatalf("input[0] = %s, want additional_tools", body)
+	}
+	tools, _ := first["tools"].([]any)
+	if len(tools) != 1 {
+		t.Fatalf("additional_tools = %s", body)
+	}
+	tool, _ := tools[0].(map[string]any)
+	if tool["name"] != "list_files" {
+		t.Fatalf("tool = %s", body)
+	}
+	if !strings.Contains(string(body), `"allowed_callers"`) {
+		t.Fatalf("body = %s, want allowed_callers for programmatic tools", body)
+	}
+	topTools, _ := payload["tools"].([]any)
+	if len(topTools) != 0 {
+		t.Fatalf("top-level tools = %s, want omitted for Responses Lite", body)
+	}
+}
+
+func TestUsesResponsesLite(t *testing.T) {
+	for _, model := range []string{"gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6"} {
+		if !openai.UsesResponsesLite(model) {
+			t.Fatalf("%s should use Responses Lite", model)
+		}
+	}
+	if openai.UsesResponsesLite("gpt-5.5") {
+		t.Fatal("gpt-5.5 should not use Responses Lite")
 	}
 }
 
@@ -1136,6 +1349,52 @@ func TestOAuthUsageFetchesChatGPTSubscription(t *testing.T) {
 	}
 	if report.Account.Windows[1].Name != "weekly" || report.Account.Windows[1].UsedPercent != 51 {
 		t.Fatalf("weekly window = %+v", report.Account.Windows[1])
+	}
+}
+
+func TestProviderStreamsOutputTextDoneWithoutDelta(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Content-Type", "text/event-stream")
+		writeSSE(t, writer, map[string]any{
+			"type": "response.output_text.done",
+			"text": "Hello from done.",
+		})
+		writeSSE(t, writer, map[string]any{
+			"type": "response.completed",
+			"response": responseFixture([]any{map[string]any{
+				"id":     "msg_1",
+				"type":   "message",
+				"role":   "assistant",
+				"status": "completed",
+				"content": []any{map[string]any{
+					"type": "output_text", "text": "Hello from done.", "annotations": []any{},
+				}},
+			}}),
+		})
+		_, _ = fmt.Fprint(writer, "data: [DONE]\n\n")
+	}))
+	defer server.Close()
+
+	provider := testStreamingProvider(t, server, "instructions")
+	var streamed strings.Builder
+	result, err := provider.Respond(
+		context.Background(),
+		agent.ModelInput{UserText: "hello"},
+		nil,
+		func(event agent.Event) {
+			if event.Kind == agent.EventTextDelta {
+				streamed.WriteString(event.Text)
+			}
+		},
+	)
+	if err != nil {
+		t.Fatalf("Respond() error = %v", err)
+	}
+	if result.Text != "Hello from done." {
+		t.Fatalf("text = %q", result.Text)
+	}
+	if streamed.String() != "Hello from done." {
+		t.Fatalf("streamed = %q", streamed.String())
 	}
 }
 

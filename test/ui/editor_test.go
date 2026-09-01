@@ -161,6 +161,14 @@ func TestPromptFrameWrapsWithoutRepeatingPrefix(t *testing.T) {
 	}
 }
 
+func TestCycleSessionFromAgentGoesToAsk(t *testing.T) {
+	settings := ui.REPLSettings{}
+	ui.CycleSession(&settings)
+	if !settings.Ask || settings.Plan {
+		t.Fatalf("agent→ask: ask=%v plan=%v", settings.Ask, settings.Plan)
+	}
+}
+
 func TestCycleSessionAskPlanAgentAreExclusive(t *testing.T) {
 	var ask, plan bool
 	settings := ui.REPLSettings{
@@ -175,8 +183,15 @@ func TestCycleSessionAskPlanAgentAreExclusive(t *testing.T) {
 		},
 	}
 	ui.CycleSession(&settings)
+	if settings.Ask || settings.Plan || ask || plan {
+		t.Fatalf("ask→agent: settings=%+v ask=%v plan=%v", settings, ask, plan)
+	}
+	if settings.LastSession != "ask" {
+		t.Fatalf("LastSession = %q, want ask", settings.LastSession)
+	}
+	ui.CycleSession(&settings)
 	if !settings.Plan || settings.Ask || !plan || ask {
-		t.Fatalf("ask→plan: settings=%+v ask=%v plan=%v", settings, ask, plan)
+		t.Fatalf("agent→plan: settings=%+v ask=%v plan=%v", settings, ask, plan)
 	}
 	ui.CycleSession(&settings)
 	if settings.Plan || settings.Ask || plan || ask {

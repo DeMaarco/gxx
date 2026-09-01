@@ -70,7 +70,7 @@ Install gxx from GitHub Releases.
 
 Usage:
   irm https://raw.githubusercontent.com/DeMaarco/gxx/main/install.ps1 | iex
-  powershell -File install.ps1 -Version v0.0.16
+  powershell -File install.ps1 -Version v0.0.17
   powershell -File install.ps1 -Dir `$env:LOCALAPPDATA\gxx
 
 Environment:

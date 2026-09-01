@@ -28,20 +28,27 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"gxx/internal/agent"
 	"gxx/internal/workspace"
 )
 
 const (
-	defaultListDepth = 4
-	maxListDepth     = 12
-	maxListEntries   = 1000
-	defaultReadLines = 200
-	maxReadLines     = 1000
-	maxScannedFile   = 2 * 1024 * 1024
-	maxEditableFile  = 4 * 1024 * 1024
-	maxWriteBytes    = 1024 * 1024
+	defaultListDepth    = 4
+	maxListDepth        = 12
+	maxListEntries      = 1000
+	overviewListDepth   = 3
+	overviewMaxEntries  = 40
+	defaultReadLines    = 200
+	maxReadLines        = 1000
+	maxReadBytes        = 12 * 1024
+	denseLineBytes      = 400
+	maxSearchMatchBytes = 4 * 1024
+	overviewSizeBytes   = 8 * 1024
+	maxScannedFile      = 2 * 1024 * 1024
+	maxEditableFile     = 4 * 1024 * 1024
+	maxWriteBytes       = 1024 * 1024
 )
 
 func (r *Registry) listFilesSpec() toolSpec {
@@ -69,7 +76,7 @@ func (r *Registry) searchFilesSpec() toolSpec {
 	return toolSpec{
 		definition: agent.ToolDefinition{
 			Name:        "search_files",
-			Description: "Search regular text files and return matching lines as path:line:text. query is a RE2 regular expression; if it does not compile, it is searched as a literal string. Matching is case-insensitive unless case_sensitive is true. Optional glob limits files (gitignore style, for example *.go or **/*_test.go). Default dependency directories, .gitignore, and .gxxignore patterns are skipped.",
+			Description: "Search regular text files and return matching lines as path:line:text. query is a RE2 regular expression; if it does not compile, it is searched as a literal string. A bare identifier is matched as a whole word. ALL-CAPS tokens such as TODO or FIXME are case-sensitive unless case_sensitive is false. Matching is otherwise case-insensitive unless case_sensitive is true. Optional glob limits files (gitignore style, for example *.go or **/*_test.go). Default dependency directories, .gitignore, and .gxxignore patterns are skipped.",
 			ReadOnly:    true,
 			Parameters: objectSchema(map[string]any{
 				"query": map[string]any{
@@ -102,7 +109,7 @@ func (r *Registry) readFileSpec() toolSpec {
 	return toolSpec{
 		definition: agent.ToolDefinition{
 			Name:        "read_file",
-			Description: "Read a range of lines from a workspace-relative text file. Lines are returned with line numbers.",
+			Description: "Read a range of lines from a workspace-relative text file. Lines are returned with line numbers. Default reads stop around 12KB. Minified or densely packed files are sampled once; use search_files for a selector instead of paging with offset_line. Prefer search_files for a selector in a large CSS, JSON, or lockfile.",
 			ReadOnly:    true,
 			Parameters: objectSchema(map[string]any{
 				"path": map[string]any{
@@ -155,10 +162,127 @@ func (r *Registry) listFiles(ctx context.Context, raw json.RawMessage) (string, 
 	}
 
 	matcher := r.ignoreForWalk(root)
-	reportProgressNow(ctx, root)
+	if matcher.ignores(root, true) {
+		return fmt.Sprintf("%s is ignored by default ignore, .gitignore, or .gxxignore.", path), nil
+	}
+
+	entries, omitted, err := r.walkListedEntries(ctx, root, depth, maxListEntries, true, false)
+	if err != nil {
+		return "", err
+	}
+	if len(entries) == 0 {
+		if omitted > 0 {
+			return omittedSensitiveNotice(omitted), nil
+		}
+		return "No files found.", nil
+	}
+	if len(entries) == maxListEntries {
+		entries = append(entries, "… file list limited by gxx")
+	}
+	if omitted > 0 {
+		entries = append(entries, omittedSensitiveNotice(omitted))
+	}
+	return strings.Join(entries, "\n"), nil
+}
+
+// WorkspaceOverview is a cheap depth-3 listing for the start of each user turn.
+func (r *Registry) WorkspaceOverview(ctx context.Context) string {
+	if r == nil || r.workspace == nil {
+		return ""
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	var builder strings.Builder
+	builder.WriteString("[workspace]")
+	if r.workspace.HasGit() {
+		builder.WriteString("\ngit: yes")
+	} else {
+		builder.WriteString("\ngit: no")
+	}
+	root, err := r.workspace.Clean(".")
+	if err != nil {
+		return builder.String()
+	}
+	info, err := r.workspace.Stat(root)
+	if err != nil || !info.IsDir() {
+		return builder.String()
+	}
+	entries, _, err := r.walkListedEntries(ctx, root, overviewListDepth, overviewMaxEntries, false, true)
+	if err != nil {
+		return builder.String()
+	}
+	truncated := len(entries) >= overviewMaxEntries
+	if len(entries) == 0 {
+		builder.WriteString("\nfiles: 0")
+	} else if truncated {
+		fmt.Fprintf(&builder, "\nfiles: %d+ (depth %d)", len(entries), overviewListDepth)
+	} else {
+		fmt.Fprintf(&builder, "\nfiles: %d (depth %d)", len(entries), overviewListDepth)
+	}
+	for _, entry := range entries {
+		builder.WriteByte('\n')
+		builder.WriteString(entry)
+	}
+	if truncated {
+		builder.WriteString("\n… truncated")
+	}
+	if ignored := r.topLevelIgnored(); len(ignored) > 0 {
+		builder.WriteString("\nignored: ")
+		builder.WriteString(strings.Join(ignored, ", "))
+	}
+	return builder.String()
+}
+
+func (r *Registry) topLevelIgnored() []string {
+	if r == nil || r.workspace == nil {
+		return nil
+	}
+	dirents, err := iofs.ReadDir(r.workspace.FS(), ".")
+	if err != nil {
+		return nil
+	}
+	matcher := r.ignoreForWalk(".")
+	var names []string
+	for _, entry := range dirents {
+		name := entry.Name()
+		if name == "." || name == ".." {
+			continue
+		}
+		if !matcher.ignores(name, entry.IsDir()) {
+			continue
+		}
+		if entry.IsDir() {
+			name += "/"
+		}
+		names = append(names, name)
+		if len(names) >= 8 {
+			break
+		}
+	}
+	sort.Strings(names)
+	return names
+}
+
+func (r *Registry) walkListedEntries(
+	ctx context.Context,
+	root string,
+	depth, maxEntries int,
+	progress, skipGenerated bool,
+) ([]string, int, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if maxEntries < 1 {
+		maxEntries = 1
+	}
+	matcher := r.ignoreForWalk(root)
+	if progress {
+		reportProgressNow(ctx, root)
+	}
 	var entries []string
 	omitted := 0
-	err = iofs.WalkDir(r.workspace.FS(), root, func(current string, entry iofs.DirEntry, walkErr error) error {
+	err := iofs.WalkDir(r.workspace.FS(), root, func(current string, entry iofs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return workspace.Describe(current, walkErr)
 		}
@@ -204,29 +328,25 @@ func (r *Registry) listFiles(ctx context.Context, raw json.RawMessage) (string, 
 		if entry.IsDir() {
 			display += "/"
 		}
-		reportProgress(ctx, display)
+		if skipGenerated && r.skipGeneratedOverview(current, entry.IsDir()) {
+			return nil
+		}
+		if skipGenerated && !entry.IsDir() {
+			display = r.overviewDisplay(current)
+		}
+		if progress {
+			reportProgress(ctx, display)
+		}
 		entries = append(entries, display)
-		if len(entries) >= maxListEntries {
+		if len(entries) >= maxEntries {
 			return errStopWalk
 		}
 		return nil
 	})
 	if err != nil && !errors.Is(err, errStopWalk) {
-		return "", err
+		return nil, omitted, err
 	}
-	if len(entries) == 0 {
-		if omitted > 0 {
-			return omittedSensitiveNotice(omitted), nil
-		}
-		return "No files found.", nil
-	}
-	if len(entries) == maxListEntries {
-		entries = append(entries, "… file list limited by gxx")
-	}
-	if omitted > 0 {
-		entries = append(entries, omittedSensitiveNotice(omitted))
-	}
-	return strings.Join(entries, "\n"), nil
+	return entries, omitted, nil
 }
 
 // walkDepth is 1 for a direct child of root. Paths are slash-normalized so
@@ -270,7 +390,7 @@ func (r *Registry) searchFiles(ctx context.Context, raw json.RawMessage) (string
 	if err != nil {
 		return "", fmt.Errorf("invalid glob: %w", err)
 	}
-	matchLine := compileSearchMatcher(query, optionalBool(args.CaseSensitive, false))
+	matchLine := compileSearchMatcher(query, args.CaseSensitive)
 
 	target, err := r.workspace.Clean(path)
 	if err != nil {
@@ -308,6 +428,9 @@ func (r *Registry) searchFiles(ctx context.Context, raw json.RawMessage) (string
 			return "", err
 		}
 	} else if info.IsDir() {
+		if matcher.ignores(target, true) {
+			return fmt.Sprintf("%s is ignored by default ignore, .gitignore, or .gxxignore.", path), nil
+		}
 		err = iofs.WalkDir(r.workspace.FS(), target, func(current string, entry iofs.DirEntry, walkErr error) error {
 			if walkErr != nil {
 				return workspace.Describe(current, walkErr)
@@ -390,13 +513,23 @@ func (r *Registry) readFile(ctx context.Context, raw json.RawMessage) (string, e
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
 		return "", err
 	}
+	dense, size := fileLooksDense(file)
+	if dense && offset > 1 {
+		kb := (size + 1023) / 1024
+		if kb < 1 {
+			kb = 1
+		}
+		return fmt.Sprintf("%s is dense (%dKB). Do not page it; this file was already sampled.", args.Path, kb), nil
+	}
 
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+	budget := maxReadBytes
 	var output strings.Builder
 	lineNumber := 0
 	written := 0
 	stoppedEarly := false
+	stoppedBytes := false
 	for scanner.Scan() {
 		if err := ctx.Err(); err != nil {
 			return "", err
@@ -409,8 +542,22 @@ func (r *Registry) readFile(ctx context.Context, raw json.RawMessage) (string, e
 			stoppedEarly = true
 			break
 		}
-		fmt.Fprintf(&output, "%6d|%s\n", lineNumber, scanner.Text())
+		line := scanner.Text()
+		if output.Len() > 0 && output.Len()+len(line)+8 > budget {
+			stoppedEarly = true
+			stoppedBytes = true
+			break
+		}
+		if len(line) > budget && written == 0 {
+			line = clipToBytes(line, budget)
+			stoppedBytes = true
+			stoppedEarly = true
+		}
+		fmt.Fprintf(&output, "%6d|%s\n", lineNumber, line)
 		written++
+		if stoppedBytes {
+			break
+		}
 	}
 	if err := scanner.Err(); err != nil {
 		return "", err
@@ -420,20 +567,158 @@ func (r *Registry) readFile(ctx context.Context, raw json.RawMessage) (string, e
 	}
 	body := strings.TrimSuffix(output.String(), "\n")
 	if stoppedEarly {
+		if stoppedBytes {
+			if dense {
+				return body + denseFileSuffix(scanner, lineNumber, size), nil
+			}
+			return fmt.Sprintf("%s\n… truncated at %dKB; prefer search_files for more of this file", body, maxReadBytes/1024), nil
+		}
 		return body + "\n… more lines follow", nil
 	}
 	return fmt.Sprintf("%s\n(end of file, %d lines)", body, lineNumber), nil
 }
 
-func compileSearchMatcher(query string, caseSensitive bool) func(string) bool {
-	pattern := query
-	if !caseSensitive {
-		pattern = "(?i)" + query
+func denseFileSuffix(scanner *bufio.Scanner, startLine int, size int64) string {
+	kb := (size + 1023) / 1024
+	if kb < 1 {
+		kb = 1
 	}
+	var extra strings.Builder
+	fmt.Fprintf(&extra, "\n… dense file (%dKB). Later markers:", kb)
+	n := 0
+	lineNumber := startLine
+	for scanner.Scan() {
+		lineNumber++
+		text := scanner.Text()
+		idx := strings.Index(text, "/*")
+		if idx < 0 {
+			continue
+		}
+		marker := strings.TrimSpace(text[idx:])
+		if end := strings.Index(marker, "*/"); end >= 0 {
+			marker = marker[:end+2]
+		} else {
+			marker = truncateLine(marker, 80)
+		}
+		fmt.Fprintf(&extra, "\n%d %s", lineNumber, marker)
+		n++
+		if n >= 20 {
+			break
+		}
+	}
+	if n == 0 {
+		return fmt.Sprintf("\n… dense file (%dKB); this sample is enough to summarize", kb)
+	}
+	return extra.String()
+}
+
+func clipToBytes(value string, limit int) string {
+	if limit <= 0 || len(value) <= limit {
+		return value
+	}
+	keep := limit
+	for keep > 0 && !utf8.RuneStart(value[keep]) {
+		keep--
+	}
+	return value[:keep]
+}
+
+func (r *Registry) skipGeneratedOverview(path string, isDir bool) bool {
+	if isDir || r == nil || r.workspace == nil {
+		return false
+	}
+	if strings.HasSuffix(path, ".d.ts") {
+		return true
+	}
+	name := path
+	if i := strings.LastIndex(path, "/"); i >= 0 {
+		name = path[i+1:]
+	}
+	switch name {
+	case "package-lock.json", "yarn.lock", "pnpm-lock.yaml", "bun.lock", "bun.lockb",
+		"composer.lock", "Cargo.lock", "poetry.lock", "Gemfile.lock":
+		return true
+	}
+	if !strings.HasSuffix(path, ".js") {
+		return false
+	}
+	base := strings.TrimSuffix(path, ".js")
+	if _, err := r.workspace.Stat(base + ".ts"); err == nil {
+		return true
+	}
+	if _, err := r.workspace.Stat(base + ".tsx"); err == nil {
+		return true
+	}
+	return false
+}
+
+func (r *Registry) overviewDisplay(path string) string {
+	if r == nil || r.workspace == nil {
+		return path
+	}
+	info, err := r.workspace.Stat(path)
+	if err != nil || info.IsDir() || info.Size() < overviewSizeBytes {
+		return path
+	}
+	return fmt.Sprintf("%s (%dKB)", path, info.Size()/1024)
+}
+
+func fileLooksDense(file *os.File) (bool, int64) {
+	if file == nil {
+		return false, 0
+	}
+	var size int64
+	if info, err := file.Stat(); err == nil {
+		size = info.Size()
+	}
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		return false, size
+	}
+	buf := make([]byte, 8*1024)
+	n, err := io.ReadFull(file, buf)
+	if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
+		_, _ = file.Seek(0, io.SeekStart)
+		return false, size
+	}
+	if n < 0 {
+		n = 0
+	}
+	sample := buf[:n]
+	maxLine := 0
+	cur := 0
+	lines := 1
+	for _, b := range sample {
+		if b == '\n' {
+			if cur > maxLine {
+				maxLine = cur
+			}
+			cur = 0
+			lines++
+			continue
+		}
+		cur++
+	}
+	if cur > maxLine {
+		maxLine = cur
+	}
+	_, _ = file.Seek(0, io.SeekStart)
+	if maxLine >= denseLineBytes {
+		return true, size
+	}
+	if lines > 0 && n/lines >= denseLineBytes/2 && size >= 16*1024 {
+		return true, size
+	}
+	return false, size
+}
+
+func compileSearchMatcher(query string, caseSensitive *bool) func(string) bool {
+	explicitCase := caseSensitive != nil
+	sensitive := optionalBool(caseSensitive, false)
+	pattern, sensitive := searchPattern(query, sensitive, explicitCase)
 	if re, err := regexp.Compile(pattern); err == nil {
 		return re.MatchString
 	}
-	if caseSensitive {
+	if sensitive {
 		return func(line string) bool {
 			return strings.Contains(line, query)
 		}
@@ -442,6 +727,54 @@ func compileSearchMatcher(query string, caseSensitive bool) func(string) bool {
 	return func(line string) bool {
 		return strings.Contains(strings.ToLower(line), needle)
 	}
+}
+
+func searchPattern(query string, caseSensitive, explicitCase bool) (string, bool) {
+	if isScreamingToken(query) && !explicitCase {
+		caseSensitive = true
+	}
+	if isBareIdentifier(query) {
+		pattern := `\b` + regexp.QuoteMeta(query) + `\b`
+		if !caseSensitive {
+			return "(?i)" + pattern, caseSensitive
+		}
+		return pattern, caseSensitive
+	}
+	if !caseSensitive {
+		return "(?i)" + query, caseSensitive
+	}
+	return query, caseSensitive
+}
+
+func isBareIdentifier(query string) bool {
+	if query == "" {
+		return false
+	}
+	for i, r := range query {
+		if r == '_' || (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') {
+			continue
+		}
+		if i > 0 && r >= '0' && r <= '9' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func isScreamingToken(query string) bool {
+	hasLetter := false
+	for _, r := range query {
+		if r >= 'A' && r <= 'Z' {
+			hasLetter = true
+			continue
+		}
+		if r == '_' || (r >= '0' && r <= '9') {
+			continue
+		}
+		return false
+	}
+	return hasLetter
 }
 
 func (r *Registry) searchTextFile(
@@ -469,6 +802,7 @@ func (r *Registry) searchTextFile(
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
 	var matches []string
+	used := 0
 	line := 0
 	for scanner.Scan() {
 		if err := ctx.Err(); err != nil {
@@ -476,12 +810,23 @@ func (r *Registry) searchTextFile(
 		}
 		line++
 		text := scanner.Text()
-		if match(text) {
-			text = truncateLine(text, 300)
-			matches = append(matches, fmt.Sprintf("%s:%d:%s", path, line, text))
-			if len(matches) >= limit {
-				break
-			}
+		if !match(text) {
+			continue
+		}
+		clip := 300
+		if len(text) > denseLineBytes {
+			clip = 120
+		}
+		text = truncateLine(text, clip)
+		item := fmt.Sprintf("%s:%d:%s", path, line, text)
+		if used > 0 && used+len(item)+1 > maxSearchMatchBytes {
+			matches = append(matches, "… search result truncated")
+			break
+		}
+		matches = append(matches, item)
+		used += len(item) + 1
+		if len(matches) >= limit {
+			break
 		}
 	}
 	return matches, scanner.Err()

@@ -128,11 +128,23 @@ func streamResponse(
 
 	var completed *responses.Response
 	var streamError error
+	var streamedText bool
+	var streamedItems []responses.ResponseOutputItemUnion
 	for stream.Next() {
 		event := stream.Current()
 		switch event.Type {
 		case "response.output_text.delta":
+			streamedText = true
 			agent.Emit(emit, agent.Event{Kind: agent.EventTextDelta, Text: event.Delta})
+		case "response.output_text.done":
+			if !streamedText && event.Text != "" {
+				streamedText = true
+				agent.Emit(emit, agent.Event{Kind: agent.EventTextDelta, Text: event.Text})
+			}
+		case "response.output_item.done":
+			if event.Item.Type != "" {
+				streamedItems = append(streamedItems, event.Item)
+			}
 		case "response.refusal.delta":
 			agent.Emit(emit, agent.Event{Kind: agent.EventTextDelta, Text: event.Delta})
 		case "response.completed", "response.failed", "response.incomplete":
@@ -150,6 +162,9 @@ func streamResponse(
 	}
 	if completed == nil {
 		return nil, raw, errors.New("OpenAI stream ended without a completed response")
+	}
+	if len(completed.Output) == 0 && len(streamedItems) > 0 {
+		completed.Output = streamedItems
 	}
 	if completed.Status != responses.ResponseStatusCompleted {
 		return completed, raw, responseStatusError(*completed)

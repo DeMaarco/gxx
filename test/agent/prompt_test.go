@@ -49,8 +49,26 @@ func TestSystemPromptReadsOnlyBoundedWorkspaceInstructions(t *testing.T) {
 	if !strings.Contains(prompt, "make the in-scope local changes") {
 		t.Fatalf("prompt = %q, want agent instructions", prompt)
 	}
+	if !strings.Contains(prompt, "Do not rewrite or reformat them as a cleanup") {
+		t.Fatalf("prompt = %q, want delete-not-reformat rule", prompt)
+	}
+	if strings.Contains(prompt, "git_status") || strings.Contains(prompt, "Git tools are available") {
+		t.Fatalf("prompt = %q, did not want git tools without a repository", prompt)
+	}
 	if !strings.Contains(prompt, "generate_image") || !strings.Contains(prompt, "gpt-image-2") {
 		t.Fatalf("prompt = %q, want image generation instructions", prompt)
+	}
+	if !strings.Contains(prompt, "workspace listing is prepended") {
+		t.Fatalf("prompt = %q, want workspace listing note", prompt)
+	}
+	if !strings.Contains(prompt, "do not guess sibling folders") {
+		t.Fatalf("prompt = %q, want exact listing paths", prompt)
+	}
+	if !strings.Contains(prompt, "Issue independent read-only tool calls together") {
+		t.Fatalf("prompt = %q, want batched read-only calls", prompt)
+	}
+	if !strings.Contains(prompt, "If a read is truncated, work from that slice") {
+		t.Fatalf("prompt = %q, want truncated-read budget", prompt)
 	}
 
 	if err := os.WriteFile(
@@ -125,6 +143,12 @@ func TestSystemPromptAskModeUsesReadOnlyInstructions(t *testing.T) {
 	if !strings.Contains(prompt, "ask mode") {
 		t.Fatalf("prompt = %q, want ask mode instructions", prompt)
 	}
+	if !strings.Contains(prompt, "Do not audit the tree first") {
+		t.Fatalf("prompt = %q, want ask-mode cleanup to stop without auditing", prompt)
+	}
+	if !strings.Contains(prompt, "Do not read a stack of files to draft the edit") {
+		t.Fatalf("prompt = %q, want ask-mode improve to stop without a redesign pass", prompt)
+	}
 	if !strings.Contains(prompt, "read-only") {
 		t.Fatalf("prompt = %q, want read-only wording", prompt)
 	}
@@ -133,6 +157,31 @@ func TestSystemPromptAskModeUsesReadOnlyInstructions(t *testing.T) {
 	}
 	if strings.Contains(prompt, "plan mode") {
 		t.Fatalf("ask prompt included plan instructions")
+	}
+}
+
+func TestSystemPromptIncludesGitOnlyWhenWorkspaceHasRepo(t *testing.T) {
+	root := t.TempDir()
+	ws, err := workspace.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ws.Close()
+
+	plain := agent.SystemPrompt(ws, false)
+	if strings.Contains(plain, "git_status") || strings.Contains(plain, "Git tools are available") {
+		t.Fatalf("prompt without .git included git tools: %q", plain)
+	}
+
+	if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	withGit := agent.SystemPrompt(ws, false)
+	if !strings.Contains(withGit, "Git tools are available") {
+		t.Fatalf("prompt with .git = %q, want git instructions", withGit)
+	}
+	if !strings.Contains(withGit, "Do not call all three on every turn") {
+		t.Fatalf("prompt with .git = %q, want no-ritual git wording", withGit)
 	}
 }
 

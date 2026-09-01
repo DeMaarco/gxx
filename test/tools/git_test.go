@@ -180,8 +180,12 @@ func TestGitToolsRejectRepoOutsideWorkspace(t *testing.T) {
 	}
 }
 
-func TestPlanModeIncludesGitTools(t *testing.T) {
-	registry := newTestRegistry(t, t.TempDir(), &staticApprover{}, tools.Options{
+func TestPlanModeIncludesGitToolsInRepo(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	registry := newTestRegistry(t, root, &staticApprover{}, tools.Options{
 		MaxResultBytes:  1024,
 		MaxSearchResult: 10,
 		ParallelReads:   1,
@@ -197,7 +201,22 @@ func TestPlanModeIncludesGitTools(t *testing.T) {
 	}
 	for _, name := range []string{"git_status", "git_diff", "git_log"} {
 		if !found[name] {
-			t.Fatalf("plan mode hid %s", name)
+			t.Fatalf("plan mode hid %s in a git workspace", name)
+		}
+	}
+}
+
+func TestDefinitionsHideGitToolsWithoutRepo(t *testing.T) {
+	registry := newTestRegistry(t, t.TempDir(), &staticApprover{}, tools.Options{
+		MaxResultBytes:  1024,
+		MaxSearchResult: 10,
+		ParallelReads:   1,
+		CommandTimeout:  time.Second,
+	})
+	for _, def := range registry.Definitions() {
+		switch def.Name {
+		case "git_status", "git_diff", "git_log":
+			t.Fatalf("exposed %s without a git repository", def.Name)
 		}
 	}
 }

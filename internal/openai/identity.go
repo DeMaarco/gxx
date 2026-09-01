@@ -14,13 +14,29 @@
 
 package openai
 
+import "strings"
+
 // Codex backend identity. Isolated so a header or host change stays in one file.
 // Do not impersonate the official Codex CLI originator.
 const (
-	codexAPIBaseURL = "https://chatgpt.com/backend-api/codex"
-	codexBetaHeader = "responses=experimental"
-	codexOriginator = "gxx"
-	codexAccountHdr = "ChatGPT-Account-ID"
+	codexAPIBaseURL          = "https://chatgpt.com/backend-api/codex"
+	codexBetaHeader          = "responses=experimental"
+	codexOriginator          = "gxx"
+	codexAccountHdr          = "ChatGPT-Account-ID"
+	codexResponsesLiteHeader = "x-openai-internal-codex-responses-lite"
 
 	defaultCodexInstructions = "You are gxx, a local coding agent."
 )
+
+// usesResponsesLite reports whether ChatGPT Codex expects the Responses Lite
+// wire format for this model: tools in an additional_tools input item and the
+// x-openai-internal-codex-responses-lite header. gpt-5.6-sol/terra/luna emit
+// program items instead of function_call unless that contract is used.
+func usesResponsesLite(model string) bool {
+	switch strings.ToLower(strings.TrimSpace(model)) {
+	case "gpt-5.6", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna":
+		return true
+	default:
+		return strings.HasPrefix(strings.ToLower(strings.TrimSpace(model)), "gpt-5.6-")
+	}
+}

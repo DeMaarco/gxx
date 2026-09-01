@@ -109,6 +109,15 @@ func sanitizeCodexRequest(req *http.Request, next option.MiddlewareNext) (*http.
 			req.GetBody = func() (io.ReadCloser, error) {
 				return io.NopCloser(bytes.NewReader(sanitized)), nil
 			}
+			var payload map[string]any
+			if json.Unmarshal(sanitized, &payload) == nil {
+				model, _ := payload["model"].(string)
+				if usesResponsesLite(model) {
+					req.Header.Set(codexResponsesLiteHeader, "true")
+				} else {
+					req.Header.Del(codexResponsesLiteHeader)
+				}
+			}
 		}
 	}
 	resp, err := next(req)

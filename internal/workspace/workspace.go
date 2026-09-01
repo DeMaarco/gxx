@@ -61,6 +61,16 @@ func (w *Workspace) Root() string {
 	return w.root
 }
 
+// HasGit reports whether the workspace root contains a .git directory or
+// gitfile. Nested or parent repositories outside the root do not count.
+func (w *Workspace) HasGit() bool {
+	if w == nil {
+		return false
+	}
+	_, err := w.Lstat(".git")
+	return err == nil
+}
+
 func (w *Workspace) Close() error {
 	if w.guard == nil {
 		return nil

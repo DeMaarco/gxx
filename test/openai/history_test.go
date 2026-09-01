@@ -203,3 +203,95 @@ func TestSummarizeDroppedIncludesToolsAndErrors(t *testing.T) {
 		t.Fatalf("summary = %q, want tool error", got)
 	}
 }
+
+func TestDropOldProgramsKeepsCurrentTurn(t *testing.T) {
+	oldProgram := responses.ResponseInputItemUnionParam{
+		OfProgram: &responses.ResponseInputItemProgramParam{
+			ID:          "prg_old",
+			CallID:      "call_old",
+			Code:        "old.program()",
+			Fingerprint: "fp_old",
+		},
+	}
+	oldOutput := responses.ResponseInputItemUnionParam{
+		OfProgramOutput: &responses.ResponseInputItemProgramOutputParam{
+			ID:     "out_old",
+			CallID: "call_old",
+			Result: "old result",
+			Status: "completed",
+		},
+	}
+	newProgram := responses.ResponseInputItemUnionParam{
+		OfProgram: &responses.ResponseInputItemProgramParam{
+			ID:          "prg_new",
+			CallID:      "call_new",
+			Code:        "new.program()",
+			Fingerprint: "fp_new",
+		},
+	}
+	items := []responses.ResponseInputItemUnionParam{
+		responses.ResponseInputItemParamOfMessage("first", responses.EasyInputMessageRoleUser),
+		oldProgram,
+		oldOutput,
+		responses.ResponseInputItemParamOfFunctionCall(`{}`, "call_fn", "read_file"),
+		openai.FunctionCallOutputParam("call_fn", "ok"),
+		responses.ResponseInputItemParamOfMessage("second", responses.EasyInputMessageRoleUser),
+		newProgram,
+	}
+	got := openai.DropOldPrograms(items)
+	all, _ := json.Marshal(got)
+	if strings.Contains(string(all), "old.program()") || strings.Contains(string(all), "old result") {
+		t.Fatalf("kept old program replay: %s", all)
+	}
+	if !strings.Contains(string(all), "new.program()") {
+		t.Fatalf("dropped current-turn program: %s", all)
+	}
+	if !strings.Contains(string(all), "function_call") || !strings.Contains(string(all), "call_fn") {
+		t.Fatalf("dropped function call history: %s", all)
+	}
+}
+
+func TestSlimInputLevelZeroDropsOldProgramsAndReasoning(t *testing.T) {
+	items := []responses.ResponseInputItemUnionParam{
+		responses.ResponseInputItemParamOfMessage("first", responses.EasyInputMessageRoleUser),
+		{OfReasoning: &responses.ResponseReasoningItemParam{ID: "rs_old"}},
+		{OfProgram: &responses.ResponseInputItemProgramParam{
+			ID:          "prg_old",
+			CallID:      "call_old",
+			Code:        "old.program()",
+			Fingerprint: "fp_old",
+		}},
+		responses.ResponseInputItemParamOfMessage("second", responses.EasyInputMessageRoleUser),
+		{OfReasoning: &responses.ResponseReasoningItemParam{ID: "rs_new"}},
+		{OfProgram: &responses.ResponseInputItemProgramParam{
+			ID:          "prg_new",
+			CallID:      "call_new",
+			Code:        "new.program()",
+			Fingerprint: "fp_new",
+		}},
+	}
+	got := openai.SlimInput(items, 0, 0, 0)
+	all, _ := json.Marshal(got)
+	if strings.Contains(string(all), "rs_old") || strings.Contains(string(all), "old.program()") {
+		t.Fatalf("eco 0 replayed prior turn: %s", all)
+	}
+	if !strings.Contains(string(all), "rs_new") || !strings.Contains(string(all), "new.program()") {
+		t.Fatalf("eco 0 dropped current turn: %s", all)
+	}
+}
+
+func TestDropAllPrograms(t *testing.T) {
+	items := []responses.ResponseInputItemUnionParam{
+		responses.ResponseInputItemParamOfMessage("task", responses.EasyInputMessageRoleUser),
+		{OfProgram: &responses.ResponseInputItemProgramParam{
+			ID:          "prg_1",
+			CallID:      "call_1",
+			Code:        "code()",
+			Fingerprint: "fp",
+		}},
+	}
+	got := openai.DropAllPrograms(items)
+	if len(got) != 1 || got[0].OfMessage == nil {
+		t.Fatalf("got = %#v, want user message only", got)
+	}
+}

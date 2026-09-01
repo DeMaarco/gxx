@@ -46,7 +46,7 @@ import (
 	"gxx/internal/workspace"
 )
 
-var Version = "0.0.16"
+var Version = "0.0.17"
 
 type runtime struct {
 	config    config.Config
@@ -147,7 +147,7 @@ func runInteractive(
 		return 2
 	}
 	defer rt.workspace.Close()
-	startSession(rt, !settings.permissionFlag)
+	startSession(rt, false)
 	session := replSettings(rt, stdin, stdout)
 	rt.startModelRefresh()
 	err = ui.RunREPL(
@@ -587,6 +587,7 @@ func newRuntimeFromConfig(
 		Model:    model,
 		Executor: registry,
 		MaxSteps: settings.MaxSteps,
+		Overview: registry.WorkspaceOverview,
 	}
 	renderer := ui.NewRendererWithColor(stdout, ui.ColorEnabled(stdout))
 	prompt.SetHold(func() func() {
@@ -745,6 +746,9 @@ func applyEcoRuntime(rt *runtime) error {
 	return nil
 }
 
+// startSession selects the exclusive session mode. The REPL starts in agent so
+// /mode auto and auto-writes actually apply. gxx ask starts read-only unless
+// --permission was passed.
 func startSession(rt *runtime, ask bool) {
 	if rt == nil {
 		return
@@ -1204,7 +1208,7 @@ func printCommonFlags(writer io.Writer) {
 	fmt.Fprintln(writer, "                          ask confirms writes and commands; auto-writes applies files; auto applies files and commands")
 	fmt.Fprintln(writer, "                          Ask/plan session modes only read files and ignore this flag")
 	fmt.Fprintln(writer, "  --fast                  Use the provider fast service tier when available")
-	fmt.Fprintln(writer, "  --max-steps int         Maximum model steps (default: 40)")
+	fmt.Fprintln(writer, "  --max-steps int         Maximum model steps (default: 12)")
 	fmt.Fprintln(writer, "  --command-timeout dur   Maximum command duration (default: 2m)")
 	fmt.Fprintln(writer, "  --api-timeout dur       Timeout per model response (default: 10m)")
 }

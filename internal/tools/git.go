@@ -41,7 +41,7 @@ func (r *Registry) gitStatusSpec() toolSpec {
 	return toolSpec{
 		definition: agent.ToolDefinition{
 			Name:        "git_status",
-			Description: "Show git status for the workspace repository (porcelain). Read-only. Sensitive paths are omitted. Fails if the git root or git dir is outside the workspace.",
+			Description: "Show git status for the workspace repository (porcelain). Read-only. Use when uncommitted files matter; not on every turn. Sensitive paths are omitted. Fails if the git root or git dir is outside the workspace.",
 			ReadOnly:    true,
 			Parameters: map[string]any{
 				"type":                 "object",
@@ -58,7 +58,7 @@ func (r *Registry) gitDiffSpec() toolSpec {
 	return toolSpec{
 		definition: agent.ToolDefinition{
 			Name:        "git_diff",
-			Description: "Show git diff for the workspace repository. Optional path limits the diff. staged true uses the index. Read-only. Sensitive paths are omitted.",
+			Description: "Show git diff for the workspace repository. Optional path limits the diff. staged true uses the index. Read-only. Use when you need the patch; not on every turn. Sensitive paths are omitted.",
 			ReadOnly:    true,
 			Parameters: objectSchema(map[string]any{
 				"path": map[string]any{
@@ -79,7 +79,7 @@ func (r *Registry) gitLogSpec() toolSpec {
 	return toolSpec{
 		definition: agent.ToolDefinition{
 			Name:        "git_log",
-			Description: "Show recent git commits as one line each. Read-only.",
+			Description: "Show recent git commits as one line each. Read-only. Use when history matters; not on every turn.",
 			ReadOnly:    true,
 			Parameters: objectSchema(map[string]any{
 				"max_count": map[string]any{

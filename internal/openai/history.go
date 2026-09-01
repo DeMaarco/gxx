@@ -102,9 +102,9 @@ func functionCallID(item responses.ResponseInputItemUnionParam) (id string, isCa
 		return "", false, false
 	}
 	switch parsed.Type {
-	case "function_call":
+	case "function_call", "custom_tool_call", "shell_call", "local_shell_call", "apply_patch_call":
 		return parsed.CallID, true, false
-	case "function_call_output":
+	case "function_call_output", "custom_tool_call_output", "shell_call_output", "local_shell_call_output", "apply_patch_call_output":
 		return parsed.CallID, false, true
 	default:
 		return "", false, false
@@ -143,7 +143,7 @@ func (p *Provider) shouldCompact(userText string) bool {
 
 func (p *Provider) compactLocked(emit agent.EmitFunc) {
 	original := len(p.history)
-	p.history = dropOldReasoning(p.history)
+	p.history = dropOldPrograms(dropOldReasoning(p.history))
 	if p.overTarget(p.history) || (p.lastInputTokens > 0 && p.lastInputTokens > p.compactTarget()) {
 		p.history = dropOldTurns(p.history, p.compactTarget(), p.instructions)
 	}
@@ -177,6 +177,7 @@ func emergencyFit(
 	instructions string,
 ) []responses.ResponseInputItemUnionParam {
 	items = dropAllReasoning(items)
+	items = dropAllPrograms(items)
 	items = clipAllToolOutputs(items, emergencyToolClipBytes)
 	if window > 0 {
 		items = dropOldTurns(items, int64(window)/2, instructions)
@@ -208,10 +209,10 @@ func clipAllToolOutputs(items []responses.ResponseInputItemUnionParam, maxBytes 
 }
 
 func slimInput(items []responses.ResponseInputItemUnionParam, level, keep, clip int) []responses.ResponseInputItemUnionParam {
+	items = dropOldPrograms(dropOldReasoning(items))
 	if level <= 0 {
 		return items
 	}
-	items = dropOldReasoning(items)
 	items = compressInputProse(items, level)
 	switch {
 	case level >= 3:
@@ -325,6 +326,38 @@ func clipOldUserMessages(items []responses.ResponseInputItemUnionParam, keep, ma
 		)
 	}
 	return out
+}
+
+func isProgramItem(item responses.ResponseInputItemUnionParam) bool {
+	return item.OfProgram != nil || item.OfProgramOutput != nil
+}
+
+func dropAllPrograms(items []responses.ResponseInputItemUnionParam) []responses.ResponseInputItemUnionParam {
+	kept := make([]responses.ResponseInputItemUnionParam, 0, len(items))
+	for _, item := range items {
+		if isProgramItem(item) {
+			continue
+		}
+		kept = append(kept, item)
+	}
+	return kept
+}
+
+func dropOldPrograms(items []responses.ResponseInputItemUnionParam) []responses.ResponseInputItemUnionParam {
+	lastUser := -1
+	for index, item := range items {
+		if itemKind(item) == "user" {
+			lastUser = index
+		}
+	}
+	kept := make([]responses.ResponseInputItemUnionParam, 0, len(items))
+	for index, item := range items {
+		if isProgramItem(item) && (lastUser < 0 || index < lastUser) {
+			continue
+		}
+		kept = append(kept, item)
+	}
+	return kept
 }
 
 func dropAllReasoning(items []responses.ResponseInputItemUnionParam) []responses.ResponseInputItemUnionParam {

@@ -45,6 +45,7 @@ type REPLSettings struct {
 	Fast                bool
 	Ask                 bool
 	Plan                bool
+	LastSession         string
 	Workspace           string
 	Color               bool
 	Stdin               *os.File
@@ -848,7 +849,7 @@ func printREPLHelp(writer io.Writer, settings REPLSettings) {
 		writer,
 		"%s  %s\n",
 		paint(settings.Color, cyan, "Shift+Tab"),
-		paint(settings.Color, dim, "Cycle ask, plan, and agent; ask and plan never overlap. After a plan, choose execute, request changes, or cancel"),
+		paint(settings.Color, dim, "From ask or plan, return to agent; from agent, cycle ask and plan. After a plan, choose execute, request changes, or cancel"),
 	)
 }
 
@@ -905,14 +906,20 @@ func cycleSession(settings *REPLSettings) {
 	if settings == nil {
 		return
 	}
-	switch {
-	case settings.Plan:
+	if settings.Ask || settings.Plan {
+		if settings.Ask {
+			settings.LastSession = "ask"
+		} else {
+			settings.LastSession = "plan"
+		}
 		applySession(settings, false, false)
-	case settings.Ask:
-		applySession(settings, false, true)
-	default:
-		applySession(settings, true, false)
+		return
 	}
+	if settings.LastSession == "ask" {
+		applySession(settings, false, true)
+		return
+	}
+	applySession(settings, true, false)
 }
 
 func applySession(settings *REPLSettings, ask, plan bool) {
@@ -934,6 +941,11 @@ func applySession(settings *REPLSettings, ask, plan bool) {
 		if err := settings.SetAsk(ask); err != nil {
 			return
 		}
+	}
+	if ask {
+		settings.LastSession = "ask"
+	} else if plan {
+		settings.LastSession = "plan"
 	}
 	settings.Ask = ask
 	settings.Plan = plan
