@@ -205,11 +205,21 @@ func TestPlanModeIncludesGitTools(t *testing.T) {
 func TestPathInsideWorkspaceHandlesWindowsCase(t *testing.T) {
 	root := t.TempDir()
 	child := filepath.Join(root, "src", "main.go")
+	if err := os.MkdirAll(filepath.Dir(child), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(child, []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if !tools.PathInsideWorkspace(root, child) {
 		t.Fatalf("child %q should be inside %q", child, root)
 	}
 	if tools.PathInsideWorkspace(root, root+"-other") {
 		t.Fatalf("sibling %q should not be inside %q", root+"-other", root)
+	}
+	missing := filepath.Join(root, "no-such", "file.go")
+	if !tools.PathInsideWorkspace(root, missing) {
+		t.Fatalf("missing child %q should be inside %q", missing, root)
 	}
 	if runtime.GOOS == "windows" {
 		mixed := strings.ToUpper(root)

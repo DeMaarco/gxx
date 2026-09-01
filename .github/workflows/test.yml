@@ -18,7 +18,7 @@ jobs:
           - os: macos-latest
             race: "-race"
           - os: windows-latest
-            race: ""
+            race: "-race"
     runs-on: ${{ matrix.os }}
     steps:
       - name: Check out
@@ -29,5 +29,19 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Vet
+        run: go vet ./...
+
       - name: Test
         run: go test ${{ matrix.race }} ./test/...
+
+  govulncheck:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Govulncheck
+        uses: golang/govulncheck-action@v1
+        with:
+          go-version-file: go.mod

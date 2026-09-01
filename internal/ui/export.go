@@ -78,7 +78,8 @@ var (
 	EncodeModeCommand   = encodeModeCommand
 	MatchingCommands    = matchingCommands
 	LookupSlashCommand  = lookupSlashCommand
-	TogglePlan          = togglePlan
+	TogglePlan          = cycleSession
+	CycleSession        = cycleSession
 	ImplementPlanPrompt = implementPlanPrompt
 	EcoLabel            = ecoLabel
 	FormatEcoStatus     = formatEcoStatus

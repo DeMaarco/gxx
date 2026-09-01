@@ -284,3 +284,51 @@ func TestRunLogoutOpenAIClearsCodexTokens(t *testing.T) {
 		t.Fatalf("openai tokens still present: %+v", tokens)
 	}
 }
+
+func TestPipedAskStaysOnAskUnlessPermissionFlag(t *testing.T) {
+	if got := app.ConstrainPipedPermission(false, false, config.PermissionAuto); got != config.PermissionAsk {
+		t.Fatalf("piped without flag = %q, want ask", got)
+	}
+	if got := app.ConstrainPipedPermission(false, true, config.PermissionAuto); got != config.PermissionAuto {
+		t.Fatalf("piped with --permission = %q, want auto", got)
+	}
+	if got := app.ConstrainPipedPermission(true, false, config.PermissionAuto); got != config.PermissionAuto {
+		t.Fatalf("interactive = %q, want saved auto", got)
+	}
+}
+
+func TestLogoutHelpDescribesActiveAccount(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := app.Run(context.Background(), []string{"help", "logout"}, strings.NewReader(""), &stdout, &stderr, false)
+	if code != 0 {
+		t.Fatalf("Run() code = %d, stderr = %q", code, stderr.String())
+	}
+	text := stdout.String()
+	if strings.Contains(text, "picker") {
+		t.Fatalf("logout help still mentions a picker: %q", text)
+	}
+	if !strings.Contains(text, "active account") {
+		t.Fatalf("logout help = %q, want active account", text)
+	}
+	if !strings.Contains(text, "gxx logout api") {
+		t.Fatalf("logout help = %q, want api", text)
+	}
+}
+
+func TestBundledAccountModelsMatchesCatalog(t *testing.T) {
+	settings := config.Config{
+		Model:  config.DefaultModel,
+		APIKey: "test-key",
+	}
+	got := app.BundledAccountModels(settings)
+	if len(got) == 0 {
+		t.Fatal("bundled OpenAI catalog was empty")
+	}
+	for _, model := range got {
+		if model == config.DefaultModel {
+			return
+		}
+	}
+	t.Fatalf("bundled = %#v, want %s", got, config.DefaultModel)
+}

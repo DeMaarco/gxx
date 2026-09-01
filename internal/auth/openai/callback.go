@@ -17,6 +17,7 @@ package openai
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -156,9 +157,12 @@ func (s *CallbackServer) handle(writer http.ResponseWriter, request *http.Reques
 		_, _ = io.WriteString(writer, fragmentRecoveryHTML)
 		return
 	}
-	// ChatGPT sometimes omits or rewrites `state` (Safari ITP, simplified
-	// flow, a leftover listener on :1455). This server is localhost and
-	// one-shot; PKCE still binds the code to this login.
+	if !stateEqual(state, s.State) {
+		writer.Header().Set("Content-Type", "text/html; charset=utf-8")
+		writer.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(writer, "<!doctype html><title>gxx</title><p>Login failed: invalid OAuth state.</p>")
+		return
+	}
 	s.finish(writer, http.StatusOK, "Login complete. You can close this window.", CallbackResult{Code: code, State: state})
 }
 
@@ -285,6 +289,15 @@ func randomState() (string, error) {
 		return "", fmt.Errorf("generate OAuth state: %w", err)
 	}
 	return base64.RawURLEncoding.EncodeToString(raw), nil
+}
+
+func stateEqual(got, want string) bool {
+	got = strings.TrimSpace(got)
+	want = strings.TrimSpace(want)
+	if got == "" || want == "" {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(got), []byte(want)) == 1
 }
 
 const fragmentRecoveryHTML = `<!doctype html><title>gxx</title>

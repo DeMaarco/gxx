@@ -65,6 +65,23 @@ func TestSanitizedEnvironmentKeepsExistingGoCaches(t *testing.T) {
 	}
 }
 
+func TestSanitizedEnvironmentStripsInjectionVariables(t *testing.T) {
+	env := tools.SanitizedEnvironment([]string{
+		"PATH=/usr/bin",
+		"NODE_OPTIONS=--require ./evil.js",
+		"PYTHONSTARTUP=/tmp/evil.py",
+		"LD_PRELOAD=/tmp/evil.so",
+		"IFS=/",
+		"HOME=/tmp/gxx-home",
+	})
+	joined := strings.Join(env, "\n")
+	for _, leaked := range []string{"NODE_OPTIONS=", "PYTHONSTARTUP=", "LD_PRELOAD=", "IFS="} {
+		if strings.Contains(joined, leaked) {
+			t.Fatalf("injection variable leaked (%s): %q", leaked, env)
+		}
+	}
+}
+
 func TestSanitizedEnvironmentUsesUserProfileWhenHomeMissing(t *testing.T) {
 	home := filepath.FromSlash("C:/Users/gxx-test")
 	env := tools.SanitizedEnvironment([]string{

@@ -43,6 +43,7 @@ type REPLSettings struct {
 	Effort              string
 	Context             string
 	Fast                bool
+	Ask                 bool
 	Plan                bool
 	Workspace           string
 	Color               bool
@@ -53,6 +54,7 @@ type REPLSettings struct {
 	ActiveAccount       string
 	Models              []string
 	RefreshAuth         func(*REPLSettings)
+	RefreshModels       func(*REPLSettings)
 	ReadAPIKey          func(context.Context) (string, error)
 	SaveAPIKey          func(string) (string, error)
 	Login               func(context.Context, io.Writer, []string) (string, error)
@@ -63,6 +65,7 @@ type REPLSettings struct {
 	RefreshPricing      func(context.Context)
 	QuoteCost           func(agent.Usage) (float64, bool)
 	SyncSession         func(REPLSettings) error
+	SetAsk              func(bool) error
 	SetPlan             func(bool) error
 	SetEco              func(int) error
 	Eco                 int
@@ -523,6 +526,9 @@ func RunREPL(
 		if err := sessionCtx.Err(); err != nil {
 			return err
 		}
+		if settings.RefreshModels != nil {
+			settings.RefreshModels(&settings)
+		}
 		var line string
 		var err error
 		if editor != nil {
@@ -751,12 +757,7 @@ func leavePlan(settings *REPLSettings) {
 	if settings == nil || !settings.Plan {
 		return
 	}
-	if settings.SetPlan != nil {
-		if err := settings.SetPlan(false); err != nil {
-			return
-		}
-	}
-	settings.Plan = false
+	applySession(settings, false, false)
 }
 
 func readPlanRevision(
@@ -847,7 +848,7 @@ func printREPLHelp(writer io.Writer, settings REPLSettings) {
 		writer,
 		"%s  %s\n",
 		paint(settings.Color, cyan, "Shift+Tab"),
-		paint(settings.Color, dim, "Toggle plan mode (read-only design) and agent mode; after a plan, choose execute, request changes, or cancel"),
+		paint(settings.Color, dim, "Cycle ask, plan, and agent; ask and plan never overlap. After a plan, choose execute, request changes, or cancel"),
 	)
 }
 
@@ -900,17 +901,42 @@ func printEcoMenu(writer io.Writer, settings REPLSettings) {
 	fmt.Fprintln(writer, paint(settings.Color, dim, "Usage: /eco [lite|full|ultra|off]  ·  session only, not saved"))
 }
 
-func togglePlan(settings *REPLSettings) {
+func cycleSession(settings *REPLSettings) {
 	if settings == nil {
 		return
 	}
-	next := !settings.Plan
+	switch {
+	case settings.Plan:
+		applySession(settings, false, false)
+	case settings.Ask:
+		applySession(settings, false, true)
+	default:
+		applySession(settings, true, false)
+	}
+}
+
+func applySession(settings *REPLSettings, ask, plan bool) {
+	if settings == nil {
+		return
+	}
+	if plan {
+		ask = false
+	}
+	if ask {
+		plan = false
+	}
 	if settings.SetPlan != nil {
-		if err := settings.SetPlan(next); err != nil {
+		if err := settings.SetPlan(plan); err != nil {
 			return
 		}
 	}
-	settings.Plan = next
+	if settings.SetAsk != nil {
+		if err := settings.SetAsk(ask); err != nil {
+			return
+		}
+	}
+	settings.Ask = ask
+	settings.Plan = plan
 }
 
 func showUsage(ctx context.Context, writer io.Writer, settings REPLSettings) error {
@@ -988,6 +1014,14 @@ func applyModelCommand(writer io.Writer, settings *REPLSettings, line string) (b
 			settings.Effort = previous.Effort
 			settings.Fast = previous.Fast
 			return false, err
+		}
+	}
+	if command.Model != "" && command.Model != previous.Model {
+		settings.ActiveAccount = accountForModel(*settings, settings.Model)
+		if settings.RefreshAuth != nil {
+			settings.RefreshAuth(settings)
+		} else if settings.ActiveAccount != previous.ActiveAccount {
+			settings.Models = nil
 		}
 	}
 	fmt.Fprintln(
@@ -1102,26 +1136,23 @@ func authHint(settings REPLSettings) string {
 }
 
 func ensureModelAllowed(settings REPLSettings, model string) error {
-	account := settings.ActiveAccount
-	if account == "" {
-		if settings.ClaudeConfigured {
-			account = config.AccountClaude
-		} else if settings.APIKeyConfigured {
-			account = config.AccountAPI
-		} else if settings.OpenAIConfigured {
-			account = config.AccountOpenAI
+	account := accountForModel(settings, model)
+	if config.IsClaudeModel(model) {
+		if account != config.AccountClaude {
+			return errors.New("Claude models require a Claude login")
 		}
-	}
-	if account == "" {
+	} else if config.IsOpenAIModel(model) {
+		if account != config.AccountOpenAI && account != config.AccountAPI {
+			return errors.New("OpenAI models require an OpenAI login")
+		}
+	} else if account == "" {
 		return errors.New("no account connected; run /login")
 	}
-	if config.IsClaudeModel(model) && account != config.AccountClaude {
-		return errors.New("Claude models require a Claude login")
+	live := settings.Models
+	if settings.ActiveAccount != account {
+		live = nil
 	}
-	if config.IsOpenAIModel(model) && account != config.AccountOpenAI && account != config.AccountAPI {
-		return errors.New("OpenAI models require an OpenAI login")
-	}
-	listed := catalogModels(settings.Model, account, settings.Models)
+	listed := catalogModels(model, account, live)
 	if len(listed) == 0 {
 		return nil
 	}
@@ -1131,6 +1162,25 @@ func ensureModelAllowed(settings REPLSettings, model string) error {
 		}
 	}
 	return fmt.Errorf("model %s is not available on this account", model)
+}
+
+func accountForModel(settings REPLSettings, model string) string {
+	claude := settings.ClaudeConfigured || settings.ActiveAccount == config.AccountClaude
+	api := settings.APIKeyConfigured || settings.ActiveAccount == config.AccountAPI
+	openai := settings.OpenAIConfigured || settings.ActiveAccount == config.AccountOpenAI
+	if config.IsClaudeModel(model) && claude {
+		return config.AccountClaude
+	}
+	if api {
+		return config.AccountAPI
+	}
+	if openai {
+		return config.AccountOpenAI
+	}
+	if claude {
+		return config.AccountClaude
+	}
+	return ""
 }
 
 func loginAccount(

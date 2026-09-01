@@ -40,6 +40,7 @@ func (r *Registry) runCommandSpec() toolSpec {
 			Name: "run_command",
 			Description: "Run a shell command in the workspace with a finite timeout and sanitized environment. Requires user approval. " +
 				"Commands that name sensitive paths such as .env, keys, or credentials are refused. " +
+				"Commands that leave the workspace with .. or an absolute path, or that pipe a download into a shell, are refused. " +
 				"A command that exits non-zero is a normal result, returned as \"exit code N\" followed by its output; only a command that could not be started or that timed out is a tool error. " +
 				commandShellDescription(),
 			ReadOnly: false,
@@ -104,6 +105,15 @@ func (r *Registry) parseCommandArgs(raw json.RawMessage) (runCommandArgs, time.D
 	}
 	if hasSensitivePathToken(args.Command) {
 		return args, 0, errors.New("refusing to run command that may touch a sensitive path")
+	}
+	if hasParentDirectoryPath(args.Command) {
+		return args, 0, errors.New("refusing to run command that leaves the workspace (..)")
+	}
+	if hasAbsolutePathToken(args.Command) {
+		return args, 0, errors.New("refusing to run command with an absolute path; stay inside the workspace")
+	}
+	if pipesToShell(args.Command) {
+		return args, 0, errors.New("refusing to pipe a download into a shell")
 	}
 
 	timeout := r.commandTimeout
@@ -177,8 +187,12 @@ func isSensitiveEnvironmentName(name string) bool {
 	switch upper {
 	case "OPENAI_API_KEY", "OPENAI_ADMIN_KEY", "ANTHROPIC_API_KEY",
 		"ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "GH_TOKEN", "GITHUB_TOKEN",
-		"GOOGLE_APPLICATION_CREDENTIALS", "BASH_ENV", "CDPATH", "ENV", "SHELLOPTS",
-		"ZDOTDIR":
+		"GOOGLE_APPLICATION_CREDENTIALS", "BASH_ENV", "BASHOPTS", "CDPATH", "ENV",
+		"SHELLOPTS", "ZDOTDIR", "IFS", "PROMPT_COMMAND",
+		"LD_PRELOAD", "LD_LIBRARY_PATH", "DYLD_INSERT_LIBRARIES", "DYLD_LIBRARY_PATH",
+		"NODE_OPTIONS", "NODE_PATH", "PYTHONSTARTUP", "PERL5OPT", "RUBYOPT",
+		"JAVA_TOOL_OPTIONS", "JDK_JAVA_OPTIONS", "SSLKEYLOGFILE", "GIT_ASKPASS",
+		"SSH_ASKPASS", "DOCKER_CONFIG":
 		return true
 	}
 	if strings.HasPrefix(upper, "AWS_") {

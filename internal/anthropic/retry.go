@@ -12,12 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package openai
+package anthropic
 
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -25,11 +24,7 @@ import (
 	"strings"
 	"time"
 
-	openaisdk "github.com/openai/openai-go/v3"
-	"github.com/openai/openai-go/v3/option"
-	"github.com/openai/openai-go/v3/responses"
-
-	"gxx/internal/agent"
+	anthropicsdk "github.com/anthropics/anthropic-sdk-go"
 )
 
 const maxAPIAttempts = 3
@@ -37,6 +32,15 @@ const maxRetryAfter = 30 * time.Second
 
 func retryDelay(attempt int, raw *http.Response) time.Duration {
 	if raw != nil {
+		if ms := strings.TrimSpace(raw.Header.Get("Retry-After-Ms")); ms != "" {
+			if millis, err := strconv.Atoi(ms); err == nil && millis >= 0 {
+				delay := time.Duration(millis) * time.Millisecond
+				if delay > maxRetryAfter {
+					return maxRetryAfter
+				}
+				return delay
+			}
+		}
 		if value := strings.TrimSpace(raw.Header.Get("Retry-After")); value != "" {
 			if seconds, err := strconv.Atoi(value); err == nil && seconds >= 0 {
 				if seconds > int(maxRetryAfter/time.Second) {
@@ -59,7 +63,7 @@ func retryable(err error, ctx context.Context, raw *http.Response) bool {
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) && ctx.Err() != nil {
 		return false
 	}
-	var apiErr *openaisdk.Error
+	var apiErr *anthropicsdk.Error
 	if errors.As(err, &apiErr) {
 		return apiErr.StatusCode == http.StatusTooManyRequests || apiErr.StatusCode >= 500
 	}
@@ -81,7 +85,8 @@ func retryable(err error, ctx context.Context, raw *http.Response) bool {
 	message := strings.ToLower(err.Error())
 	return strings.Contains(message, "connection reset") ||
 		strings.Contains(message, "eof") ||
-		strings.Contains(message, "timeout")
+		strings.Contains(message, "timeout") ||
+		strings.Contains(message, "overloaded")
 }
 
 func sleepContext(ctx context.Context, delay time.Duration) error {
@@ -96,63 +101,4 @@ func sleepContext(ctx context.Context, delay time.Duration) error {
 	case <-timer.C:
 		return nil
 	}
-}
-
-func formatResponsesError(err error) error {
-	if err == nil {
-		return nil
-	}
-	var apiErr *openaisdk.Error
-	if !errors.As(err, &apiErr) {
-		return err
-	}
-	detail := strings.TrimSpace(apiErr.Message)
-	if detail == "" {
-		detail = parseAPIError([]byte(apiErr.RawJSON()))
-	}
-	if detail == "" || detail == "request failed" || strings.Contains(err.Error(), detail) {
-		return err
-	}
-	return fmt.Errorf("%w: %s", err, detail)
-}
-
-func streamResponse(
-	ctx context.Context,
-	client openaisdk.Client,
-	params responses.ResponseNewParams,
-	emit agent.EmitFunc,
-) (*responses.Response, *http.Response, error) {
-	var raw *http.Response
-	stream := client.Responses.NewStreaming(ctx, params, option.WithResponseInto(&raw))
-	defer stream.Close()
-
-	var completed *responses.Response
-	var streamError error
-	for stream.Next() {
-		event := stream.Current()
-		switch event.Type {
-		case "response.output_text.delta":
-			agent.Emit(emit, agent.Event{Kind: agent.EventTextDelta, Text: event.Delta})
-		case "response.refusal.delta":
-			agent.Emit(emit, agent.Event{Kind: agent.EventTextDelta, Text: event.Delta})
-		case "response.completed", "response.failed", "response.incomplete":
-			response := event.Response
-			completed = &response
-		case "error":
-			streamError = fmt.Errorf("OpenAI stream error: %s", event.Message)
-		}
-	}
-	if err := stream.Err(); err != nil {
-		return completed, raw, formatResponsesError(err)
-	}
-	if streamError != nil {
-		return completed, raw, streamError
-	}
-	if completed == nil {
-		return nil, raw, errors.New("OpenAI stream ended without a completed response")
-	}
-	if completed.Status != responses.ResponseStatusCompleted {
-		return completed, raw, responseStatusError(*completed)
-	}
-	return completed, raw, nil
 }

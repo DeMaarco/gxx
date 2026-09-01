@@ -33,6 +33,9 @@ var (
 	FetchOAuthUsage = fetchOAuthUsage
 	ParseOAuthUsage = parseOAuthUsage
 	OAuthUsageURL   = oauthUsageURL
+	Retryable       = retryable
+	RetryDelay      = retryDelay
+	MaxRetryAfter   = maxRetryAfter
 )
 
 func (p *Provider) SetHistory(items []anthropicsdk.MessageParam) {

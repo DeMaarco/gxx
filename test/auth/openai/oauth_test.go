@@ -248,7 +248,7 @@ func TestCallbackServerAcceptsMatchingState(t *testing.T) {
 	}
 }
 
-func TestCallbackServerAcceptsCodeWhenStateDiffers(t *testing.T) {
+func TestCallbackServerRejectsMismatchedOrMissingState(t *testing.T) {
 	server := openaiauth.NewCallbackServer()
 	server.Ports = []int{0}
 	server.State = "expected-state"
@@ -258,10 +258,30 @@ func TestCallbackServerAcceptsCodeWhenStateDiffers(t *testing.T) {
 	}
 	defer server.Close()
 
+	resp, err := http.Get(redirect + "?code=attacker-code&state=other")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest || !strings.Contains(string(body), "invalid OAuth state") {
+		t.Fatalf("mismatched state = %d %s", resp.StatusCode, body)
+	}
+
+	resp, err = http.Get(redirect + "?code=missing-state")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ = io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("missing state = %d %s", resp.StatusCode, body)
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	go func() {
-		resp, err := http.Get(redirect + "?code=browser-code&state=other")
+		resp, err := http.Get(redirect + "?code=browser-code&state=expected-state")
 		if err == nil {
 			resp.Body.Close()
 		}
@@ -298,7 +318,7 @@ func TestCallbackServerIgnoresProbeThenAcceptsCode(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	go func() {
-		resp, err := http.Get(redirect + "?code=after-probe")
+		resp, err := http.Get(redirect + "?code=after-probe&state=expected-state")
 		if err == nil {
 			resp.Body.Close()
 		}

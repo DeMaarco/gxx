@@ -383,6 +383,50 @@ func TestListAndSearchHonorGitignore(t *testing.T) {
 	}
 }
 
+func TestListAndSearchHonorNestedGxxignore(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, root, "keep.txt", "hello root\n")
+	writeTestFile(t, root, "pkg/keep.go", "hello pkg\n")
+	writeTestFile(t, root, "pkg/skip.txt", "hello nested\n")
+	writeTestFile(t, root, "pkg/.gxxignore", "skip.txt\n")
+	writeTestFile(t, root, "pkg/nested/also.txt", "hello deep\n")
+
+	registry := newTestRegistry(t, root, &staticApprover{}, tools.Options{
+		MaxResultBytes:  4096,
+		MaxSearchResult: 10,
+		ParallelReads:   1,
+		CommandTimeout:  time.Second,
+	})
+	results := registry.Execute(context.Background(), []agent.ToolCall{
+		toolCall("list", "list_files", map[string]any{"path": nil, "max_depth": 4}),
+		toolCall("search", "search_files", map[string]any{"query": "hello", "path": nil, "max_results": nil}),
+		toolCall("list-pkg", "list_files", map[string]any{"path": "pkg", "max_depth": 4}),
+	}, nil)
+	for _, result := range results {
+		if result.IsError {
+			t.Fatalf("%s failed: %s", result.Name, result.Output)
+		}
+	}
+	if !strings.Contains(results[0].Output, "keep.txt") || !strings.Contains(results[0].Output, "pkg/keep.go") {
+		t.Fatalf("list = %q, want visible files", results[0].Output)
+	}
+	if strings.Contains(results[0].Output, "skip.txt") {
+		t.Fatalf("list = %q, should omit pkg/skip.txt", results[0].Output)
+	}
+	if strings.Contains(results[1].Output, "skip.txt") {
+		t.Fatalf("search = %q, should omit pkg/skip.txt", results[1].Output)
+	}
+	if !strings.Contains(results[1].Output, "pkg/keep.go") {
+		t.Fatalf("search = %q, want pkg/keep.go", results[1].Output)
+	}
+	if strings.Contains(results[2].Output, "skip.txt") {
+		t.Fatalf("list pkg = %q, should omit skip.txt", results[2].Output)
+	}
+	if !strings.Contains(results[2].Output, "keep.go") {
+		t.Fatalf("list pkg = %q, want keep.go", results[2].Output)
+	}
+}
+
 func TestApprovedWriteAndEditAreAtomic(t *testing.T) {
 	root := t.TempDir()
 	approver := &staticApprover{approved: true}
@@ -828,6 +872,90 @@ func TestPlanModeHidesWritesAndRejectsMutations(t *testing.T) {
 	}
 	if !foundImage {
 		t.Fatal("agent mode hid generate_image")
+	}
+}
+
+func TestAskModeHidesWritesAndRejectsMutations(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, root, "main.go", "package main\n")
+	approver := &staticApprover{approved: true}
+	registry := newTestRegistry(t, root, approver, tools.Options{
+		MaxResultBytes:  4096,
+		MaxSearchResult: 10,
+		ParallelReads:   2,
+		CommandTimeout:  time.Second,
+	})
+	registry.SetAsk(true)
+
+	for _, def := range registry.Definitions() {
+		if !def.ReadOnly {
+			t.Fatalf("ask mode exposed writable tool %s", def.Name)
+		}
+	}
+
+	results := registry.Execute(context.Background(), []agent.ToolCall{
+		toolCall("write", "apply_patch", map[string]any{
+			"changes": []map[string]any{{
+				"path": "created.go", "action": "add", "content": "package created\n",
+			}},
+		}),
+		toolCall("run", "run_command", map[string]any{"command": "echo hi", "timeout_seconds": nil}),
+		toolCall("read", "read_file", map[string]any{"path": "main.go", "offset_line": 1, "limit_lines": 4}),
+	}, nil)
+	if !results[0].IsError || !strings.Contains(results[0].Output, "ask mode is read-only") {
+		t.Fatalf("write in ask mode = %#v", results[0])
+	}
+	if !results[1].IsError || !strings.Contains(results[1].Output, "ask mode is read-only") {
+		t.Fatalf("command in ask mode = %#v", results[1])
+	}
+	if results[2].IsError || !strings.Contains(results[2].Output, "package main") {
+		t.Fatalf("read in ask mode = %#v", results[2])
+	}
+	if _, err := os.Stat(filepath.Join(root, "created.go")); !os.IsNotExist(err) {
+		t.Fatalf("ask mode created a file: %v", err)
+	}
+	approver.mu.Lock()
+	actions := len(approver.actions)
+	approver.mu.Unlock()
+	if actions != 0 {
+		t.Fatalf("ask mode asked for approval: %#v", approver.actions)
+	}
+
+	registry.SetAsk(false)
+	foundPatch := false
+	for _, def := range registry.Definitions() {
+		if def.Name == "apply_patch" {
+			foundPatch = true
+		}
+	}
+	if !foundPatch {
+		t.Fatal("leaving ask mode hid apply_patch")
+	}
+}
+
+func TestAskAndPlanCannotBeEnabledTogether(t *testing.T) {
+	registry := newTestRegistry(t, t.TempDir(), &staticApprover{approved: true}, tools.Options{
+		MaxResultBytes:  4096,
+		MaxSearchResult: 10,
+		ParallelReads:   1,
+		CommandTimeout:  time.Second,
+	})
+	registry.SetAsk(true)
+	if !registry.Ask() || registry.Plan() {
+		t.Fatalf("ask=%v plan=%v after SetAsk(true)", registry.Ask(), registry.Plan())
+	}
+	registry.SetPlan(true)
+	if !registry.Plan() || registry.Ask() {
+		t.Fatalf("ask=%v plan=%v after SetPlan(true)", registry.Ask(), registry.Plan())
+	}
+	results := registry.Execute(context.Background(), []agent.ToolCall{
+		toolCall("run", "run_command", map[string]any{"command": "echo hi", "timeout_seconds": nil}),
+	}, nil)
+	if !results[0].IsError || !strings.Contains(results[0].Output, "plan mode") {
+		t.Fatalf("stacked session error = %#v, want plan mode", results[0])
+	}
+	if strings.Contains(results[0].Output, "ask mode") {
+		t.Fatalf("plan session used ask error: %q", results[0].Output)
 	}
 }
 

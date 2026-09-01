@@ -84,6 +84,53 @@ func TestInvalidEnvironmentValuesFallBack(t *testing.T) {
 	}
 }
 
+func TestLoadCapsResourceLimits(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("GXX_MAX_STEPS", "0")
+	t.Setenv("GXX_MAX_TOOL_RESULT_BYTES", "-1")
+	t.Setenv("GXX_PARALLEL_READS", "9999")
+	t.Setenv("GXX_MAX_SEARCH_RESULTS", "500000")
+
+	settings := config.Load(t.TempDir())
+	if settings.MaxSteps != config.DefaultMaxSteps {
+		t.Fatalf("MaxSteps = %d, want default %d", settings.MaxSteps, config.DefaultMaxSteps)
+	}
+	if settings.MaxToolResultBytes != config.DefaultMaxToolResultBytes {
+		t.Fatalf("MaxToolResultBytes = %d, want default %d", settings.MaxToolResultBytes, config.DefaultMaxToolResultBytes)
+	}
+	if settings.ParallelReads != config.ParallelReadsLimit {
+		t.Fatalf("ParallelReads = %d, want cap %d", settings.ParallelReads, config.ParallelReadsLimit)
+	}
+	if settings.MaxSearchResults != config.MaxSearchResultsLimit {
+		t.Fatalf("MaxSearchResults = %d, want cap %d", settings.MaxSearchResults, config.MaxSearchResultsLimit)
+	}
+}
+
+func TestValidateClampsResourceUpperBounds(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("OPENAI_API_KEY", "test-key")
+	settings := config.Load(t.TempDir())
+	settings.MaxSteps = config.MaxStepsLimit + 50
+	settings.MaxToolResultBytes = config.MaxToolResultBytesLimit + 1
+	settings.ParallelReads = config.ParallelReadsLimit + 8
+	settings.MaxSearchResults = config.MaxSearchResultsLimit + 10
+	if err := settings.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+	if settings.MaxSteps != config.MaxStepsLimit {
+		t.Fatalf("MaxSteps = %d, want %d", settings.MaxSteps, config.MaxStepsLimit)
+	}
+	if settings.MaxToolResultBytes != config.MaxToolResultBytesLimit {
+		t.Fatalf("MaxToolResultBytes = %d, want %d", settings.MaxToolResultBytes, config.MaxToolResultBytesLimit)
+	}
+	if settings.ParallelReads != config.ParallelReadsLimit {
+		t.Fatalf("ParallelReads = %d, want %d", settings.ParallelReads, config.ParallelReadsLimit)
+	}
+	if settings.MaxSearchResults != config.MaxSearchResultsLimit {
+		t.Fatalf("MaxSearchResults = %d, want %d", settings.MaxSearchResults, config.MaxSearchResultsLimit)
+	}
+}
+
 func TestValidateRejectsUnknownEffort(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("OPENAI_API_KEY", "test-key")
@@ -346,6 +393,55 @@ func TestLoadIgnoresInvalidPersistedSessionFields(t *testing.T) {
 	settings := config.Load(t.TempDir())
 	if settings.Effort != config.DefaultEffort || settings.Context != config.DefaultContext || settings.PermissionMode != config.DefaultPermissionMode {
 		t.Fatalf("invalid persisted fields were not ignored: %+v", settings)
+	}
+}
+
+func TestLoadReportsCorruptConfig(t *testing.T) {
+	base := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", base)
+	t.Setenv("OPENAI_API_KEY", "env-key")
+	directory := filepath.Join(base, "gxx")
+	if err := os.MkdirAll(directory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(directory, "config.json")
+	if err := os.WriteFile(path, []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	settings := config.Load(t.TempDir())
+	if settings.LoadError == nil {
+		t.Fatal("Load() LoadError = nil, want decode error")
+	}
+	err := settings.ValidateInteractive()
+	if err == nil || !strings.Contains(err.Error(), "decode config") {
+		t.Fatalf("ValidateInteractive() error = %v, want decode config", err)
+	}
+}
+
+func TestLoadReportsWorldReadableConfig(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX permission bits are not enforced on Windows")
+	}
+	base := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", base)
+	t.Setenv("OPENAI_API_KEY", "env-key")
+	directory := filepath.Join(base, "gxx")
+	if err := os.MkdirAll(directory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(directory, "config.json")
+	if err := os.WriteFile(path, []byte(`{"openai_api_key":"stored"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	settings := config.Load(t.TempDir())
+	if settings.LoadError == nil {
+		t.Fatal("Load() LoadError = nil, want permission error")
+	}
+	err := settings.ValidateInteractive()
+	if err == nil || !strings.Contains(err.Error(), "0600") {
+		t.Fatalf("ValidateInteractive() error = %v, want 0600", err)
 	}
 }
 

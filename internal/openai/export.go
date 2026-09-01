@@ -41,6 +41,8 @@ var (
 	ParseAPIError           = parseAPIError
 	ParseRateLimit          = parseRateLimit
 	Retryable               = retryable
+	RetryDelay              = retryDelay
+	MaxRetryAfter           = maxRetryAfter
 	PromptCacheKey          = promptCacheKey
 	EmergencyFit            = emergencyFit
 	FunctionCallOutputParam = functionCallOutputParam

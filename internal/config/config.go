@@ -48,6 +48,10 @@ const (
 	DefaultMaxToolResultBytes = 64 * 1024
 	DefaultMaxSearchResults   = 100
 	DefaultParallelReads      = 4
+	MaxStepsLimit             = 200
+	MaxToolResultBytesLimit   = 1 << 20
+	MaxSearchResultsLimit     = 1000
+	ParallelReadsLimit        = 32
 	maxConfigBytes            = 64 * 1024
 	claudeNativeContext       = 200_000
 )
@@ -94,11 +98,12 @@ type Config struct {
 	ParallelReads      int
 	CommandTimeout     time.Duration
 	APITimeout         time.Duration
+	LoadError          error
 }
 
 // Load reads environment configuration and applies conservative defaults.
 func Load(workspace string) Config {
-	stored, _ := loadPersistent()
+	stored, loadErr := loadPersistent()
 	apiKey := strings.TrimSpace(os.Getenv("OPENAI_API_KEY"))
 	if apiKey == "" {
 		apiKey = strings.TrimSpace(stored.OpenAIAPIKey)
@@ -121,12 +126,13 @@ func Load(workspace string) Config {
 		Fast:               envBool("GXX_FAST", stored.Fast),
 		PermissionMode:     envString("GXX_PERMISSION", validPermissionOr(stored.Permission, DefaultPermissionMode)),
 		Workspace:          workspace,
-		MaxSteps:           envInt("GXX_MAX_STEPS", DefaultMaxSteps),
-		MaxToolResultBytes: envInt("GXX_MAX_TOOL_RESULT_BYTES", DefaultMaxToolResultBytes),
-		MaxSearchResults:   envInt("GXX_MAX_SEARCH_RESULTS", DefaultMaxSearchResults),
-		ParallelReads:      envInt("GXX_PARALLEL_READS", DefaultParallelReads),
+		MaxSteps:           envIntRange("GXX_MAX_STEPS", DefaultMaxSteps, 1, MaxStepsLimit),
+		MaxToolResultBytes: envIntRange("GXX_MAX_TOOL_RESULT_BYTES", DefaultMaxToolResultBytes, 1024, MaxToolResultBytesLimit),
+		MaxSearchResults:   envIntRange("GXX_MAX_SEARCH_RESULTS", DefaultMaxSearchResults, 1, MaxSearchResultsLimit),
+		ParallelReads:      envIntRange("GXX_PARALLEL_READS", DefaultParallelReads, 1, ParallelReadsLimit),
 		CommandTimeout:     envDuration("GXX_COMMAND_TIMEOUT", DefaultCommandTimeout),
 		APITimeout:         envDuration("GXX_API_TIMEOUT", DefaultAPITimeout),
+		LoadError:          loadErr,
 	}
 }
 
@@ -141,6 +147,9 @@ func (c *Config) ValidateInteractive() error {
 }
 
 func (c *Config) validate(requireCredentials bool) error {
+	if c.LoadError != nil {
+		return fmt.Errorf("read config: %w", c.LoadError)
+	}
 	if strings.TrimSpace(c.Model) == "" {
 		return errors.New("model cannot be empty")
 	}
@@ -167,14 +176,26 @@ func (c *Config) validate(requireCredentials bool) error {
 	if c.MaxSteps < 1 {
 		return errors.New("max steps must be at least 1")
 	}
+	if c.MaxSteps > MaxStepsLimit {
+		c.MaxSteps = MaxStepsLimit
+	}
 	if c.MaxToolResultBytes < 1024 {
 		return errors.New("max tool result bytes must be at least 1024")
+	}
+	if c.MaxToolResultBytes > MaxToolResultBytesLimit {
+		c.MaxToolResultBytes = MaxToolResultBytesLimit
 	}
 	if c.MaxSearchResults < 1 {
 		return errors.New("max search results must be at least 1")
 	}
+	if c.MaxSearchResults > MaxSearchResultsLimit {
+		c.MaxSearchResults = MaxSearchResultsLimit
+	}
 	if c.ParallelReads < 1 {
 		return errors.New("parallel reads must be at least 1")
+	}
+	if c.ParallelReads > ParallelReadsLimit {
+		c.ParallelReads = ParallelReadsLimit
 	}
 	if c.CommandTimeout <= 0 {
 		return errors.New("command timeout must be positive")
@@ -449,16 +470,23 @@ func (c Config) HasClaudeCredentials() bool {
 	return strings.TrimSpace(c.ClaudeTokens.AccessToken) != ""
 }
 
-// ActiveAccount is the single connected login: openai, claude, api, or empty.
+// ActiveAccount is the connected login that matches the current model when
+// more than one credential is present: openai, claude, api, or empty.
 func (c Config) ActiveAccount() string {
-	if c.HasClaudeCredentials() {
+	claude := c.HasClaudeCredentials()
+	api := c.HasOpenAIAPIKey()
+	openai := strings.TrimSpace(c.OpenAITokens.AccessToken) != ""
+	if IsClaudeModel(c.Model) && claude {
 		return AccountClaude
 	}
-	if c.HasOpenAIAPIKey() {
+	if api {
 		return AccountAPI
 	}
-	if strings.TrimSpace(c.OpenAITokens.AccessToken) != "" {
+	if openai {
 		return AccountOpenAI
+	}
+	if claude {
+		return AccountClaude
 	}
 	return ""
 }
@@ -526,6 +554,25 @@ func resolveProvider(hint, model string) string {
 }
 
 func loadPersistent() (persistentConfig, error) {
+	return readPersistent(true)
+}
+
+// loadPersistentForSave reads config so a later write can preserve fields.
+// Invalid JSON is treated as empty so login can recreate the file. Symlinks
+// are still refused. World-readable files are read so a save can restore 0600
+// without dropping the key.
+func loadPersistentForSave() (persistentConfig, error) {
+	stored, err := readPersistent(false)
+	if err == nil {
+		return stored, nil
+	}
+	if strings.Contains(err.Error(), "decode config") {
+		return persistentConfig{}, nil
+	}
+	return persistentConfig{}, err
+}
+
+func readPersistent(requireSecure bool) (persistentConfig, error) {
 	var stored persistentConfig
 	path, err := existingConfigPath()
 	if err != nil {
@@ -556,7 +603,7 @@ func loadPersistent() (persistentConfig, error) {
 	if !info.Mode().IsRegular() {
 		return stored, errors.New("config is not a regular file")
 	}
-	if osutil.UnixPermissions() && info.Mode().Perm()&0o077 != 0 {
+	if requireSecure && osutil.UnixPermissions() && info.Mode().Perm()&0o077 != 0 {
 		return stored, fmt.Errorf("config permissions are %04o; expected 0600", info.Mode().Perm())
 	}
 
@@ -578,7 +625,7 @@ func savePersistent(mutate func(*persistentConfig) error) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	stored, err := loadPersistent()
+	stored, err := loadPersistentForSave()
 	if err != nil {
 		return "", err
 	}
@@ -668,6 +715,17 @@ func envInt(name string, fallback int) int {
 	parsed, err := strconv.Atoi(value)
 	if err != nil {
 		return fallback
+	}
+	return parsed
+}
+
+func envIntRange(name string, fallback, min, max int) int {
+	parsed := envInt(name, fallback)
+	if parsed < min {
+		return fallback
+	}
+	if max >= min && parsed > max {
+		return max
 	}
 	return parsed
 }

@@ -34,17 +34,20 @@ var sensitiveBasenames = map[string]struct{}{
 	"secret.json":          {},
 	"secrets.json":         {},
 	"service_account.json": {},
+	".envrc":               {},
+	"auth.toml":            {},
 }
 
 var sensitiveDirectories = map[string]struct{}{
-	".aws":   {},
-	".gnupg": {},
-	".kube":  {},
-	".ssh":   {},
+	".aws":    {},
+	".docker": {},
+	".gnupg":  {},
+	".kube":   {},
+	".ssh":    {},
 }
 
 var sensitiveSuffixes = []string{
-	".jks", ".key", ".keystore", ".p12", ".pem", ".pfx",
+	".jks", ".key", ".keystore", ".p12", ".pem", ".pfx", ".secret",
 }
 
 func isSensitivePath(value string) bool {
@@ -78,8 +81,10 @@ func isSensitivePath(value string) bool {
 
 func isSensitiveEnvName(base string) bool {
 	return base == ".env" ||
+		base == ".envrc" ||
 		strings.HasPrefix(base, ".env.") ||
 		strings.HasSuffix(base, ".env") ||
+		strings.HasSuffix(base, ".envrc") ||
 		strings.Contains(base, ".env.")
 }
 

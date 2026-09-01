@@ -78,6 +78,8 @@ func promptPrefix(settings REPLSettings) string {
 	prefix := "> "
 	if settings.Plan {
 		prefix += paint(settings.Color, yellow, "plan") + " "
+	} else if settings.Ask {
+		prefix += paint(settings.Color, cyan, "ask") + " "
 	}
 	if settings.Eco > 0 {
 		prefix += paint(settings.Color, green, ecoLabel(settings.Eco)) + " "

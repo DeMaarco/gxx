@@ -21,14 +21,18 @@ const (
 )
 
 var (
-	CompactDiff          = compactDiff
-	SanitizedEnvironment = sanitizedEnvironment
-	DefaultGoCache       = defaultGoCache
-	CommandRiskNotes     = commandRiskNotes
-	PathInsideWorkspace  = pathInsideWorkspace
-	IsSensitivePath      = isSensitivePath
-	WalkDepth            = walkDepth
-	FilterGitNameStatus  = filterGitNameStatus
+	CompactDiff            = compactDiff
+	SanitizedEnvironment   = sanitizedEnvironment
+	DefaultGoCache         = defaultGoCache
+	CommandRiskNotes       = commandRiskNotes
+	PathInsideWorkspace    = pathInsideWorkspace
+	IsSensitivePath        = isSensitivePath
+	HasSensitivePathToken  = hasSensitivePathToken
+	HasAbsolutePathToken   = hasAbsolutePathToken
+	HasParentDirectoryPath = hasParentDirectoryPath
+	PipesToShell           = pipesToShell
+	WalkDepth              = walkDepth
+	FilterGitNameStatus    = filterGitNameStatus
 )
 
 type IgnoreMatcher = ignoreMatcher

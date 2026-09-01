@@ -7,6 +7,8 @@ on:
 
 permissions:
   contents: write
+  id-token: write
+  attestations: write
 
 jobs:
   release:
@@ -43,6 +45,17 @@ jobs:
             gxx-linux-amd64 gxx-linux-arm64 \
             gxx-windows-amd64.exe gxx-windows-arm64.exe \
             > checksums.txt)
+
+      - name: Attest binaries
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            dist/gxx-darwin-amd64
+            dist/gxx-darwin-arm64
+            dist/gxx-linux-amd64
+            dist/gxx-linux-arm64
+            dist/gxx-windows-amd64.exe
+            dist/gxx-windows-arm64.exe
 
       - name: Publish GitHub Release
         env:

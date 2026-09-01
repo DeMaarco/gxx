@@ -120,6 +120,39 @@ func TestRunREPLHandlesCommandsAndInjectedIO(t *testing.T) {
 	}
 }
 
+func TestRunREPLRefreshesModelsBeforeEachPrompt(t *testing.T) {
+	loop := &agent.Loop{Model: &replModel{}, Executor: emptyExecutor{}, MaxSteps: 2}
+	input := bufio.NewReader(strings.NewReader("/exit\n"))
+	var output bytes.Buffer
+	var calls atomic.Int32
+	err := ui.RunREPL(
+		context.Background(),
+		loop,
+		input,
+		ui.NewRenderer(&output),
+		&output,
+		ui.REPLSettings{
+			Version:          "0.0.1",
+			Model:            "test-model",
+			PermissionMode:   config.PermissionAsk,
+			Effort:           "medium",
+			Workspace:        "/workspace",
+			APIKeyConfigured: true,
+			Models:           []string{"stale"},
+			RefreshModels: func(settings *ui.REPLSettings) {
+				calls.Add(1)
+				settings.Models = []string{"live"}
+			},
+		},
+	)
+	if err != nil {
+		t.Fatalf("RunREPL() error = %v", err)
+	}
+	if calls.Load() < 1 {
+		t.Fatal("RefreshModels was not called before the prompt")
+	}
+}
+
 func TestRunREPLShowsUsage(t *testing.T) {
 	loop := &agent.Loop{Model: &replModel{}, Executor: emptyExecutor{}, MaxSteps: 2}
 	input := bufio.NewReader(strings.NewReader("/usage\n/exit\n"))
@@ -648,7 +681,7 @@ func TestRunREPLAppliesModeCommand(t *testing.T) {
 	}
 	text := output.String()
 	for _, expected := range []string{
-		"permission ask · confirm every file change and command; the approval menu can allow a command for the session",
+		"permission ask · confirm file changes and commands in agent mode; reads always run",
 		"* ask",
 		"auto-writes",
 		"permission auto-writes · file changes run without confirmation; commands still ask",
@@ -873,6 +906,7 @@ func TestRunREPLLoginRequiresProviderWithoutTTY(t *testing.T) {
 func TestRunREPLPlanExecuteLeavesPlanAndImplements(t *testing.T) {
 	model := &replModel{reply: "the plan"}
 	plan := true
+	ask := true
 	loop := &agent.Loop{Model: model, Executor: emptyExecutor{}, MaxSteps: 2}
 	input := bufio.NewReader(strings.NewReader("design auth\n/exit\n"))
 	var output bytes.Buffer
@@ -888,6 +922,11 @@ func TestRunREPLPlanExecuteLeavesPlanAndImplements(t *testing.T) {
 			PermissionMode: config.PermissionAsk,
 			Workspace:      "/workspace",
 			Plan:           true,
+			Ask:            true,
+			SetAsk: func(next bool) error {
+				ask = next
+				return nil
+			},
 			SetPlan: func(next bool) error {
 				plan = next
 				return nil
@@ -902,6 +941,9 @@ func TestRunREPLPlanExecuteLeavesPlanAndImplements(t *testing.T) {
 	}
 	if plan {
 		t.Fatal("execute should leave plan mode")
+	}
+	if ask {
+		t.Fatal("execute should leave ask mode so agent can implement")
 	}
 	if len(model.prompts) != 2 || model.prompts[0] != "design auth" || model.prompts[1] != ui.ImplementPlanPrompt {
 		t.Fatalf("prompts = %#v, want design then implement", model.prompts)

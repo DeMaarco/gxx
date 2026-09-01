@@ -23,6 +23,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"gxx/internal/openai"
 
@@ -121,5 +122,21 @@ func TestRetryableClassifiesStatusCodes(t *testing.T) {
 	}
 	if !openai.Retryable(io.ErrUnexpectedEOF, ctx, nil) {
 		t.Fatal("unexpected EOF should be retryable")
+	}
+}
+
+func TestRetryDelayCapsRetryAfter(t *testing.T) {
+	raw := &http.Response{Header: make(http.Header)}
+	raw.Header.Set("Retry-After", "86400")
+	got := openai.RetryDelay(1, raw)
+	if got != openai.MaxRetryAfter {
+		t.Fatalf("RetryDelay() = %s, want cap %s", got, openai.MaxRetryAfter)
+	}
+	raw.Header.Set("Retry-After", "0")
+	if got := openai.RetryDelay(1, raw); got != 0 {
+		t.Fatalf("Retry-After 0 = %s, want 0", got)
+	}
+	if got := openai.RetryDelay(1, nil); got != time.Second {
+		t.Fatalf("default attempt 1 = %s, want 1s", got)
 	}
 }

@@ -22,7 +22,8 @@ import (
 )
 
 // Policy auto-approves actions allowed by the current permission mode and
-// otherwise defers to an inner approver.
+// otherwise defers to an inner approver. Ask and plan sessions never reach
+// this policy: they only run read-only tools.
 type Policy struct {
 	mu         sync.Mutex
 	mode       string

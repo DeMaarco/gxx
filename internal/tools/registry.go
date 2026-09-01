@@ -60,6 +60,7 @@ type Registry struct {
 	generateImage    func(context.Context, ImageRequest) (ImageResult, error)
 	specs            map[string]toolSpec
 	plan             atomic.Bool
+	ask              atomic.Bool
 }
 
 func NewRegistry(ws *workspace.Workspace, approver approval.Approver, options Options) *Registry {
@@ -92,10 +93,29 @@ func NewRegistry(ws *workspace.Workspace, approver approval.Approver, options Op
 
 func (r *Registry) SetPlan(plan bool) {
 	r.plan.Store(plan)
+	if plan {
+		r.ask.Store(false)
+	}
 }
 
 func (r *Registry) Plan() bool {
 	return r.plan.Load()
+}
+
+// SetAsk enables ask mode: only read-only tools run. Ask and plan are exclusive.
+func (r *Registry) SetAsk(ask bool) {
+	r.ask.Store(ask)
+	if ask {
+		r.plan.Store(false)
+	}
+}
+
+func (r *Registry) Ask() bool {
+	return r.ask.Load()
+}
+
+func (r *Registry) readOnlySession() bool {
+	return r.plan.Load() || r.ask.Load()
 }
 
 func (r *Registry) SetMaxResultBytes(n int) {
@@ -118,11 +138,11 @@ func (r *Registry) Definitions() []agent.ToolDefinition {
 		"generate_image",
 		"run_command",
 	}
-	plan := r.plan.Load()
+	readOnly := r.readOnlySession()
 	definitions := make([]agent.ToolDefinition, 0, len(order))
 	for _, name := range order {
 		spec := r.specs[name]
-		if plan && !spec.definition.ReadOnly {
+		if readOnly && !spec.definition.ReadOnly {
 			continue
 		}
 		definitions = append(definitions, spec.definition)
@@ -200,12 +220,12 @@ func (r *Registry) executeOne(ctx context.Context, call agent.ToolCall, emit age
 		agent.Emit(emit, agent.Event{Kind: agent.EventToolDone, Result: &result})
 		return result
 	}
-	if r.plan.Load() && !spec.definition.ReadOnly {
-		result := errorResult(
-			call,
-			fmt.Errorf("plan mode: writes and commands are disabled; press Shift+Tab to return to agent mode"),
-			0,
-		)
+	if r.readOnlySession() && !spec.definition.ReadOnly {
+		message := "ask mode is read-only; press Shift+Tab to switch to plan or agent"
+		if r.plan.Load() {
+			message = "plan mode: writes and commands are disabled; press Shift+Tab to switch to agent"
+		}
+		result := errorResult(call, fmt.Errorf("%s", message), 0)
 		agent.Emit(emit, agent.Event{Kind: agent.EventToolDone, Result: &result})
 		return result
 	}

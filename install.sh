@@ -27,7 +27,7 @@ Install gxx from GitHub Releases.
 
 Usage:
   curl -fsSL https://raw.githubusercontent.com/DeMaarco/gxx/main/install.sh | sh
-  sh install.sh --version v0.0.15
+  sh install.sh --version v0.0.16
   sh install.sh --dir /usr/local/bin
 
 Environment:
@@ -106,32 +106,36 @@ download_with_api() {
 		api="https://api.github.com/repos/${repo}/releases/tags/${version}"
 	fi
 	json="${workdir}/release.json"
-	curl -fsSL \
-		-H "Authorization: Bearer ${token}" \
-		-H "Accept: application/vnd.github+json" \
-		-H "X-GitHub-Api-Version: 2022-11-28" \
-		"$api" >"$json"
-	python3 - "$json" "$workdir" "$asset" "$token" <<'PY'
+	curl_cfg="${workdir}/curl.cfg"
+	{
+		printf 'header = "Authorization: Bearer %s"\n' "$token"
+		printf 'header = "Accept: application/vnd.github+json"\n'
+		printf 'header = "X-GitHub-Api-Version: 2022-11-28"\n'
+		printf 'header = "User-Agent: gxx-install"\n'
+	} >"$curl_cfg"
+	chmod 600 "$curl_cfg"
+	curl -fsSL --config "$curl_cfg" "$api" >"$json"
+	GITHUB_TOKEN="$token" GH_TOKEN="$token" python3 - "$json" "$workdir" "$asset" <<'PY'
 import json, os, sys, urllib.request
 
 with open(sys.argv[1], encoding="utf-8") as handle:
     release = json.load(handle)
-workdir, want, token = sys.argv[2], sys.argv[3], sys.argv[4]
+workdir, want = sys.argv[2], sys.argv[3]
+token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN") or ""
 need = {want, "checksums.txt"}
 found = set()
 for asset in release.get("assets", []):
     name = asset.get("name")
     if name not in need:
         continue
-    request = urllib.request.Request(
-        asset["url"],
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Accept": "application/octet-stream",
-            "User-Agent": "gxx-install",
-            "X-GitHub-Api-Version": "2022-11-28",
-        },
-    )
+    headers = {
+        "Accept": "application/octet-stream",
+        "User-Agent": "gxx-install",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    request = urllib.request.Request(asset["url"], headers=headers)
     dest = os.path.join(workdir, name)
     with urllib.request.urlopen(request) as response, open(dest, "wb") as out:
         out.write(response.read())
@@ -191,6 +195,17 @@ if [ "$actual" != "$expected" ]; then
 	echo "  expected ${expected}" >&2
 	echo "  actual   ${actual}" >&2
 	exit 1
+fi
+
+if command -v gh >/dev/null 2>&1; then
+	if ! gh attestation verify "${workdir}/${asset}" --repo "$repo"; then
+		echo "warning: GitHub attestation verification failed for ${asset}" >&2
+		if [ "${GXX_REQUIRE_ATTESTATION:-}" = "1" ]; then
+			exit 1
+		fi
+	fi
+else
+	echo "warning: gh is not on PATH; skipped GitHub attestation verify" >&2
 fi
 
 mkdir -p "$install_dir"

@@ -214,11 +214,34 @@ func (p *Provider) Respond(
 	p.mu.Unlock()
 
 	client := p.newClient(token)
-	requestContext, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	message, err := p.stream(requestContext, client, params, emit)
-	if err != nil {
-		return result, err
+	var (
+		message anthropicsdk.Message
+		raw     *http.Response
+		lastErr error
+	)
+	for attempt := 0; attempt < maxAPIAttempts; attempt++ {
+		if attempt > 0 {
+			delay := retryDelay(attempt, raw)
+			agent.Emit(emit, agent.Event{
+				Kind: agent.EventNotice,
+				Text: "Retrying Claude request…",
+			})
+			if err := sleepContext(ctx, delay); err != nil {
+				return result, err
+			}
+		}
+		requestContext, cancel := context.WithTimeout(ctx, timeout)
+		message, raw, lastErr = p.stream(requestContext, client, params, emit)
+		cancel()
+		if lastErr == nil {
+			break
+		}
+		if !retryable(lastErr, ctx, raw) {
+			break
+		}
+	}
+	if lastErr != nil {
+		return result, lastErr
 	}
 
 	result.Text = assistantText(message)
@@ -290,8 +313,9 @@ func (p *Provider) stream(
 	client anthropicsdk.Client,
 	params anthropicsdk.MessageNewParams,
 	emit agent.EmitFunc,
-) (anthropicsdk.Message, error) {
-	stream := client.Messages.NewStreaming(ctx, params)
+) (anthropicsdk.Message, *http.Response, error) {
+	var raw *http.Response
+	stream := client.Messages.NewStreaming(ctx, params, option.WithResponseInto(&raw))
 	var message anthropicsdk.Message
 	for stream.Next() {
 		event := stream.Current()
@@ -299,13 +323,13 @@ func (p *Provider) stream(
 			agent.Emit(emit, agent.Event{Kind: agent.EventTextDelta, Text: event.Delta.Text})
 		}
 		if err := message.Accumulate(event); err != nil {
-			return message, fmt.Errorf("Claude stream: %w", err)
+			return message, raw, fmt.Errorf("Claude stream: %w", err)
 		}
 	}
 	if err := stream.Err(); err != nil {
-		return message, err
+		return message, raw, err
 	}
-	return message, nil
+	return message, raw, nil
 }
 
 func (p *Provider) newClient(token string) anthropicsdk.Client {
@@ -315,6 +339,7 @@ func (p *Provider) newClient(token string) anthropicsdk.Client {
 		option.WithHeader("anthropic-beta", oauthBetaHeader),
 		option.WithHeader("anthropic-version", "2023-06-01"),
 		option.WithHeader("x-app", oauthAppHeader),
+		option.WithMaxRetries(0),
 	}
 	if p.httpClient != nil {
 		opts = append(opts, option.WithHTTPClient(p.httpClient))

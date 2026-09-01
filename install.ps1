@@ -70,7 +70,7 @@ Install gxx from GitHub Releases.
 
 Usage:
   irm https://raw.githubusercontent.com/DeMaarco/gxx/main/install.ps1 | iex
-  powershell -File install.ps1 -Version v0.0.15
+  powershell -File install.ps1 -Version v0.0.16
   powershell -File install.ps1 -Dir `$env:LOCALAPPDATA\gxx
 
 Environment:
@@ -153,6 +153,18 @@ try {
     $actual = (Get-FileHash -Path $assetPath -Algorithm SHA256).Hash.ToLowerInvariant()
     if ($actual -ne $expected) {
         throw "checksum mismatch for $asset`n  expected $expected`n  actual   $actual"
+    }
+
+    if (Get-Command gh -ErrorAction SilentlyContinue) {
+        & gh attestation verify $assetPath --repo $repo
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "warning: GitHub attestation verification failed for $asset"
+            if ($env:GXX_REQUIRE_ATTESTATION -eq "1") {
+                throw "GitHub attestation verification failed for $asset"
+            }
+        }
+    } else {
+        Write-Host "warning: gh is not on PATH; skipped GitHub attestation verify"
     }
 
     New-Item -ItemType Directory -Path $installDir -Force | Out-Null

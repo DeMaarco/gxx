@@ -281,28 +281,46 @@ func pathInsideWorkspace(root, candidate string) bool {
 	if strings.TrimSpace(candidate) == "" {
 		return false
 	}
-	absRoot, err := filepath.Abs(root)
-	if err != nil {
-		return false
-	}
-	absCandidate, err := filepath.Abs(candidate)
-	if err != nil {
-		return false
-	}
-	realRoot, err := filepath.EvalSymlinks(absRoot)
-	if err != nil {
-		realRoot = absRoot
-	}
-	realCandidate, err := filepath.EvalSymlinks(absCandidate)
-	if err != nil {
-		realCandidate = absCandidate
-	}
-	realRoot = filepath.Clean(realRoot)
-	realCandidate = filepath.Clean(realCandidate)
+	realRoot := evalPath(root)
+	realCandidate := evalPath(candidate)
 	if sameFilePath(realCandidate, realRoot) {
 		return true
 	}
 	return hasFilePathPrefix(realCandidate, realRoot+string(filepath.Separator))
+}
+
+// evalPath resolves symlinks on the longest existing prefix so a missing
+// child under /var on macOS still compares equal to a /private/var workspace.
+func evalPath(path string) string {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return filepath.Clean(path)
+	}
+	abs = filepath.Clean(abs)
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		return resolved
+	}
+	rest := ""
+	current := abs
+	for {
+		parent := filepath.Dir(current)
+		if parent == current {
+			if rest == "" {
+				return current
+			}
+			return filepath.Join(current, rest)
+		}
+		base := filepath.Base(current)
+		if rest == "" {
+			rest = base
+		} else {
+			rest = filepath.Join(base, rest)
+		}
+		current = parent
+		if resolved, err := filepath.EvalSymlinks(current); err == nil {
+			return filepath.Join(resolved, rest)
+		}
+	}
 }
 
 func sameFilePath(a, b string) bool {

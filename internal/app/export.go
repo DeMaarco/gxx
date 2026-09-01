@@ -14,4 +14,8 @@
 
 package app
 
-var AskPrompt = askPrompt
+var (
+	AskPrompt                = askPrompt
+	BundledAccountModels     = bundledAccountModels
+	ConstrainPipedPermission = constrainPipedPermission
+)

@@ -16,6 +16,7 @@ package openai
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 
@@ -66,6 +67,9 @@ func loginBrowser(ctx context.Context, client *Client, stdout io.Writer) (config
 	result, err := server.Wait(ctx)
 	if err != nil {
 		return config.OpenAITokens{}, "", err
+	}
+	if !stateEqual(result.State, server.State) {
+		return config.OpenAITokens{}, "", errors.New("OAuth state mismatch")
 	}
 	tokens, err := client.Exchange(ctx, result.Code, pkce.Verifier, redirectURI)
 	if err != nil {

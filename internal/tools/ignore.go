@@ -50,8 +50,7 @@ type ignoreMatcher struct {
 func (r *Registry) ignoreForWalk(start string) *ignoreMatcher {
 	matcher := &ignoreMatcher{}
 	matcher.addFile(".", defaultIgnorePatterns)
-	matcher.addFile(".", r.readIgnoreFile(".gitignore"))
-	matcher.addFile(".", r.readIgnoreFile(".gxxignore"))
+	r.addIgnoreFiles(matcher, ".")
 	if start != "" && start != "." {
 		current := ""
 		for _, component := range strings.Split(start, "/") {
@@ -59,10 +58,18 @@ func (r *Registry) ignoreForWalk(start string) *ignoreMatcher {
 				continue
 			}
 			current = slashJoin(current, component)
-			matcher.addFile(current, r.readIgnoreFile(slashJoin(current, ".gitignore")))
+			r.addIgnoreFiles(matcher, current)
 		}
 	}
 	return matcher
+}
+
+func (r *Registry) addIgnoreFiles(matcher *ignoreMatcher, dir string) {
+	if matcher == nil {
+		return
+	}
+	matcher.addFile(dir, r.readIgnoreFile(slashJoin(dir, ".gitignore")))
+	matcher.addFile(dir, r.readIgnoreFile(slashJoin(dir, ".gxxignore")))
 }
 
 func (r *Registry) readIgnoreFile(name string) string {
@@ -270,7 +277,7 @@ func (r *Registry) loadNestedIgnore(matcher *ignoreMatcher, current string, entr
 	if matcher == nil || !entry.IsDir() || current == walkRoot || current == "." {
 		return
 	}
-	matcher.addFile(current, r.readIgnoreFile(slashJoin(current, ".gitignore")))
+	r.addIgnoreFiles(matcher, current)
 }
 
 func slashJoin(parent, child string) string {

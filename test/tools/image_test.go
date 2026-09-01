@@ -268,6 +268,53 @@ func TestGenerateImageOverwritesInPlace(t *testing.T) {
 	assertToolFileContents(t, filepath.Join(root, "icon.png"), "new")
 }
 
+func TestGenerateImageRejectsFileChangedAfterApproval(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, root, "icon.png", "old")
+	registry := newTestRegistry(t, root, &staticApprover{approved: true}, tools.Options{
+		MaxResultBytes:  4096,
+		MaxSearchResult: 10,
+		ParallelReads:   1,
+		CommandTimeout:  time.Second,
+		GenerateImage: func(context.Context, tools.ImageRequest) (tools.ImageResult, error) {
+			if err := os.WriteFile(filepath.Join(root, "icon.png"), []byte("changed"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			return tools.ImageResult{Data: []byte("new")}, nil
+		},
+	})
+	result := registry.Execute(context.Background(), []agent.ToolCall{
+		toolCall("img", "generate_image", imageArgs(map[string]any{"path": "icon.png"})),
+	}, nil)[0]
+	if !result.IsError || !strings.Contains(result.Output, "changed") {
+		t.Fatalf("result = %+v, want changed-file error", result)
+	}
+	assertToolFileContents(t, filepath.Join(root, "icon.png"), "changed")
+}
+
+func TestGenerateImageRejectsFileThatAppearedAfterApproval(t *testing.T) {
+	root := t.TempDir()
+	registry := newTestRegistry(t, root, &staticApprover{approved: true}, tools.Options{
+		MaxResultBytes:  4096,
+		MaxSearchResult: 10,
+		ParallelReads:   1,
+		CommandTimeout:  time.Second,
+		GenerateImage: func(context.Context, tools.ImageRequest) (tools.ImageResult, error) {
+			if err := os.WriteFile(filepath.Join(root, "out.png"), []byte("sneak"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			return tools.ImageResult{Data: []byte("new")}, nil
+		},
+	})
+	result := registry.Execute(context.Background(), []agent.ToolCall{
+		toolCall("img", "generate_image", imageArgs(nil)),
+	}, nil)[0]
+	if !result.IsError {
+		t.Fatalf("result = %+v, want appeared-file error", result)
+	}
+	assertToolFileContents(t, filepath.Join(root, "out.png"), "sneak")
+}
+
 func imageArgs(overrides map[string]any) map[string]any {
 	args := map[string]any{
 		"prompt":        "a red square",

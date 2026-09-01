@@ -113,6 +113,46 @@ func TestSystemPromptPlanModeUsesReadOnlyInstructions(t *testing.T) {
 	}
 }
 
+func TestSystemPromptAskModeUsesReadOnlyInstructions(t *testing.T) {
+	root := t.TempDir()
+	ws, err := workspace.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ws.Close()
+
+	prompt := agent.SystemPromptWithOptions(ws, false, true, 0)
+	if !strings.Contains(prompt, "ask mode") {
+		t.Fatalf("prompt = %q, want ask mode instructions", prompt)
+	}
+	if !strings.Contains(prompt, "read-only") {
+		t.Fatalf("prompt = %q, want read-only wording", prompt)
+	}
+	if strings.Contains(prompt, "make the in-scope local changes") {
+		t.Fatalf("ask prompt included agent implementation instructions")
+	}
+	if strings.Contains(prompt, "plan mode") {
+		t.Fatalf("ask prompt included plan instructions")
+	}
+}
+
+func TestSystemPromptPrefersPlanWhenAskAlsoSet(t *testing.T) {
+	root := t.TempDir()
+	ws, err := workspace.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ws.Close()
+
+	prompt := agent.SystemPromptWithOptions(ws, true, true, 0)
+	if !strings.Contains(prompt, "plan mode") {
+		t.Fatalf("prompt = %q, want plan when both flags are set", prompt)
+	}
+	if strings.Contains(prompt, "You are gxx in ask mode") {
+		t.Fatalf("prompt = %q, plan should win over ask", prompt)
+	}
+}
+
 func TestSystemPromptEcoAddsSaverInstructions(t *testing.T) {
 	root := t.TempDir()
 	ws, err := workspace.New(root)

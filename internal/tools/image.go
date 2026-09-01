@@ -27,6 +27,7 @@ import (
 
 	"gxx/internal/agent"
 	"gxx/internal/approval"
+	"gxx/internal/workspace"
 )
 
 const (
@@ -85,6 +86,7 @@ type resolvedImage struct {
 	format     string
 	background string
 	overwrite  bool
+	expected   []byte
 }
 
 func (r *Registry) generateImageSpec() toolSpec {
@@ -175,7 +177,13 @@ func (r *Registry) prepareGenerateImage(raw json.RawMessage) (approval.Action, t
 			return "", fmt.Errorf("generated image exceeds %d bytes", maxImageBytes)
 		}
 		reportProgressNow(ctx, resolved.path)
-		if err := r.workspace.AtomicWrite(resolved.path, result.Data); err != nil {
+		change := workspace.FileChange{
+			Path:           resolved.path,
+			Data:           result.Data,
+			Expected:       resolved.expected,
+			ExpectedExists: resolved.overwrite,
+		}
+		if err := r.workspace.ApplyTransaction([]workspace.FileChange{change}); err != nil {
 			return "", err
 		}
 		return formatImageResult(resolved, result), nil
@@ -236,6 +244,7 @@ func (r *Registry) parseGenerateImage(raw json.RawMessage) (resolvedImage, error
 	}
 
 	overwrite := false
+	var expected []byte
 	info, statErr := r.workspace.Lstat(clean)
 	if statErr == nil {
 		if info.IsDir() {
@@ -244,7 +253,12 @@ func (r *Registry) parseGenerateImage(raw json.RawMessage) (resolvedImage, error
 		if info.Mode()&os.ModeSymlink != 0 {
 			return resolvedImage{}, fmt.Errorf("refusing to replace symlink: %s", clean)
 		}
+		data, err := r.workspace.ReadRegularFile(clean, maxImageBytes)
+		if err != nil {
+			return resolvedImage{}, err
+		}
 		overwrite = true
+		expected = data
 	} else if !errors.Is(statErr, os.ErrNotExist) {
 		return resolvedImage{}, statErr
 	}
@@ -258,6 +272,7 @@ func (r *Registry) parseGenerateImage(raw json.RawMessage) (resolvedImage, error
 		format:     format,
 		background: background,
 		overwrite:  overwrite,
+		expected:   expected,
 	}, nil
 }
 

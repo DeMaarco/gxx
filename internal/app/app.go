@@ -25,6 +25,8 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/term"
@@ -44,7 +46,7 @@ import (
 	"gxx/internal/workspace"
 )
 
-var Version = "0.0.15"
+var Version = "0.0.16"
 
 type runtime struct {
 	config    config.Config
@@ -56,6 +58,12 @@ type runtime struct {
 	policy    *approval.Policy
 	registry  *tools.Registry
 	eco       int
+
+	modelsMu      sync.Mutex
+	modelsGen     atomic.Uint64
+	modelsAccount string
+	modelsList    []string
+	modelsLive    bool
 }
 
 type jsonResult struct {
@@ -139,13 +147,16 @@ func runInteractive(
 		return 2
 	}
 	defer rt.workspace.Close()
+	startSession(rt, !settings.permissionFlag)
+	session := replSettings(rt, stdin, stdout)
+	rt.startModelRefresh()
 	err = ui.RunREPL(
 		ctx,
 		rt.loop,
 		rt.reader,
 		rt.renderer,
 		stdout,
-		replSettings(rt, stdin, stdout),
+		session,
 	)
 	if err != nil {
 		if errors.Is(err, context.Canceled) || ctx.Err() != nil {
@@ -191,6 +202,12 @@ func runAsk(
 		return 2
 	}
 
+	settings.config.PermissionMode = constrainPipedPermission(
+		interactive,
+		settings.permissionFlag,
+		settings.config.PermissionMode,
+	)
+
 	rt, err := newRuntimeFromConfig(settings.config, stdin, stdout, stderr, interactive, true)
 	if err != nil {
 		if settings.json {
@@ -201,6 +218,7 @@ func runAsk(
 		return 2
 	}
 	defer rt.workspace.Close()
+	startSession(rt, !settings.permissionFlag)
 
 	var emit agent.EmitFunc
 	if !settings.json {
@@ -448,9 +466,10 @@ func loginAPIKey(ctx context.Context, stdin io.Reader, stdout io.Writer) (string
 }
 
 type parsedFlags struct {
-	config    config.Config
-	json      bool
-	remaining []string
+	config         config.Config
+	json           bool
+	remaining      []string
+	permissionFlag bool
 }
 
 func parseFlags(
@@ -497,12 +516,24 @@ func parseFlags(
 		fmt.Fprintf(stderr, "Try `%s --help` for usage.\n", name)
 		return parsed, false, err
 	}
+	flags.Visit(func(item *flag.Flag) {
+		if item.Name == "permission" {
+			parsed.permissionFlag = true
+		}
+	})
 	parsed.remaining = flags.Args()
 	if !allowJSON && len(parsed.remaining) > 0 {
 		fmt.Fprintf(stderr, "%s: unexpected argument %q\n", name, parsed.remaining[0])
 		return parsed, false, errors.New("unexpected positional argument")
 	}
 	return parsed, false, nil
+}
+
+func constrainPipedPermission(interactive, permissionFlag bool, mode string) string {
+	if !interactive && !permissionFlag {
+		return config.PermissionAsk
+	}
+	return mode
 }
 
 func newRuntimeFromConfig(
@@ -609,6 +640,8 @@ func replSettings(rt *runtime, stdin io.Reader, stdout io.Writer) ui.REPLSetting
 		Effort:           rt.config.Effort,
 		Context:          rt.config.Context,
 		Fast:             rt.config.Fast,
+		Ask:              rt.registry != nil && rt.registry.Ask(),
+		Plan:             rt.registry != nil && rt.registry.Plan(),
 		Workspace:        rt.config.Workspace,
 		Color:            ui.ColorEnabled(stdout),
 		Stdin:            terminalFile(stdin),
@@ -616,12 +649,13 @@ func replSettings(rt *runtime, stdin io.Reader, stdout io.Writer) ui.REPLSetting
 		OpenAIConfigured: rt.config.HasOpenAICredentials(),
 		ClaudeConfigured: rt.config.HasClaudeCredentials(),
 		ActiveAccount:    rt.config.ActiveAccount(),
-		Models:           listAccountModels(context.Background(), rt.config),
+		Models:           bundledAccountModels(rt.config),
 		ReadAPIKey:       terminalAPIKeyReader(stdin, rt.reader),
 		SaveAPIKey:       rt.saveAPIKey,
 		Login:            rt.login,
 		Logout:           rt.logout,
 		RefreshAuth:      rt.refreshAuth,
+		RefreshModels:    rt.applyModels,
 		FetchUsage: func(ctx context.Context) (agent.UsageReport, error) {
 			return rt.provider.Report(ctx), nil
 		},
@@ -633,17 +667,20 @@ func replSettings(rt *runtime, stdin io.Reader, stdout io.Writer) ui.REPLSetting
 			return rt.provider.ContextSnapshot()
 		},
 		RefreshInstructions: func() {
-			plan := false
+			rt.provider.SetInstructions(rt.systemPrompt())
+		},
+		SetAsk: func(ask bool) error {
 			if rt.registry != nil {
-				plan = rt.registry.Plan()
+				rt.registry.SetAsk(ask)
 			}
-			rt.provider.SetInstructions(agent.SystemPromptWithEco(rt.workspace, plan, rt.eco))
+			rt.provider.SetInstructions(rt.systemPrompt())
+			return nil
 		},
 		SetPlan: func(plan bool) error {
-			rt.provider.SetInstructions(agent.SystemPromptWithEco(rt.workspace, plan, rt.eco))
 			if rt.registry != nil {
 				rt.registry.SetPlan(plan)
 			}
+			rt.provider.SetInstructions(rt.systemPrompt())
 			return nil
 		},
 		SetEco: func(level int) error {
@@ -702,14 +739,39 @@ func applyEcoRuntime(rt *runtime) error {
 	if rt.registry != nil {
 		rt.registry.SetMaxResultBytes(state.MaxToolResultBytes)
 	}
-	plan := false
-	if rt.registry != nil {
-		plan = rt.registry.Plan()
-	}
 	if rt.workspace != nil {
-		rt.provider.SetInstructions(agent.SystemPromptWithEco(rt.workspace, plan, rt.eco))
+		rt.provider.SetInstructions(rt.systemPrompt())
 	}
 	return nil
+}
+
+func startSession(rt *runtime, ask bool) {
+	if rt == nil {
+		return
+	}
+	if rt.registry != nil {
+		rt.registry.SetPlan(false)
+		rt.registry.SetAsk(ask)
+	}
+	if rt.provider != nil {
+		rt.provider.SetInstructions(rt.systemPrompt())
+	}
+}
+
+func (rt *runtime) systemPrompt() string {
+	plan := false
+	ask := false
+	ws := (*workspace.Workspace)(nil)
+	eco := 0
+	if rt != nil {
+		ws = rt.workspace
+		eco = rt.eco
+		if rt.registry != nil {
+			plan = rt.registry.Plan()
+			ask = rt.registry.Ask()
+		}
+	}
+	return agent.SystemPromptWithOptions(ws, plan, ask, eco)
 }
 
 func terminalFile(reader io.Reader) *os.File {
@@ -726,7 +788,7 @@ func terminalFile(reader io.Reader) *os.File {
 func newBackend(settings config.Config, ws *workspace.Workspace) (agent.Backend, error) {
 	instructions := ""
 	if ws != nil {
-		instructions = agent.SystemPrompt(ws, false)
+		instructions = agent.SystemPromptWithOptions(ws, false, false, 0)
 	}
 	switch config.ProviderForModel(settings.Model) {
 	case config.ProviderAnthropic:
@@ -900,7 +962,64 @@ func (rt *runtime) refreshAuth(settings *ui.REPLSettings) {
 	settings.ClaudeConfigured = rt.config.HasClaudeCredentials()
 	settings.ActiveAccount = rt.config.ActiveAccount()
 	settings.Model = rt.config.Model
-	settings.Models = listAccountModels(context.Background(), rt.config)
+	rt.resetModelCache()
+	settings.Models = bundledAccountModels(rt.config)
+	rt.startModelRefresh()
+}
+
+func bundledAccountModels(settings config.Config) []string {
+	return models.Catalog(settings.Model, settings.ActiveAccount(), nil)
+}
+
+func (rt *runtime) applyModels(settings *ui.REPLSettings) {
+	if rt == nil || settings == nil {
+		return
+	}
+	settings.Models = rt.accountModels()
+}
+
+func (rt *runtime) accountModels() []string {
+	if rt == nil {
+		return nil
+	}
+	account := rt.config.ActiveAccount()
+	rt.modelsMu.Lock()
+	defer rt.modelsMu.Unlock()
+	if rt.modelsLive && rt.modelsAccount == account {
+		return append([]string(nil), rt.modelsList...)
+	}
+	return bundledAccountModels(rt.config)
+}
+
+func (rt *runtime) resetModelCache() {
+	if rt == nil {
+		return
+	}
+	rt.modelsGen.Add(1)
+	rt.modelsMu.Lock()
+	rt.modelsLive = false
+	rt.modelsList = nil
+	rt.modelsAccount = ""
+	rt.modelsMu.Unlock()
+}
+
+func (rt *runtime) startModelRefresh() {
+	if rt == nil {
+		return
+	}
+	snapshot := rt.config
+	gen := rt.modelsGen.Add(1)
+	go func() {
+		listed := listAccountModels(context.Background(), snapshot)
+		rt.modelsMu.Lock()
+		defer rt.modelsMu.Unlock()
+		if rt.modelsGen.Load() != gen {
+			return
+		}
+		rt.modelsAccount = snapshot.ActiveAccount()
+		rt.modelsList = listed
+		rt.modelsLive = true
+	}()
 }
 
 func refreshPricing(ctx context.Context) {
@@ -1060,9 +1179,11 @@ func printLogoutUsage(writer io.Writer) {
 	fmt.Fprintln(writer, "  gxx logout")
 	fmt.Fprintln(writer, "  gxx logout openai")
 	fmt.Fprintln(writer, "  gxx logout claude")
+	fmt.Fprintln(writer, "  gxx logout api")
 	fmt.Fprintln(writer)
-	fmt.Fprintln(writer, "Without a provider, a terminal shows a picker. Scripts must pass openai or claude.")
-	fmt.Fprintln(writer, "Removes the saved OAuth tokens from config.json. /config API keys are left in place.")
+	fmt.Fprintln(writer, "Without a provider, logout clears the active account.")
+	fmt.Fprintln(writer, "Pass openai, claude, or api. api removes the saved OpenAI API key;")
+	fmt.Fprintln(writer, "openai and claude remove OAuth tokens from config.json.")
 }
 
 func printAskUsage(writer io.Writer) {
@@ -1079,7 +1200,9 @@ func printCommonFlags(writer io.Writer) {
 	fmt.Fprintln(writer, "  --model string          Model (default: GXX_MODEL, config.json, or gpt-5.6-sol)")
 	fmt.Fprintln(writer, "  --effort string         Reasoning effort (default: GXX_EFFORT, config.json, or medium)")
 	fmt.Fprintln(writer, "  --context string        Context window size (default: GXX_CONTEXT, config.json, or 272k)")
-	fmt.Fprintln(writer, "  --permission string     Permission mode (default: GXX_PERMISSION, config.json, or ask)")
+	fmt.Fprintln(writer, "  --permission string     Permission mode for agent (default: GXX_PERMISSION, config.json, or ask)")
+	fmt.Fprintln(writer, "                          ask confirms writes and commands; auto-writes applies files; auto applies files and commands")
+	fmt.Fprintln(writer, "                          Ask/plan session modes only read files and ignore this flag")
 	fmt.Fprintln(writer, "  --fast                  Use the provider fast service tier when available")
 	fmt.Fprintln(writer, "  --max-steps int         Maximum model steps (default: 40)")
 	fmt.Fprintln(writer, "  --command-timeout dur   Maximum command duration (default: 2m)")

@@ -37,12 +37,21 @@ For requests to answer, explain, review, diagnose, or plan, inspect and report. 
 For requests to change, build, or fix, make the in-scope local changes and run non-destructive validation.
 When the task is complete, summarize the result and any verification performed.`
 
+const askInstructions = `You are gxx in ask mode.
+Inspect the workspace with read-only tools and answer.
+Do not edit files, apply patches, create files, generate images, or run shell commands.
+Use list_files, search_files, read_file, git_status, git_diff, and git_log only.
+Ask and plan are separate modes. Answer the question; do not produce an implementation plan unless asked.
+Writes and shell commands need agent mode (Shift+Tab). Permission mode does not apply while ask is on; reads run without approval.`
+
 const planInstructions = `You are gxx in plan mode for local development.
 Inspect the workspace with read-only tools and produce a concrete implementation plan.
 Do not edit files, apply patches, create files, or run commands that change the system.
 Use list_files, search_files, read_file, git_status, git_diff, and git_log only.
 If the goal is ambiguous, ask clarifying questions before planning.
 When ready, present: goal, approach, files to change, risks, and how to verify.
+Ask and plan are separate modes. This is not ask mode: design the change, do not only answer a question.
+Permission mode does not apply while plan is on; reads run without approval.
 The user will choose to execute the plan, request changes, or cancel.
 Wait for that choice before implementing.`
 
@@ -57,14 +66,22 @@ const (
 
 // SystemPrompt builds a compact, stable instruction prefix for prompt caching.
 func SystemPrompt(ws *workspace.Workspace, plan bool) string {
-	return SystemPromptWithEco(ws, plan, 0)
+	return SystemPromptWithOptions(ws, plan, false, 0)
 }
 
 // SystemPromptWithEco adds a short token-saving instruction for eco 1–3.
 func SystemPromptWithEco(ws *workspace.Workspace, plan bool, eco int) string {
+	return SystemPromptWithOptions(ws, plan, false, eco)
+}
+
+// SystemPromptWithOptions selects plan, ask, or agent instructions.
+// Plan and ask are exclusive; if both are set, plan wins.
+func SystemPromptWithOptions(ws *workspace.Workspace, plan, ask bool, eco int) string {
 	base := agentInstructions
 	if plan {
 		base = planInstructions
+	} else if ask {
+		base = askInstructions
 	}
 	if extra := ecoInstructions(eco); extra != "" {
 		base = base + "\n" + extra

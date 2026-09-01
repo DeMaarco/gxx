@@ -19,6 +19,7 @@ import (
 	"errors"
 	"testing"
 
+	"gxx/internal/config"
 	"gxx/internal/ui"
 )
 
@@ -89,6 +90,44 @@ func TestApplyModelCommandRollsBackOnSyncError(t *testing.T) {
 	}
 	if settings.Model != "gpt-5.6-sol" || settings.Context != "272k" || settings.Effort != "medium" || settings.Fast {
 		t.Fatalf("settings mutated after failed sync: %+v", settings)
+	}
+}
+
+func TestApplyModelCommandSwitchesAccountWhenBothAreConfigured(t *testing.T) {
+	settings := ui.REPLSettings{
+		Model:            "gpt-5.6-sol",
+		Context:          "272k",
+		Effort:           "medium",
+		ActiveAccount:    config.AccountAPI,
+		APIKeyConfigured: true,
+		OpenAIConfigured: true,
+		ClaudeConfigured: true,
+		SyncSession:      func(ui.REPLSettings) error { return nil },
+	}
+	var output bytes.Buffer
+	changed, err := ui.ApplyModelCommand(&output, &settings, "/model sonnet")
+	if err != nil {
+		t.Fatalf("ApplyModelCommand() error = %v", err)
+	}
+	if !changed {
+		t.Fatal("expected a model change")
+	}
+	if settings.Model != "claude-sonnet-5" {
+		t.Fatalf("Model = %q, want claude-sonnet-5", settings.Model)
+	}
+	if settings.ActiveAccount != config.AccountClaude {
+		t.Fatalf("ActiveAccount = %q, want claude", settings.ActiveAccount)
+	}
+
+	changed, err = ui.ApplyModelCommand(&output, &settings, "/model terra")
+	if err != nil {
+		t.Fatalf("switch back error = %v", err)
+	}
+	if !changed || settings.Model != "gpt-5.6-terra" {
+		t.Fatalf("settings = %+v, want gpt-5.6-terra", settings)
+	}
+	if settings.ActiveAccount != config.AccountAPI {
+		t.Fatalf("ActiveAccount = %q, want api", settings.ActiveAccount)
 	}
 }
 

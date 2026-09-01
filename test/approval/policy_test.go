@@ -24,9 +24,28 @@ import (
 	"gxx/internal/config"
 )
 
-func TestPolicyAskDefersToInner(t *testing.T) {
-	inner := &recordingApprover{approved: false}
+func TestPolicyAskPromptsWritesAndCommands(t *testing.T) {
+	inner := &recordingApprover{approved: true}
 	policy := approval.NewPolicy(config.PermissionAsk, inner)
+	for _, action := range []approval.Action{
+		{Title: "Edit file", Kind: approval.KindWrite},
+		{Title: "Run command", Kind: approval.KindCommand, RepeatKey: "go test ./..."},
+	} {
+		decision, err := policy.Approve(context.Background(), action)
+		if err != nil {
+			t.Fatalf("Approve(%s) error = %v", action.Title, err)
+		}
+		if !decision.Approved {
+			t.Fatalf("ask mode should prompt and approve %s", action.Title)
+		}
+	}
+	if inner.calls != 2 {
+		t.Fatalf("inner calls = %d, want 2", inner.calls)
+	}
+}
+
+func TestPolicyAskWithoutApproverDenies(t *testing.T) {
+	policy := approval.NewPolicy(config.PermissionAsk, nil)
 	decision, err := policy.Approve(context.Background(), approval.Action{
 		Title: "Edit file",
 		Kind:  approval.KindWrite,
@@ -35,10 +54,7 @@ func TestPolicyAskDefersToInner(t *testing.T) {
 		t.Fatalf("Approve() error = %v", err)
 	}
 	if decision.Approved {
-		t.Fatal("ask mode approved a write without the inner approver")
-	}
-	if inner.calls != 1 {
-		t.Fatalf("inner calls = %d, want 1", inner.calls)
+		t.Fatal("ask mode without an approver should deny writes")
 	}
 }
 
@@ -126,7 +142,7 @@ func TestPolicySetModeRejectsUnknownValues(t *testing.T) {
 
 func TestPolicyRemembersExactCommandForSession(t *testing.T) {
 	inner := &recordingApprover{approved: true, remember: true}
-	policy := approval.NewPolicy(config.PermissionAsk, inner)
+	policy := approval.NewPolicy(config.PermissionAutoWrites, inner)
 	action := approval.Action{
 		Title:     "Run command",
 		Kind:      approval.KindCommand,
@@ -174,7 +190,7 @@ func TestPolicyRemembersExactCommandForSession(t *testing.T) {
 
 func TestPolicySetModeClearsRememberedCommands(t *testing.T) {
 	inner := &recordingApprover{approved: true, remember: true}
-	policy := approval.NewPolicy(config.PermissionAsk, inner)
+	policy := approval.NewPolicy(config.PermissionAutoWrites, inner)
 	action := approval.Action{
 		Kind:      approval.KindCommand,
 		RepeatKey: "go test ./...",
@@ -182,7 +198,7 @@ func TestPolicySetModeClearsRememberedCommands(t *testing.T) {
 	if _, err := policy.Approve(context.Background(), action); err != nil {
 		t.Fatal(err)
 	}
-	if err := policy.SetMode(config.PermissionAsk); err != nil {
+	if err := policy.SetMode(config.PermissionAutoWrites); err != nil {
 		t.Fatal(err)
 	}
 	inner.approved = false
@@ -196,35 +212,6 @@ func TestPolicySetModeClearsRememberedCommands(t *testing.T) {
 	}
 	if inner.calls != 2 {
 		t.Fatalf("inner calls = %d, want 2 after SetMode", inner.calls)
-	}
-}
-
-func TestPolicyDoesNotRememberWrites(t *testing.T) {
-	inner := &recordingApprover{approved: true, remember: true}
-	policy := approval.NewPolicy(config.PermissionAsk, inner)
-	decision, err := policy.Approve(context.Background(), approval.Action{
-		Title: "Write file",
-		Kind:  approval.KindWrite,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !decision.Approved {
-		t.Fatal("write should be approved by inner")
-	}
-	inner.approved = false
-	second, err := policy.Approve(context.Background(), approval.Action{
-		Title: "Write file",
-		Kind:  approval.KindWrite,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if second.Approved {
-		t.Fatal("writes must not be remembered without RepeatKey")
-	}
-	if inner.calls != 2 {
-		t.Fatalf("inner calls = %d, want 2", inner.calls)
 	}
 }
 

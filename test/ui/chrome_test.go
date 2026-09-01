@@ -108,12 +108,22 @@ func TestFormatStatusShowsPlan(t *testing.T) {
 	if prefix := ui.PromptPrefix(ui.REPLSettings{Plan: true}); prefix != "> plan " {
 		t.Fatalf("prompt prefix = %q, want %q", prefix, "> plan ")
 	}
+	if prefix := ui.PromptPrefix(ui.REPLSettings{Ask: true}); prefix != "> ask " {
+		t.Fatalf("ask prompt prefix = %q, want %q", prefix, "> ask ")
+	}
+	if prefix := ui.PromptPrefix(ui.REPLSettings{Ask: true, Plan: true}); prefix != "> plan " {
+		t.Fatalf("ask+plan prefix = %q, want plan only", prefix)
+	}
 	if prefix := ui.PromptPrefix(ui.REPLSettings{}); prefix != "> " {
 		t.Fatalf("agent prompt prefix = %q, want %q", prefix, "> ")
 	}
 	colored := ui.PromptPrefix(ui.REPLSettings{Plan: true, Color: true})
 	if !strings.Contains(colored, ui.Paint(true, ui.ColorYellow, "plan")) {
 		t.Fatalf("colored plan prefix = %q, want yellow plan", colored)
+	}
+	coloredAsk := ui.PromptPrefix(ui.REPLSettings{Ask: true, Color: true})
+	if !strings.Contains(coloredAsk, ui.Paint(true, ui.ColorCyan, "ask")) {
+		t.Fatalf("colored ask prefix = %q, want cyan ask", coloredAsk)
 	}
 }
 
@@ -144,6 +154,34 @@ func TestFormatStatusIgnoresEcoForModel(t *testing.T) {
 	})
 	if got != "gpt-5.6-luna · ask · max · 1m · 0% · fast" {
 		t.Fatalf("eco must not change status model = %q", got)
+	}
+}
+
+func TestWriteChromeShowsAskAfterPrompt(t *testing.T) {
+	var output bytes.Buffer
+	err := ui.WriteChrome(&output, ui.REPLSettings{
+		Version:        "0.0.1",
+		Model:          "gpt-5.6-sol",
+		PermissionMode: config.PermissionAutoWrites,
+		Effort:         "medium",
+		Ask:            true,
+	})
+	if err != nil {
+		t.Fatalf("writeChrome() error = %v", err)
+	}
+	got := strings.Split(strings.TrimSuffix(output.String(), "\n"), "\n")
+	want := []string{
+		"◆ gxx  v0.0.1",
+		"> ask",
+		"gpt-5.6-sol · auto-writes · medium · 272k · 0%",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("chrome lines = %#v, want %#v", got, want)
+	}
+	for index, line := range want {
+		if got[index] != line {
+			t.Fatalf("line %d = %q, want %q", index+1, got[index], line)
+		}
 	}
 }
 

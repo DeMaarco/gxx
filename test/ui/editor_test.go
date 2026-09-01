@@ -161,21 +161,30 @@ func TestPromptFrameWrapsWithoutRepeatingPrefix(t *testing.T) {
 	}
 }
 
-func TestTogglePlanFlipsSessionFlag(t *testing.T) {
-	var applied bool
+func TestCycleSessionAskPlanAgentAreExclusive(t *testing.T) {
+	var ask, plan bool
 	settings := ui.REPLSettings{
-		SetPlan: func(plan bool) error {
-			applied = plan
+		Ask: true,
+		SetAsk: func(next bool) error {
+			ask = next
+			return nil
+		},
+		SetPlan: func(next bool) error {
+			plan = next
 			return nil
 		},
 	}
-	ui.TogglePlan(&settings)
-	if !settings.Plan || !applied {
-		t.Fatalf("first toggle plan=%v applied=%v", settings.Plan, applied)
+	ui.CycleSession(&settings)
+	if !settings.Plan || settings.Ask || !plan || ask {
+		t.Fatalf("ask→plan: settings=%+v ask=%v plan=%v", settings, ask, plan)
 	}
-	ui.TogglePlan(&settings)
-	if settings.Plan || applied {
-		t.Fatalf("second toggle plan=%v applied=%v", settings.Plan, applied)
+	ui.CycleSession(&settings)
+	if settings.Plan || settings.Ask || plan || ask {
+		t.Fatalf("plan→agent: settings=%+v ask=%v plan=%v", settings, ask, plan)
+	}
+	ui.CycleSession(&settings)
+	if !settings.Ask || settings.Plan || !ask || plan {
+		t.Fatalf("agent→ask: settings=%+v ask=%v plan=%v", settings, ask, plan)
 	}
 }
 

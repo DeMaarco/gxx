@@ -234,6 +234,35 @@ func TestPersistedAPIKeyClearsOAuth(t *testing.T) {
 	}
 }
 
+func TestActiveAccountFollowsCurrentModelWhenBothProvidersExist(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("OPENAI_API_KEY", "sk-test")
+	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "claude-token")
+	t.Setenv("GXX_MODEL", "gpt-5.6-sol")
+
+	settings := config.Load(t.TempDir())
+	if settings.ActiveAccount() != config.AccountAPI {
+		t.Fatalf("gpt model active = %q, want api", settings.ActiveAccount())
+	}
+
+	settings.Model = config.DefaultClaudeModel
+	if settings.ActiveAccount() != config.AccountClaude {
+		t.Fatalf("claude model active = %q, want claude", settings.ActiveAccount())
+	}
+}
+
+func TestActiveAccountUsesClaudeWhenOnlyClaudeExists(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "claude-token")
+	t.Setenv("GXX_MODEL", "gpt-5.6-sol")
+
+	settings := config.Load(t.TempDir())
+	if settings.ActiveAccount() != config.AccountClaude {
+		t.Fatalf("active = %q, want claude", settings.ActiveAccount())
+	}
+}
+
 func TestContextTokensForClaude(t *testing.T) {
 	if got := config.ContextTokensFor(config.ProviderAnthropic, "272k"); got != 200_000 {
 		t.Fatalf("272k = %d", got)

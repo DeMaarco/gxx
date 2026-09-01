@@ -859,7 +859,7 @@ func (e *lineEditor) Read(ctx context.Context, settings *REPLSettings) (string, 
 		if event.kind == keyShiftTab {
 			e.state.exitArmed = false
 			if e.state.picker == pickerClosed {
-				togglePlan(settings)
+				cycleSession(settings)
 			}
 			if err := e.render(*settings); err != nil {
 				return "", err
