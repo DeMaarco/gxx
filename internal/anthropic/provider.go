@@ -28,10 +28,11 @@ import (
 	"github.com/anthropics/anthropic-sdk-go/option"
 
 	"gxx/internal/agent"
+	"gxx/internal/budget"
 	"gxx/internal/config"
 )
 
-const fallbackHistoryItems = 256
+const fallbackHistoryItems = budget.FallbackHistoryItems
 
 var ErrContextOverflow = errors.New("context window is full; run /clear or start a new conversation")
 
@@ -522,29 +523,12 @@ func (p *Provider) overTarget(history []anthropicsdk.MessageParam) bool {
 }
 
 func (p *Provider) calibrate(tokens int64) int64 {
-	factor := p.tokenFactor
-	if factor <= 0 {
-		factor = 1.0
-	}
-	return int64(float64(tokens) * factor)
+	return budget.Calibrate(tokens, p.tokenFactor)
 }
 
 func (p *Provider) updateTokenFactorLocked(staged []anthropicsdk.MessageParam, toolTokens int64) {
 	est := historyTokens(staged, p.instructions) + toolTokens
-	if est <= 0 || p.lastInputTokens <= 0 {
-		return
-	}
-	observed := float64(p.lastInputTokens) / float64(est)
-	if observed < 0.5 {
-		observed = 0.5
-	} else if observed > 2.0 {
-		observed = 2.0
-	}
-	old := p.tokenFactor
-	if old <= 0 {
-		old = 1.0
-	}
-	p.tokenFactor = 0.3*observed + 0.7*old
+	p.tokenFactor = budget.UpdateFactor(p.tokenFactor, est, p.lastInputTokens)
 }
 
 func messageHasToolResult(message anthropicsdk.MessageParam) bool {
@@ -578,14 +562,11 @@ func estimateJSON(value any) int64 {
 	if err != nil {
 		return 0
 	}
-	return estimateTokens(len(data))
+	return budget.EstimateTokens(len(data))
 }
 
 func estimateTokens(bytes int) int64 {
-	if bytes <= 0 {
-		return 0
-	}
-	return int64(bytes / 4)
+	return budget.EstimateTokens(bytes)
 }
 
 func thinkingForEffort(effort string, omit bool) (anthropicsdk.ThinkingConfigParamUnion, int64) {

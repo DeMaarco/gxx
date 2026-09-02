@@ -18,10 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
-	"net"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -30,85 +27,30 @@ import (
 	"github.com/openai/openai-go/v3/responses"
 
 	"gxx/internal/agent"
+	"gxx/internal/budget"
 )
 
-const maxAPIAttempts = 3
-const maxRetryAfter = 30 * time.Second
+const maxAPIAttempts = budget.MaxAPIAttempts
+
+var maxRetryAfter = budget.MaxRetryAfter
 
 func retryDelay(attempt int, raw *http.Response) time.Duration {
-	if raw != nil {
-		if ms := strings.TrimSpace(raw.Header.Get("Retry-After-Ms")); ms != "" {
-			if millis, err := strconv.Atoi(ms); err == nil && millis >= 0 {
-				delay := time.Duration(millis) * time.Millisecond
-				if delay > maxRetryAfter {
-					return maxRetryAfter
-				}
-				return delay
-			}
-		}
-		if value := strings.TrimSpace(raw.Header.Get("Retry-After")); value != "" {
-			if seconds, err := strconv.Atoi(value); err == nil && seconds >= 0 {
-				if seconds > int(maxRetryAfter/time.Second) {
-					seconds = int(maxRetryAfter / time.Second)
-				}
-				return time.Duration(seconds) * time.Second
-			}
-		}
-	}
-	if attempt <= 1 {
-		return time.Second
-	}
-	return 2 * time.Second
+	return budget.RetryDelay(attempt, raw)
 }
 
 func retryable(err error, ctx context.Context, raw *http.Response) bool {
 	if err == nil || ctx.Err() != nil {
 		return false
 	}
-	if errors.Is(err, context.Canceled) {
-		return false
-	}
-	if errors.Is(err, context.DeadlineExceeded) && ctx.Err() != nil {
-		return false
-	}
 	var apiErr *openaisdk.Error
 	if errors.As(err, &apiErr) {
 		return apiErr.StatusCode == http.StatusTooManyRequests || apiErr.StatusCode >= 500
 	}
-	if raw != nil {
-		if raw.StatusCode == http.StatusTooManyRequests || raw.StatusCode >= 500 {
-			return true
-		}
-		if raw.StatusCode >= 400 && raw.StatusCode < 500 {
-			return false
-		}
-	}
-	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
-		return true
-	}
-	var netErr net.Error
-	if errors.As(err, &netErr) && netErr.Timeout() {
-		return true
-	}
-	message := strings.ToLower(err.Error())
-	return strings.Contains(message, "connection reset") ||
-		strings.Contains(message, "eof") ||
-		strings.Contains(message, "timeout") ||
-		strings.Contains(message, "overloaded")
+	return budget.Retryable(err, ctx, raw)
 }
 
 func sleepContext(ctx context.Context, delay time.Duration) error {
-	if delay <= 0 {
-		return ctx.Err()
-	}
-	timer := time.NewTimer(delay)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-timer.C:
-		return nil
-	}
+	return budget.SleepContext(ctx, delay)
 }
 
 func formatResponsesError(err error) error {

@@ -20,6 +20,7 @@ import (
 	"github.com/openai/openai-go/v3/responses"
 
 	"gxx/internal/agent"
+	"gxx/internal/budget"
 )
 
 func (p *Provider) ContextSnapshot() agent.ContextUsage {
@@ -74,29 +75,12 @@ func (p *Provider) overTarget(items []responses.ResponseInputItemUnionParam) boo
 }
 
 func (p *Provider) calibrate(tokens int64) int64 {
-	factor := p.tokenFactor
-	if factor <= 0 {
-		factor = 1.0
-	}
-	return int64(float64(tokens) * factor)
+	return budget.Calibrate(tokens, p.tokenFactor)
 }
 
 func (p *Provider) updateTokenFactorLocked(staged []responses.ResponseInputItemUnionParam, toolTokens int64) {
 	est := historyTokens(staged, p.instructions) + toolTokens
-	if est <= 0 || p.lastInputTokens <= 0 {
-		return
-	}
-	observed := float64(p.lastInputTokens) / float64(est)
-	if observed < 0.5 {
-		observed = 0.5
-	} else if observed > 2.0 {
-		observed = 2.0
-	}
-	old := p.tokenFactor
-	if old <= 0 {
-		old = 1.0
-	}
-	p.tokenFactor = 0.3*observed + 0.7*old
+	p.tokenFactor = budget.UpdateFactor(p.tokenFactor, est, p.lastInputTokens)
 }
 
 func itemKind(item responses.ResponseInputItemUnionParam) string {
@@ -120,12 +104,9 @@ func estimateJSON(value any) int64 {
 	if err != nil {
 		return 0
 	}
-	return estimateTokens(len(data))
+	return budget.EstimateTokens(len(data))
 }
 
 func estimateTokens(bytes int) int64 {
-	if bytes <= 0 {
-		return 0
-	}
-	return int64(bytes / 4)
+	return budget.EstimateTokens(bytes)
 }

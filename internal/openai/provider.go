@@ -34,11 +34,12 @@ import (
 	"github.com/openai/openai-go/v3/shared"
 
 	"gxx/internal/agent"
+	"gxx/internal/budget"
 	"gxx/internal/caveman"
 	"gxx/internal/config"
 )
 
-const fallbackHistoryItems = 256
+const fallbackHistoryItems = budget.FallbackHistoryItems
 
 var errOpenAIUnconfigured = errors.New("OpenAI is not configured; run gxx login openai or /config")
 

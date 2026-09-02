@@ -22,15 +22,16 @@ import (
 	anthropicsdk "github.com/anthropics/anthropic-sdk-go"
 
 	"gxx/internal/agent"
+	"gxx/internal/budget"
 	"gxx/internal/caveman"
 )
 
 const (
-	compactNotice           = "Earlier conversation was compacted by gxx to fit the context window. Continue from the remaining history."
+	compactNotice           = budget.CompactNotice
 	unansweredToolOutput    = "error: tool call was not executed"
-	compactSummaryMaxBytes  = 4 * 1024
-	compactSummaryClipRunes = 160
-	emergencyToolClipBytes  = 512
+	compactSummaryMaxBytes  = budget.SummaryMaxBytes
+	compactSummaryClipRunes = budget.SummaryClipRunes
+	emergencyToolClipBytes  = budget.EmergencyToolClipBytes
 )
 
 func (p *Provider) AbsorbToolResults(results []agent.ToolResult) {
@@ -133,15 +134,7 @@ func (p *Provider) compactLocked(emit agent.EmitFunc) {
 }
 
 func (p *Provider) compactTarget() int64 {
-	if p.contextTokens <= 0 {
-		return int64(fallbackHistoryItems / 2)
-	}
-	numer := p.compactNumer
-	denom := p.compactDenom
-	if numer <= 0 || denom <= 0 {
-		numer, denom = 2, 3
-	}
-	return int64(p.contextTokens) * int64(numer) / int64(denom)
+	return budget.CompactTarget(p.contextTokens, p.compactNumer, p.compactDenom, fallbackHistoryItems/2)
 }
 
 func emergencyFit(
@@ -397,28 +390,7 @@ func summarizeDropped(messages []anthropicsdk.MessageParam) string {
 	}
 	users = lastStrings(users, 3)
 	errors = lastStrings(errors, 5)
-
-	var builder strings.Builder
-	builder.WriteString(compactNotice)
-	if len(users) > 0 {
-		builder.WriteString("\nPrior user requests:")
-		for _, user := range users {
-			builder.WriteString("\n- ")
-			builder.WriteString(user)
-		}
-	}
-	if len(tools) > 0 {
-		builder.WriteString("\nTools used: ")
-		builder.WriteString(strings.Join(tools, ", "))
-	}
-	if len(errors) > 0 {
-		builder.WriteString("\nRecent tool errors:")
-		for _, message := range errors {
-			builder.WriteString("\n- ")
-			builder.WriteString(message)
-		}
-	}
-	return clipBytes(builder.String(), compactSummaryMaxBytes)
+	return budget.FormatDroppedSummary(users, tools, errors)
 }
 
 func userTurnIndexes(messages []anthropicsdk.MessageParam) []int {
@@ -532,29 +504,15 @@ func cloneMessages(messages []anthropicsdk.MessageParam) []anthropicsdk.MessageP
 }
 
 func lastStrings(values []string, n int) []string {
-	if len(values) <= n {
-		return values
-	}
-	return values[len(values)-n:]
+	return budget.LastStrings(values, n)
 }
 
 func clipRunes(value string, limit int) string {
-	if limit <= 0 || utf8.RuneCountInString(value) <= limit {
-		return value
-	}
-	runes := []rune(value)
-	return string(runes[:limit]) + "…"
+	return budget.ClipRunes(value, limit)
 }
 
 func clipBytes(value string, limit int) string {
-	if len(value) <= limit {
-		return value
-	}
-	keep := limit
-	for keep > 0 && !utf8.RuneStart(value[keep]) {
-		keep--
-	}
-	return value[:keep]
+	return budget.ClipBytes(value, limit)
 }
 
 func toolParams(definitions []agent.ToolDefinition, eco int) []anthropicsdk.ToolUnionParam {
