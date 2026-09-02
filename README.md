@@ -9,12 +9,12 @@
  ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝
 ```
 
-**A small coding agent for the terminal.**
+**A coding helper that lives in your terminal.**
 
-Open a repo, type what you want, and it lists, searches, reads,
-inspects git, patches, generates images, and runs commands — in that folder only.
+Open a project folder, type what you want in plain language,
+and gxx reads, edits, and runs things — only inside that folder.
 
-[Website](https://demaarco.github.io/gxx/) · [Install](#install) · [Quick start](#quick-start) · [REPL](#repl) · [Permissions](#permissions)
+[Website](https://demaarco.github.io/gxx/) · [Install](#install) · [How it works](#how-it-works) · [What it can do](#what-it-can-do)
 
 [![Docs](https://img.shields.io/badge/docs-online-a855f7?style=flat-square)](https://demaarco.github.io/gxx/)
 [![Release](https://img.shields.io/github/v/release/DeMaarco/gxx?style=flat-square&color=a855f7)](https://github.com/DeMaarco/gxx/releases)
@@ -22,81 +22,191 @@ inspects git, patches, generates images, and runs commands — in that folder on
 [![Go](https://img.shields.io/badge/go-1.27+-00ADD8?style=flat-square&logo=go&logoColor=white)](https://go.dev)
 [![Platform](https://img.shields.io/badge/macOS%20%7C%20Linux%20%7C%20Windows-111827?style=flat-square)](#install)
 
+<br />
+
+<img src="docs/assets/gxx-repl.jpg" alt="gxx REPL — type a request and get an answer in your project folder" width="720" />
+
 </div>
 
 ---
 
-Inspired by [`fx`](https://github.com/vercel-labs/fx), but narrower on purpose:
-**OpenAI or Claude**, **one workspace**, **no TUI**. Just a prompt.
+## Quick guide
 
-```text
-◆ gxx  v0.0.20
->
-gpt-5.6-sol · auto · medium · 272k · 0%
-```
+Three steps. That’s the whole loop.
 
-The prompt badge is the session: plain `>` is agent, `> ask` and `> plan` after `Shift+Tab`.
-The status line is model · permission mode · effort · context size · window fill.
-`auto` paints red. Context turns yellow at 70% and red at 90%.
-After each turn the footer adds estimated USD. Rates are re-read from the
-official OpenAI and Anthropic pricing pages so a price change is picked up
-without a new gxx release.
+### 1. Install it
 
-## Features
-
-| | What you get |
-| --- | --- |
-| **Workspace-bound** | The directory you start in is the whole world. No traversal, no outside symlinks. |
-| **Ask / Plan** | `Shift+Tab` from agent enters ask or plan; from ask or plan, one press returns to agent. They are read-only and never overlap. After a plan, arrow keys choose execute, request changes, or cancel. Execute enters agent. |
-| **Git inspect** | `git_status`, `git_diff`, and `git_log` are read-only and stay inside the workspace. |
-| **Images** | `generate_image` calls GPT Image 2 (or another GPT image model) through the OpenAI Images API and writes the file in the workspace. Needs a platform API key. |
-| **One-shot CLI** | `gxx ask` for scripts and pipes. `--json` when you want a machine-readable result. |
-| **Secret-aware** | `.env`, keys, and credential paths are blocked on read, search, list, patch, git inspect, and shell commands that name them. Requests go out with `store:false`. |
-
-## Install
-
-macOS and Linux, amd64 and arm64:
+**macOS / Linux**
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/DeMaarco/gxx/main/install.sh | sh
 ```
 
-That puts `gxx` in `~/.local/bin`. If the shell cannot find it, or another `gxx` is first on PATH:
+**Windows (PowerShell)**
+
+```powershell
+irm https://raw.githubusercontent.com/DeMaarco/gxx/main/install.ps1 | iex
+```
+
+Check that it works:
+
+```sh
+gxx version
+```
+
+### 2. Connect an account
+
+You need **OpenAI** (API key or ChatGPT Plus/Pro/Team) or **Claude** (Pro/Max).
+
+```sh
+# OpenAI with an API key
+export OPENAI_API_KEY="sk-..."
+
+# or sign in
+gxx login openai
+# gxx login claude
+```
+
+On Windows (PowerShell):
+
+```powershell
+$env:OPENAI_API_KEY = "sk-..."
+```
+
+### 3. Open your project and type
+
+```sh
+cd your-project
+gxx
+```
+
+Say what you want, for example:
+
+- `explain this repository`
+- `where is the port configured?`
+- `fix the failing test`
+- `add a save button to the form`
+
+Press **Enter**. gxx reads the code, answers, and — when needed — proposes changes.
+
+| Shortcut | What it does |
+| --- | --- |
+| `Shift+Tab` | Switch **agent** (can edit) · **ask** (questions only) · **plan** (plan before touching anything) |
+| `/` | Slash commands (`/help`, `/model`, `/mode`…) |
+| `Tab` | Complete or open pickers |
+| `Ctrl+O` | Saved conversations for this project |
+| `Ctrl+C` / `Ctrl+D` | Cancel or exit |
+
+That’s enough to start. The rest of this page covers how it works and what’s unique.
+
+---
+
+## How it works
+
+gxx is a small agent that sits in one folder — the project you open.
+
+1. **You start it** inside a repo (`cd my-app && gxx`).
+2. **You type** what you want in normal language.
+3. **It looks around** that folder: lists files, searches, reads code, checks git.
+4. **It answers**, and in agent mode it can edit files or run commands (with your permission settings).
+5. **It never leaves** that folder. Outside paths and secret files (like `.env`) stay blocked.
+
+You talk. It works in your project. Nothing fancy to learn first.
+
+<p align="center">
+  <img src="docs/assets/gxx-modes.jpg" alt="gxx modes: ask, plan, and agent" width="720" />
+</p>
+
+**Three ways to talk to it** (press `Shift+Tab` to switch):
+
+| Mode | Prompt | Best for |
+| --- | --- | --- |
+| **Agent** | `>` | Doing the work — edits and commands (with your permission rules) |
+| **Ask** | `> ask` | Questions only — reads code, never changes anything |
+| **Plan** | `> plan` | Think first — drafts a plan; then you choose execute, change, or cancel |
+
+<p align="center">
+  <img src="docs/assets/gxx-plan-menu.jpg" alt="After a plan, pick execute, request changes, or cancel" width="720" />
+</p>
+
+The line under the prompt is your session at a glance:
+
+```text
+gpt-5.6-sol · auto · medium · 272k · 0%
+```
+
+model · permission · effort · context size · how full the window is
+
+`auto` shows in red. Context turns yellow near 70% and red near 90%. After each turn you also see an estimated cost in USD.
+
+---
+
+## What it can do
+
+- **Explain** a project, a file, or a confusing function
+- **Find** where something lives (`search`, list folders, read files)
+- **Inspect git** — status, diff, and log (read-only, same folder only)
+- **Edit code** — apply patches when you allow it
+- **Run commands** — tests, builds, scripts (you approve them in safer modes)
+- **Generate images** into the project (needs an OpenAI platform API key)
+- **One-shot answers** without the chat: `gxx ask "explain this repo"`
+- **Scripts & pipes** — `echo "…" \| gxx ask` or `--json` for tools
+
+Drop an `AGENTS.md` in the project root if you want extra project notes loaded every turn. Those notes cannot override gxx safety rules.
+
+---
+
+## What makes gxx different
+
+| | Why it matters |
+| --- | --- |
+| **One folder only** | The directory you start in is the whole world. No wandering into the rest of your disk. |
+| **Ask / Plan built in** | Read-only modes with one key (`Shift+Tab`). Plan ends with a clear menu: execute, revise, or cancel. |
+| **Secret-aware** | `.env`, keys, and credential paths are blocked on read, search, patch, git, and shell. |
+| **Honest cost line** | After each turn, an estimated USD cost — rates refreshed from official OpenAI and Anthropic pricing. |
+| **Eco mode** | `/eco` shrinks filler in requests (keeps code, paths, URLs) to save tokens. Session-only. |
+| **Plain terminal** | No heavy TUI. A prompt, a status line, slash commands. Works over SSH. |
+| **OpenAI or Claude** | API key, ChatGPT login, or Claude Pro/Max — pick what you already have. |
+
+---
+
+## Install
+
+### macOS and Linux
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/DeMaarco/gxx/main/install.sh | sh
+```
+
+Installs to `~/.local/bin`. If the shell cannot find it:
 
 ```sh
 export PATH="$HOME/.local/bin:$PATH"
 gxx version
 ```
 
-Pin a release or another directory:
+Pin a version or install path:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/DeMaarco/gxx/main/install.sh | sh -s -- --version v0.0.20
 curl -fsSL https://raw.githubusercontent.com/DeMaarco/gxx/main/install.sh | sh -s -- --dir /usr/local/bin
 ```
 
-Windows, amd64 and arm64 (PowerShell):
+### Windows
 
 ```powershell
 irm https://raw.githubusercontent.com/DeMaarco/gxx/main/install.ps1 | iex
 ```
 
-That puts `gxx.exe` in `%LOCALAPPDATA%\gxx` and puts that folder first on your user PATH and this session. If `gxx version` still shows an older build, another `gxx.exe` is first on PATH (`Get-Command gxx`).
+Installs to `%LOCALAPPDATA%\gxx` and puts that folder on your PATH. Pin a version with `$env:GXX_VERSION = "v0.0.20"` before running the installer.
 
-Pin a release or another directory:
+`run_command` uses PowerShell. Git tools need [Git for Windows](https://git-scm.com/download/win). Config lives in `%APPDATA%\gxx\config.json`.
 
-```powershell
-$env:GXX_VERSION = "v0.0.20"
-irm https://raw.githubusercontent.com/DeMaarco/gxx/main/install.ps1 | iex
-```
+---
 
-`run_command` uses PowerShell. The git tools need [Git for Windows](https://git-scm.com/download/win) on PATH.
+## Connect OpenAI or Claude
 
-`/config` writes `%APPDATA%\gxx\config.json`. An older `%USERPROFILE%\.config\gxx\config.json` is still read until the next save.
-
-## Quick start
-
-**OpenAI:** an [API key](https://platform.openai.com/api-keys), or a ChatGPT account (Plus/Pro/Team). Export the key, run `/config`, or log in:
+**OpenAI** — [API key](https://platform.openai.com/api-keys), or ChatGPT (Plus/Pro/Team):
 
 ```sh
 export OPENAI_API_KEY="sk-..."
@@ -110,9 +220,10 @@ cd your-project
 gxx
 ```
 
-Account login talks to the ChatGPT Codex backend (undocumented; it can break). `/config` is still the platform API key. `OPENAI_API_KEY` wins over a saved key, and a key wins over OAuth. On SSH or a machine without a display, use `gxx login openai --device`.
+On machines without a browser, use `gxx login openai --device`.  
+`OPENAI_API_KEY` wins over a saved key; a key wins over OAuth.
 
-**Claude:** a Pro/Max subscription. Run `gxx login claude`, or start `gxx` and run `/login claude`. You can also export a token from `claude setup-token`:
+**Claude** — Pro/Max:
 
 ```sh
 gxx login claude
@@ -120,22 +231,9 @@ cd your-project
 gxx --model sonnet
 ```
 
-`gxx login` / `/login` without a provider opens a picker in a terminal (`openai` or `claude`). Scripts must pass the provider. `chatgpt` and `codex` are aliases for `openai`.
+`gxx login` without a provider opens a picker. `chatgpt` / `codex` are aliases for `openai`.
 
-```sh
-export CLAUDE_CODE_OAUTH_TOKEN="..."
-gxx ask --model opus "explain this repository"
-```
-
-PowerShell (OpenAI):
-
-```powershell
-$env:OPENAI_API_KEY = "sk-..."
-cd your-project
-gxx
-```
-
-One-shot, without the REPL:
+**One-shot** (no REPL):
 
 ```sh
 gxx ask "explain this repository"
@@ -144,87 +242,54 @@ echo "what does main.go do?" | gxx ask
 gxx usage
 ```
 
-Drop an `AGENTS.md` in the project root if you want extra instructions loaded into the session. It is re-read at the start of every turn and on `/clear`. Those notes cannot override gxx safety, permission, or plan-mode rules.
+---
 
-## REPL
+## Permissions (when it can write)
 
-```text
-◆ gxx  v0.0.20     badge and version
->                 type here  ·  Shift+Tab →  > ask  ·  Shift+Tab →  agent again
-gpt-5.6-sol · auto · medium · 272k · 0%
-```
+Reads always run. **Ask** and **Plan** are read-only — no write approvals needed.
 
-| Key | Action |
-| --- | --- |
-| `/` | Slash commands |
-| `Tab` | Complete, or open pickers |
-| `Shift+Tab` | From ask/plan, back to agent. From agent, cycle ask and plan |
-| `Ctrl+O` | Open saved conversations for this workspace |
-| `Ctrl+C` | Clear, cancel, or confirm exit |
-| `Ctrl+D` | Exit |
-
-`gxx` starts in agent, so `/mode` (`ask`, `auto-writes`, `auto`) applies. Ask and plan are separate session modes on `Shift+Tab`. They never overlap. One press from ask or plan returns to agent. Both are read-only: only file reads and git inspect, with no approval prompt. They are session-only and not saved to config.
-
-After a plan is generated, a terminal shows an arrow-key menu: execute the plan, request changes, or cancel. Request changes stays in plan so you can send a revision. Execute switches to agent and implements, using the current permission mode.
-
-Conversations are saved automatically after each turn to `~/.config/gxx/conversations/` (per workspace). `Ctrl+O` or `/history` opens an arrow-key menu to load a previous thread. The screen does not replay old turns; the model context is restored in memory. `/clear` archives the current thread and starts a new one.
-
-`/eco` is also session-only. It paints green on the prompt like plan. `/eco` toggles; `/eco lite` `full` `ultra` set the strength (aliases: 1/2/3). Eco never changes the model. It compresses request input the way Caveman does: drop filler, keep code, paths, URLs, and identifiers. Tool descriptions shrink too. Ultra also drops reasoning replay.
-
-### Commands
-
-| Command | What it does |
-| --- | --- |
-| `/help` | Commands |
-| `/model` | Models for the connected account only · Tab for context, effort, fast |
-| `/eco` | Caveman input saver · `lite` `full` `ultra` · green on the prompt · session-only |
-| `/compact` | Summarize older turns to free context · optional focus text |
-| `/mode` | Permission for **agent**: `ask` (confirm writes and commands) · `auto-writes` · `auto` |
-| `/config` | Save the OpenAI API key |
-| `/login` | Connect one account · openai · claude · api · green marks the active one |
-| `/logout` | Clear the connected account |
-| `/context` | Window occupancy |
-| `/usage` | Session tokens, estimated cost, and remaining subscription or API quota |
-| `/history` | Open saved conversations for this workspace |
-| `/clear` | Archive this conversation and start a new one |
-| `/exit` | Quit |
-
-Inline forms work too:
-
-```text
-/model terra context=1m effort=high fast=on
-/model opus
-/mode auto-writes
-```
-
-Context sizes follow each model’s API window: OpenAI `272k` or `1m`, Claude `300k` (cheaper compact budget) or `1m` (Haiku `200k`). Switching models clamps an unsupported size.
-
-`yolo` is an alias for `auto`.
-
-## Permissions
-
-Reads always run, with no approval. Ask and plan only expose read tools, so `/mode` does not apply while those sessions are on.
-
-In agent, writes and shell commands follow the permission mode.
+In **agent**, writes and shell follow `/mode`:
 
 | Mode | Files | Shell |
 | --- | --- | --- |
-| `ask` | Preview + confirm | Preview + arrow menu, or allow that exact command for the session |
-| `auto-writes` | Apply | Preview + arrow menu, or allow that exact command for the session |
+| `ask` | Preview + confirm | Preview + menu (or allow that exact command for the session) |
+| `auto-writes` | Apply | Preview + menu |
 | `auto` | Apply | Apply |
 
-A terminal shows an arrow-key menu for commands that still need approval (deny is the default). Without one, type `y-xxxx` to approve or `a-xxxx` to allow that exact command for the session.
-Piped `gxx ask` stays in ask session unless you pass `--permission`. Changing `/mode` clears the session command allowlist. On Windows they run under PowerShell (`pwsh` if present, otherwise `powershell.exe`).
-Commands are not OS-sandboxed — review them in `auto-writes` or `auto`.
+Prefer `ask` or `auto-writes` until you trust a workflow. Commands are not OS-sandboxed — review them when they matter.
 
-## Privacy
+---
 
-- OpenAI requests use `store:false`.
-- Only files the tools actually open go to the active provider.
-- Secret paths (`.env`, keys, credentials) are blocked on file tools, image writes, git inspect, and commands that name them.
-- Image generation uses the platform Images API with the OpenAI API key. ChatGPT login is not enough for `generate_image`.
-- The OpenAI API key, ChatGPT Codex OAuth tokens, and Claude OAuth tokens live in the same owner-only `config.json` (`0600` on Unix, a user-only ACL on Windows). They are stripped from child shell environments. gxx does not read `~/.codex/auth.json` or `~/.claude/.credentials.json`.
-- Do not point it at code you cannot send to that account.
+## Useful commands
+
+| Command | What it does |
+| --- | --- |
+| `/help` | List commands |
+| `/model` | Switch models (Tab for context, effort, fast) |
+| `/mode` | Agent permissions: `ask` · `auto-writes` · `auto` |
+| `/eco` | Save tokens on input · `lite` `full` `ultra` |
+| `/compact` | Summarize older turns to free context |
+| `/config` | Save the OpenAI API key |
+| `/login` / `/logout` | Connect or clear an account |
+| `/context` | How full the window is |
+| `/usage` | Tokens, estimated cost, remaining quota |
+| `/history` | Saved conversations for this workspace |
+| `/clear` | Archive this chat and start fresh |
+| `/exit` | Quit |
+
+Inline forms work too: `/model opus`, `/mode auto-writes`, `/eco full`.
+
+---
+
+## Privacy (short version)
+
+- Requests use `store:false` where the API supports it.
+- Only files the tools actually open are sent to the provider.
+- Secret paths stay blocked.
+- Keys and OAuth tokens live in an owner-only `config.json`.
+- Do not point gxx at code you cannot send to that account.
+
+---
 
 ## Build from source
 
@@ -236,6 +301,8 @@ cd gxx
 go install ./cmd/gxx
 go test ./test/...
 ```
+
+---
 
 ## License
 
