@@ -34,7 +34,7 @@ func FormatUsage(report agent.UsageReport, color bool) string {
 	writeSessionUsage(&output, color, report)
 	if report.RateLimit.Known || !hasSubscription {
 		if output.Len() > 0 {
-			output.WriteByte('\n')
+			output.WriteString("\n")
 		}
 		writeRateLimit(&output, color, report.RateLimit)
 	}
@@ -47,15 +47,19 @@ func writeUsageHeader(output *strings.Builder, color bool, source, plan string) 
 	if source == "" && plan == "" {
 		return
 	}
+	var title string
 	switch {
 	case source != "" && plan != "":
-		fmt.Fprintf(output, "%s  %s\n", paint(color, dim, source), paint(color, bold, plan))
+		title = paint(color, dim, source) + "  " + paint(color, bold, plan)
 	case source != "":
-		fmt.Fprintf(output, "%s\n", paint(color, dim, source))
+		title = paint(color, dim, source)
 	default:
-		fmt.Fprintf(output, "%s\n", paint(color, bold, plan))
+		title = paint(color, bold, plan)
 	}
-	output.WriteByte('\n')
+	output.WriteString(title)
+	output.WriteString("\n")
+	output.WriteString(sectionRule(color))
+	output.WriteString("\n\n")
 }
 
 func writeAccountUsage(output *strings.Builder, color bool, source string, account agent.AccountUsage) {
@@ -69,7 +73,9 @@ func writeAccountUsage(output *strings.Builder, color bool, source string, accou
 		} else if isSubscriptionSource(source) {
 			title = "subscription"
 		}
-		fmt.Fprintf(output, "%s\n%s\n", paint(color, dim, title), paint(color, red, "  "+account.Error))
+		output.WriteString(formatSectionTitle(color, title))
+		output.WriteString("\n\n")
+		fmt.Fprintf(output, "    %s\n", paint(color, red, account.Error))
 		return
 	}
 	if hasSubscription {
@@ -77,12 +83,12 @@ func writeAccountUsage(output *strings.Builder, color bool, source string, accou
 	}
 	if hasMonthly || (!hasSubscription && !account.PeriodStart.IsZero()) {
 		if output.Len() > 0 && !strings.HasSuffix(output.String(), "\n\n") {
-			output.WriteByte('\n')
+			output.WriteString("\n")
 		}
 		writeMonthlyAccount(output, color, account)
 	}
 	if account.Error != "" {
-		fmt.Fprintf(output, "%s\n", paint(color, red, "  "+account.Error))
+		fmt.Fprintf(output, "    %s\n", paint(color, red, account.Error))
 	}
 }
 
@@ -96,11 +102,11 @@ func writeSubscription(output *strings.Builder, color bool, account agent.Accoun
 		label := paint(color, dim, fmt.Sprintf("%-10s", window.Name))
 		bar := quotaBar(color, left)
 		percent := paint(color, tone, fmt.Sprintf("%4s", formatPercent(left)))
-		line := label + " " + bar + "  " + percent
+		line := "  " + label + " " + bar + "   " + percent
 		if reset := formatReset(window); reset != "" {
-			line += "  " + paint(color, dim, reset)
+			line += "   " + paint(color, dim, reset)
 		} else if window.UsedPercent == 0 {
-			line += "  " + paint(color, dim, "not started")
+			line += "   " + paint(color, dim, "not started")
 		}
 		fmt.Fprintf(output, "%s\n", line)
 	}
@@ -108,7 +114,7 @@ func writeSubscription(output *strings.Builder, color bool, account agent.Accoun
 
 func writeSessionUsage(output *strings.Builder, color bool, report agent.UsageReport) {
 	if output.Len() > 0 && !strings.HasSuffix(output.String(), "\n\n") {
-		output.WriteByte('\n')
+		output.WriteString("\n")
 	}
 	idle := report.SessionRequests == 0 &&
 		report.Session.InputTokens == 0 &&
@@ -118,7 +124,9 @@ func writeSessionUsage(output *strings.Builder, color bool, report agent.UsageRe
 		report.Session.ReasoningTokens == 0 &&
 		report.Session.TotalTokens == 0
 	if idle {
-		fmt.Fprintf(output, "%s  %s\n", paint(color, dim, "session"), paint(color, dim, "idle"))
+		output.WriteString(formatSectionTitle(color, "Session"))
+		output.WriteString("\n\n")
+		fmt.Fprintf(output, "    %s\n", paint(color, dim, "idle"))
 		return
 	}
 	rows := []usageRow{
@@ -133,7 +141,7 @@ func writeSessionUsage(output *strings.Builder, color bool, report agent.UsageRe
 	if report.HasSessionCost {
 		rows = append(rows, usageRow{label: "cost", value: formatCostUSD(report.SessionCostUSD), tone: cyan})
 	}
-	writeUsageSection(output, color, "session", rows)
+	writeUsageSection(output, color, "Session", rows)
 }
 
 func writeMonthlyAccount(output *strings.Builder, color bool, account agent.AccountUsage) {
@@ -222,8 +230,6 @@ func formatPlanName(plan string) string {
 		"go":         "Go",
 		"plus":       "Plus",
 		"pro":        "Pro",
-		"prolite":    "Pro lite",
-		"pro lite":   "Pro lite",
 		"team":       "Team",
 		"business":   "Business",
 		"enterprise": "Enterprise",
@@ -231,6 +237,8 @@ func formatPlanName(plan string) string {
 		"education":  "Edu",
 		"edu plus":   "Edu Plus",
 		"edu pro":    "Edu Pro",
+		"prolite":    "Pro lite",
+		"pro lite":   "Pro lite",
 	}
 	if name, ok := names[key]; ok {
 		return name
@@ -250,18 +258,7 @@ func quotaColor(left float64) string {
 }
 
 func quotaBar(color bool, left float64) string {
-	filled := int(math.Round(left / 100 * float64(contextBarWidth)))
-	if left > 0 && filled < 1 {
-		filled = 1
-	}
-	if filled > contextBarWidth {
-		filled = contextBarWidth
-	}
-	if filled < 0 {
-		filled = 0
-	}
-	return paint(color, quotaColor(left), strings.Repeat("█", filled)) +
-		paint(color, dim, strings.Repeat("░", contextBarWidth-filled))
+	return formatBarPercent(color, left)
 }
 
 func formatResetDuration(value time.Duration) string {
@@ -290,15 +287,12 @@ func formatResetDuration(value time.Duration) string {
 
 func writeRateLimit(output *strings.Builder, color bool, limit agent.RateLimit) {
 	if !limit.Known {
-		fmt.Fprintf(
-			output,
-			"%s\n%s\n",
-			paint(color, dim, "rate limit"),
-			paint(color, dim, "  unknown until a model request is made"),
-		)
+		output.WriteString(formatSectionTitle(color, "Rate limit"))
+		output.WriteString("\n\n")
+		fmt.Fprintf(output, "    %s\n", paint(color, dim, "unknown until a model request is made"))
 		return
 	}
-	writeUsageSection(output, color, "rate limit", []usageRow{
+	writeUsageSection(output, color, "Rate limit", []usageRow{
 		{label: "requests", value: formatQuota(limit.RequestsRemaining, limit.RequestsLimit, limit.RequestsReset)},
 		{label: "tokens", value: formatQuota(limit.TokensRemaining, limit.TokensLimit, limit.TokensReset)},
 	})
@@ -312,14 +306,15 @@ type usageRow struct {
 }
 
 func writeUsageSection(output *strings.Builder, color bool, title string, rows []usageRow) {
-	fmt.Fprintf(output, "%s\n", paint(color, dim, title))
+	output.WriteString(formatSectionTitle(color, title))
+	output.WriteString("\n\n")
 	for _, row := range rows {
-		label := paint(color, dim, fmt.Sprintf("  %-12s", row.label))
+		label := paint(color, dim, fmt.Sprintf("%-14s", row.label))
 		tone := row.tone
 		if row.alert {
 			tone = red
 		}
-		fmt.Fprintf(output, "%s %s\n", label, paint(color, tone, row.value))
+		fmt.Fprintf(output, "    %s %s\n", label, paint(color, tone, row.value))
 	}
 }
 
@@ -327,7 +322,7 @@ func formatQuota(remaining, limit int64, reset string) string {
 	value := formatCount(remaining) + " / " + formatCount(limit)
 	reset = strings.TrimSpace(reset)
 	if reset != "" {
-		value += "  reset " + reset
+		value += "   reset " + reset
 	}
 	return value
 }

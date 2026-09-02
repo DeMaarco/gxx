@@ -54,7 +54,6 @@ const (
 )
 
 var (
-	SpinnerFrames       = spinnerFrames
 	LiveLine            = liveLine
 	FormatElapsed       = formatElapsed
 	FormatToolDuration  = formatToolDuration
@@ -89,6 +88,7 @@ var (
 	ReadKey             = readKeyForTest
 	ReadLine            = readLine
 	RenderPromptFrame   = renderPromptFrame
+	FinishPromptFrame   = finishPromptFrame
 	WrapVisible         = wrapVisible
 	PromptHome          = promptHome
 	WindowRange         = windowRange

@@ -35,8 +35,9 @@ func TestFormatContextShowsColoredBreakdown(t *testing.T) {
 		ToolTokens:         3_000,
 	}, false)
 	for _, expected := range []string{
-		"15%",
-		"40,000 / 272,000",
+		"Context window",
+		"15% used",
+		"40,000 / 272,000 tokens",
 		"instructions",
 		"user",
 		"assistant",
@@ -61,8 +62,8 @@ func TestFormatStatusShowsContextPercent(t *testing.T) {
 			return agent.ContextUsage{Percent: 12}
 		},
 	})
-	if !strings.Contains(got, "12%") {
-		t.Fatalf("status = %q, want 12%%", got)
+	if !strings.Contains(got, "(12%)") {
+		t.Fatalf("status = %q, want (12%%)", got)
 	}
 }
 

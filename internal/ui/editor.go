@@ -922,7 +922,7 @@ func (e *lineEditor) render(settings REPLSettings) error {
 			marker = paint(e.color, cyan, "▸ ")
 			name = paint(e.color, bold+cyan, command.name)
 		}
-		body.WriteString(marker + name + "  " + help + "\r\n")
+		body.WriteString(marker + name + "    " + help + "\r\n")
 	}
 	return e.paintFrame(settings, body.String(), len(matches), true)
 }
@@ -1095,6 +1095,10 @@ func (e *lineEditor) paintFrame(settings REPLSettings, body string, bodyRows int
 		out.WriteString("\r\n")
 	}
 	out.WriteString("\r\n")
+	if body != "" {
+		out.WriteString("\r\n")
+		bodyRows++
+	}
 	out.WriteString(body)
 	out.WriteString(e.statusLine(settings))
 	up := promptRows - cursorRow + bodyRows
@@ -1125,7 +1129,7 @@ func (e *lineEditor) finish(settings REPLSettings, line string) {
 		}
 	}
 	out.WriteString(eraseDown)
-	out.WriteByte('\n')
+	out.WriteString("\r\n")
 	e.cursorRow = 0
 	_, _ = io.WriteString(e.out, out.String())
 }
@@ -1134,7 +1138,7 @@ func (e *lineEditor) statusLine(settings REPLSettings) string {
 	if e.state.exitArmed {
 		return paint(e.color, yellow, "Ctrl+C again to exit")
 	}
-	return formatStatus(settings)
+	return formatStatusLine(settings)
 }
 
 func (e *lineEditor) termWidth() int {
@@ -1305,6 +1309,11 @@ func renderPromptFrame(out io.Writer, settings REPLSettings, text string, width,
 		return 0, err
 	}
 	return e.cursorRow, nil
+}
+
+func finishPromptFrame(out io.Writer, settings REPLSettings, text string, width, prevCursorRow int) {
+	e := &lineEditor{out: out, columns: width, cursorRow: prevCursorRow, color: settings.Color}
+	e.finish(settings, text)
 }
 
 const (

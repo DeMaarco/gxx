@@ -38,8 +38,9 @@ func TestWriteChromePrintsHeaderPromptAndStatus(t *testing.T) {
 	got := strings.Split(strings.TrimSuffix(output.String(), "\n"), "\n")
 	want := []string{
 		"◆ gxx  v0.0.1",
+		"",
 		">",
-		"gpt-5.6-sol · ask · medium · 272k · 0%",
+		"  gpt-5.6-sol  ·  ask  ·  medium  ·  272k  ·  (0%)",
 	}
 	if len(got) != len(want) {
 		t.Fatalf("chrome lines = %#v, want %#v", got, want)
@@ -66,7 +67,7 @@ func TestWriteAskHeaderOmitsPrompt(t *testing.T) {
 	if !strings.HasPrefix(text, "◆ gxx  v0.0.1\n") {
 		t.Fatalf("header = %q", text)
 	}
-	if !strings.Contains(text, "gpt-5.6-sol · ask · high · 272k · 0%") {
+	if !strings.Contains(text, "gpt-5.6-sol  ·  ask  ·  high  ·  272k  ·  (0%)") {
 		t.Fatalf("status missing from %q", text)
 	}
 	if strings.Contains(text, "\n>\n") {
@@ -80,7 +81,7 @@ func TestFormatStatusAddsContextAndFast(t *testing.T) {
 		PermissionMode: config.PermissionAsk,
 		Effort:         "medium",
 	})
-	if plain != "gpt-5.6-sol · ask · medium · 272k · 0%" {
+	if plain != "gpt-5.6-sol  ·  ask  ·  medium  ·  272k  ·  (0%)" {
 		t.Fatalf("default status = %q", plain)
 	}
 	got := ui.FormatStatus(ui.REPLSettings{
@@ -90,7 +91,7 @@ func TestFormatStatusAddsContextAndFast(t *testing.T) {
 		Context:        "1m",
 		Fast:           true,
 	})
-	if got != "gpt-5.6-terra · ask · high · 1m · 0% · fast" {
+	if got != "gpt-5.6-terra  ·  ask  ·  high  ·  1m  ·  (0%)  ·  fast" {
 		t.Fatalf("status = %q", got)
 	}
 }
@@ -102,7 +103,7 @@ func TestFormatStatusShowsPlan(t *testing.T) {
 		Effort:         "medium",
 		Plan:           true,
 	})
-	if got != "gpt-5.6-sol · ask · medium · 272k · 0%" {
+	if got != "gpt-5.6-sol  ·  ask  ·  medium  ·  272k  ·  (0%)" {
 		t.Fatalf("plan should not appear in status = %q", got)
 	}
 	if prefix := ui.PromptPrefix(ui.REPLSettings{Plan: true}); prefix != "> plan " {
@@ -152,7 +153,7 @@ func TestFormatStatusIgnoresEcoForModel(t *testing.T) {
 		Fast:           true,
 		Eco:            2,
 	})
-	if got != "gpt-5.6-luna · ask · max · 1m · 0% · fast" {
+	if got != "gpt-5.6-luna  ·  ask  ·  max  ·  1m  ·  (0%)  ·  fast" {
 		t.Fatalf("eco must not change status model = %q", got)
 	}
 }
@@ -172,8 +173,9 @@ func TestWriteChromeShowsAskAfterPrompt(t *testing.T) {
 	got := strings.Split(strings.TrimSuffix(output.String(), "\n"), "\n")
 	want := []string{
 		"◆ gxx  v0.0.1",
+		"",
 		"> ask",
-		"gpt-5.6-sol · auto-writes · medium · 272k · 0%",
+		"  gpt-5.6-sol  ·  auto-writes  ·  medium  ·  272k  ·  (0%)",
 	}
 	if len(got) != len(want) {
 		t.Fatalf("chrome lines = %#v, want %#v", got, want)
@@ -200,8 +202,9 @@ func TestWriteChromeShowsPlanAfterPrompt(t *testing.T) {
 	got := strings.Split(strings.TrimSuffix(output.String(), "\n"), "\n")
 	want := []string{
 		"◆ gxx  v0.0.1",
+		"",
 		"> plan",
-		"gpt-5.6-sol · ask · medium · 272k · 0%",
+		"  gpt-5.6-sol  ·  ask  ·  medium  ·  272k  ·  (0%)",
 	}
 	if len(got) != len(want) {
 		t.Fatalf("chrome lines = %#v, want %#v", got, want)
@@ -219,7 +222,7 @@ func TestFormatStatusPaintsAutoRed(t *testing.T) {
 		PermissionMode: config.PermissionAuto,
 		Effort:         "medium",
 	})
-	if plain != "gpt-5.6-sol · auto · medium · 272k · 0%" {
+	if plain != "gpt-5.6-sol  ·  auto  ·  medium  ·  272k  ·  (0%)" {
 		t.Fatalf("plain auto status = %q", plain)
 	}
 	got := ui.FormatStatus(ui.REPLSettings{

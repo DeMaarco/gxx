@@ -22,8 +22,6 @@ import (
 	"gxx/internal/agent"
 )
 
-const contextBarWidth = 20
-
 type contextSlice struct {
 	name   string
 	tokens int64
@@ -74,14 +72,20 @@ func FormatContext(usage agent.ContextUsage, color bool) string {
 	if window <= 0 {
 		window = usage.UsedTokens
 	}
-	fmt.Fprintf(
-		&output,
-		"%s  %s / %s\n",
-		paintContextPercent(color, usage.Percent),
-		paint(color, dim, formatCount(usage.UsedTokens)),
-		paint(color, dim, formatCount(window)),
-	)
-	output.WriteString(stackedContextBar(color, usage) + "\n")
+
+	output.WriteString(formatSectionTitle(color, "Context window"))
+	output.WriteString("\n\n")
+
+	left := paintContextPercent(color, usage.Percent) + " used"
+	right := paint(color, dim, fmt.Sprintf(
+		"%s / %s tokens",
+		formatCount(usage.UsedTokens),
+		formatCount(window),
+	))
+	fmt.Fprintf(&output, "  %-18s%34s\n\n", left, right)
+
+	output.WriteString("  " + stackedContextBar(color, usage) + "\n\n")
+
 	denom := window
 	if usage.UsedTokens > denom {
 		denom = usage.UsedTokens
@@ -93,10 +97,10 @@ func FormatContext(usage agent.ContextUsage, color bool) string {
 		}
 		fmt.Fprintf(
 			&output,
-			"%s  %s  %s\n",
-			paint(color, slice.code, fmt.Sprintf("%-13s", slice.name)),
-			paint(color, dim, fmt.Sprintf("%8s", formatCount(slice.tokens))),
-			paint(color, slice.code, fmt.Sprintf("%3d%%", percent)),
+			"    %s  %s  %s\n",
+			paint(color, slice.code, fmt.Sprintf("%-14s", slice.name)),
+			paint(color, dim, fmt.Sprintf("%9s", formatCount(slice.tokens))),
+			paint(color, slice.code, fmt.Sprintf("%4d%%", percent)),
 		)
 	}
 	return output.String()
@@ -111,9 +115,9 @@ func stackedContextBar(color bool, usage agent.ContextUsage) string {
 		total += slice.tokens
 	}
 	if total <= 0 {
-		return paint(color, dim, strings.Repeat("░", contextBarWidth))
+		return paint(color, dim, strings.Repeat("░", barWidth))
 	}
-	cells := distributeCells(tokens, contextBarWidth)
+	cells := distributeCells(tokens, barWidth)
 	var bar strings.Builder
 	for i, count := range cells {
 		block := "█"

@@ -75,7 +75,7 @@ func TestRendererShowsCommandExitCode(t *testing.T) {
 
 func TestLiveLineShowsTokens(t *testing.T) {
 	got := ui.LiveLine(false, 0, "thinking", 400*time.Millisecond, agent.Usage{TotalTokens: 12400}, 80)
-	for _, expected := range []string{ui.SpinnerFrames[0], "thinking", "0.4s", "12.4k tok"} {
+	for _, expected := range []string{"✦", "thinking", "0.4s", "12.4k tok"} {
 		if !strings.Contains(got, expected) {
 			t.Fatalf("liveLine = %q, want %q", got, expected)
 		}
@@ -120,7 +120,7 @@ func TestToolHintUsesPathCommandOrQuery(t *testing.T) {
 
 func TestLiveLineShowsSpinnerLabelAndElapsed(t *testing.T) {
 	got := ui.LiveLine(false, 0, "thinking", 1500*time.Millisecond, agent.Usage{}, 80)
-	for _, expected := range []string{ui.SpinnerFrames[0], "thinking", "1.5s"} {
+	for _, expected := range []string{"✦", "thinking", "1.5s"} {
 		if !strings.Contains(got, expected) {
 			t.Fatalf("liveLine = %q, want %q", got, expected)
 		}

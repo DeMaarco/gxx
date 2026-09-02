@@ -109,6 +109,25 @@ func TestReadKeyParsesArrowsAndRunes(t *testing.T) {
 	}
 }
 
+func TestFinishPromptFrameEndsAtColumnZero(t *testing.T) {
+	settings := ui.REPLSettings{
+		Model:          "gpt-5.6-luna",
+		PermissionMode: config.PermissionAsk,
+		Effort:         "high",
+		Context:        "272k",
+	}
+	line := "/model gpt-5.6-luna context=272k effort=high fast=off"
+	var buf bytes.Buffer
+	ui.FinishPromptFrame(&buf, settings, line, 80, 0)
+	got := buf.String()
+	if !strings.HasSuffix(got, "\r\n") {
+		t.Fatalf("finish should end with \\r\\n so the next line starts at column 0, got %q", got)
+	}
+	if strings.HasSuffix(got, "\n") && !strings.HasSuffix(got, "\r\n") {
+		t.Fatalf("finish should not end with a bare \\n, got %q", got)
+	}
+}
+
 func TestWrapVisibleSplitsOnWidth(t *testing.T) {
 	got := ui.WrapVisible("abcdef", 3)
 	if len(got) != 2 || got[0] != "abc" || got[1] != "def" {

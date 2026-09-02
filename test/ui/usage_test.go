@@ -61,24 +61,24 @@ func TestFormatUsageShowsSessionAccountAndRemainingQuota(t *testing.T) {
 	}, false)
 
 	for _, expected := range []string{
-		"session",
-		"requests     3",
-		"input        12,340",
-		"cached       4,000",
-		"cache write  800",
-		"output       4,210",
-		"reasoning    8,100",
-		"total        24,650",
-		"cost         $1.23",
+		"Session",
+		"requests       3",
+		"input          12,340",
+		"cached         4,000",
+		"cache write    800",
+		"output         4,210",
+		"reasoning      8,100",
+		"total          24,650",
+		"cost           $1.23",
 		"account August 2026",
-		"requests     142",
-		"input        1,200,000",
-		"spend        $12.40",
-		"limit        $100.00",
-		"remaining    $87.60",
-		"rate limit",
-		"4,980 / 5,000  reset 12s",
-		"180,000 / 200,000  reset 28s",
+		"requests       142",
+		"input          1,200,000",
+		"spend          $12.40",
+		"limit          $100.00",
+		"remaining      $87.60",
+		"Rate limit",
+		"4,980 / 5,000   reset 12s",
+		"180,000 / 200,000   reset 28s",
 	} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("usage = %q, want %q", text, expected)
@@ -147,10 +147,11 @@ func TestFormatUsageShowsSubscriptionRemaining(t *testing.T) {
 	}, false)
 	for _, expected := range []string{
 		"ChatGPT  Plus",
-		"5h         █████████░░░░░░░░░░░   45%  reset 2h 12m",
-		"weekly     ██████████░░░░░░░░░░   49%  reset 5d 16h",
-		"opus week  ██░░░░░░░░░░░░░░░░░░    8%  reset 1h",
-		"session  idle",
+		"5h         ██████████████░░░░░░░░░░░░░░░░░░    45%   reset 2h 12m",
+		"weekly     ███████████████░░░░░░░░░░░░░░░░░    49%   reset 5d 16h",
+		"opus week  ██░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░     8%   reset 1h",
+		"Session",
+		"idle",
 	} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("usage = %q, want %q", text, expected)
@@ -176,9 +177,10 @@ func TestFormatUsageShowsClaudeWindows(t *testing.T) {
 	}, false)
 	for _, expected := range []string{
 		"Claude",
-		"5h         ████████████████████  100%  not started",
-		"weekly     ████████████████░░░░   80%  reset 2d",
-		"session  idle",
+		"5h         ████████████████████████████████   100%   not started",
+		"weekly     █████████████████████████░░░░░░░    80%   reset 2d",
+		"Session",
+		"idle",
 	} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("usage = %q, want %q", text, expected)

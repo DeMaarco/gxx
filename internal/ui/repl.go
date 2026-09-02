@@ -588,7 +588,7 @@ func RunREPL(
 			name, slashArgs, slashErr := lookupSlashCommand(prompt)
 			if slashErr != nil {
 				fmt.Fprintf(writer, "%s\n", paint(settings.Color, red, "error: "+slashErr.Error()))
-				fmt.Fprintln(writer)
+				writeREPLGap(writer)
 				continue
 			}
 			switch name {
@@ -611,45 +611,45 @@ func RunREPL(
 					settings.RefreshInstructions()
 				}
 				fmt.Fprintln(writer, paint(settings.Color, dim, "Conversation cleared."))
-				fmt.Fprintln(writer)
+				writeREPLGap(writer)
 				continue
 			case "/history":
 				if err := openConversationMenu(sessionCtx, writer, &settings); err != nil {
 					fmt.Fprintf(writer, "%s\n", paint(settings.Color, red, "error: "+err.Error()))
 				}
-				fmt.Fprintln(writer)
+				writeREPLGap(writer)
 				continue
 			case "/config":
 				if err := configureAPIKey(sessionCtx, loop, writer, &settings); err != nil {
 					fmt.Fprintf(writer, "%s\n", paint(settings.Color, red, "error: "+err.Error()))
 				}
-				fmt.Fprintln(writer)
+				writeREPLGap(writer)
 				continue
 			case "/login":
 				if err := loginAccount(sessionCtx, loop, writer, reader, &settings, slashArgs); err != nil {
 					fmt.Fprintf(writer, "%s\n", paint(settings.Color, red, "error: "+err.Error()))
 				}
-				fmt.Fprintln(writer)
+				writeREPLGap(writer)
 				continue
 			case "/logout":
 				if err := logoutAccount(loop, writer, reader, &settings, slashArgs); err != nil {
 					fmt.Fprintf(writer, "%s\n", paint(settings.Color, red, "error: "+err.Error()))
 				}
-				fmt.Fprintln(writer)
+				writeREPLGap(writer)
 				continue
 			case "/help":
 				printREPLHelp(writer, settings)
-				fmt.Fprintln(writer)
+				writeREPLGap(writer)
 				continue
 			case "/usage":
 				if err := showUsage(sessionCtx, writer, settings); err != nil {
 					fmt.Fprintf(writer, "%s\n", paint(settings.Color, red, "error: "+err.Error()))
 				}
-				fmt.Fprintln(writer)
+				writeREPLGap(writer)
 				continue
 			case "/context":
 				printContext(writer, settings.Color, settings.contextUsage())
-				fmt.Fprintln(writer)
+				writeREPLGap(writer)
 				continue
 			case "/model":
 				changedModel, err := applyModelCommand(writer, &settings, prompt)
@@ -659,13 +659,13 @@ func RunREPL(
 					loop.Reset()
 					fmt.Fprintln(writer, paint(settings.Color, dim, "Conversation cleared."))
 				}
-				fmt.Fprintln(writer)
+				writeREPLGap(writer)
 				continue
 			case "/mode":
 				if err := applyModeCommand(writer, &settings, prompt); err != nil {
 					fmt.Fprintf(writer, "%s\n", paint(settings.Color, red, "error: "+err.Error()))
 				}
-				fmt.Fprintln(writer)
+				writeREPLGap(writer)
 				continue
 			case "/eco":
 				changedModel, err := applyEcoCommand(writer, &settings, prompt)
@@ -675,7 +675,7 @@ func RunREPL(
 					loop.Reset()
 					fmt.Fprintln(writer, paint(settings.Color, dim, "Conversation cleared."))
 				}
-				fmt.Fprintln(writer)
+				writeREPLGap(writer)
 				continue
 			}
 		}
@@ -730,6 +730,7 @@ func runREPLTurn(
 		fmt.Fprintln(writer)
 		return false, nil
 	}
+	fmt.Fprintln(writer)
 	fmt.Fprintln(writer)
 	return true, nil
 }
@@ -1395,6 +1396,11 @@ func loginLabel(provider string) string {
 	default:
 		return "Claude"
 	}
+}
+
+func writeREPLGap(writer io.Writer) {
+	fmt.Fprintln(writer)
+	fmt.Fprintln(writer)
 }
 
 func readLine(ctx context.Context, reader *bufio.Reader, file *os.File) (string, error) {

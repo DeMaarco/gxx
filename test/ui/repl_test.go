@@ -105,7 +105,7 @@ func TestRunREPLHandlesCommandsAndInjectedIO(t *testing.T) {
 	for _, expected := range []string{
 		"◆ gxx  v0.0.1",
 		">",
-		"test-model · ask · medium · 272k · 0%",
+		"test-model  ·  ask  ·  medium  ·  272k  ·  (0%)",
 		"/clear",
 		"Shift+Tab",
 		"Conversation cleared.",
@@ -199,8 +199,8 @@ func TestRunREPLShowsUsage(t *testing.T) {
 	}
 	text := output.String()
 	for _, expected := range []string{
-		"session",
-		"remaining    $8.50",
+		"Session",
+		"remaining      $8.50",
 		"99 / 100",
 		"900 / 1,000",
 	} {
@@ -630,7 +630,7 @@ func TestRunREPLAppliesModelCommand(t *testing.T) {
 		"model gpt-5.6-terra · context 272k · effort medium · fast off",
 		"model gpt-5.6-terra · context 272k · effort high · fast on",
 		"Conversation cleared.",
-		"gpt-5.6-terra · ask · high · 272k · 0% · fast",
+		"gpt-5.6-terra  ·  ask  ·  high  ·  272k  ·  (0%)  ·  fast",
 	} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("output = %q, want %q", text, expected)
@@ -686,7 +686,7 @@ func TestRunREPLAppliesModeCommand(t *testing.T) {
 		"auto-writes",
 		"permission auto-writes · file changes run without confirmation; commands still ask",
 		"permission auto · file changes and commands run without confirmation",
-		"gpt-5.6-sol · auto · medium · 272k · 0%",
+		"gpt-5.6-sol  ·  auto  ·  medium  ·  272k  ·  (0%)",
 	} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("output = %q, want %q", text, expected)
@@ -746,7 +746,7 @@ func TestRunREPLAppliesEcoCommand(t *testing.T) {
 		"* eco full",
 		"eco off",
 		"> eco full",
-		"gpt-5.6-luna · ask · max · 1m · 0% · fast",
+		"gpt-5.6-luna  ·  ask  ·  max  ·  1m  ·  (0%)  ·  fast",
 	} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("output = %q, want %q", text, expected)

@@ -46,6 +46,9 @@ func formatVersion(version string) string {
 	if strings.EqualFold(version, "dev") {
 		return version
 	}
+	if strings.HasPrefix(strings.ToLower(version), "local") {
+		return version
+	}
 	if strings.HasPrefix(version, "v") || strings.HasPrefix(version, "V") {
 		return version
 	}
@@ -61,17 +64,22 @@ func formatStatus(settings REPLSettings) string {
 	if effort == "" {
 		effort = "medium"
 	}
+	percent := settings.contextUsage().Percent
 	parts := []string{
 		paint(settings.Color, dim, model),
 		paintPermission(settings.Color, settings.PermissionMode),
 		paint(settings.Color, dim, effort),
 		paint(settings.Color, dim, orDefault(settings.Context, "272k")),
-		paintContextPercent(settings.Color, settings.contextUsage().Percent),
+		paint(settings.Color, contextPercentColor(percent), fmt.Sprintf("(%d%%)", percent)),
 	}
 	if settings.Fast {
 		parts = append(parts, paint(settings.Color, dim, "fast"))
 	}
-	return strings.Join(parts, paint(settings.Color, dim, " · "))
+	return strings.Join(parts, paint(settings.Color, dim, "  ·  "))
+}
+
+func formatStatusLine(settings REPLSettings) string {
+	return "  " + formatStatus(settings)
 }
 
 func promptPrefix(settings REPLSettings) string {
@@ -88,21 +96,21 @@ func promptPrefix(settings REPLSettings) string {
 }
 
 func writeHeader(writer io.Writer, settings REPLSettings) error {
-	_, err := fmt.Fprintln(writer, formatHeader(settings))
+	_, err := fmt.Fprintf(writer, "%s\n\n", formatHeader(settings))
 	return err
 }
 
 func writeChrome(writer io.Writer, settings REPLSettings) error {
 	header := formatHeader(settings)
-	status := formatStatus(settings)
+	status := formatStatusLine(settings)
 	prefix := promptPrefix(settings)
 	if settings.Color {
-		if _, err := fmt.Fprintf(writer, "%s\n%s\n%s%s\r%s", header, prefix, status, cursorUp, prefix); err != nil {
+		if _, err := fmt.Fprintf(writer, "%s\n\n%s\n%s%s\r%s", header, prefix, status, cursorUp, prefix); err != nil {
 			return err
 		}
 		return nil
 	}
-	_, err := fmt.Fprintf(writer, "%s\n%s\n%s\n", header, strings.TrimRight(prefix, " "), status)
+	_, err := fmt.Fprintf(writer, "%s\n\n%s\n%s\n", header, strings.TrimRight(prefix, " "), status)
 	return err
 }
 
@@ -113,7 +121,7 @@ func clearStatusLine(writer io.Writer, color bool) {
 }
 
 func WriteAskHeader(writer io.Writer, settings REPLSettings) error {
-	if _, err := fmt.Fprintf(writer, "%s\n%s\n\n", formatHeader(settings), formatStatus(settings)); err != nil {
+	if _, err := fmt.Fprintf(writer, "%s\n%s\n\n", formatHeader(settings), formatStatusLine(settings)); err != nil {
 		return err
 	}
 	return nil

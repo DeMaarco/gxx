@@ -30,7 +30,7 @@ Inspired by [`fx`](https://github.com/vercel-labs/fx), but narrower on purpose:
 **OpenAI or Claude**, **one workspace**, **no TUI**. Just a prompt.
 
 ```text
-◆ gxx  v0.0.18
+◆ gxx  v0.0.19
 >
 gpt-5.6-sol · auto · medium · 272k · 0%
 ```
@@ -71,7 +71,7 @@ gxx version
 Pin a release or another directory:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/DeMaarco/gxx/main/install.sh | sh -s -- --version v0.0.18
+curl -fsSL https://raw.githubusercontent.com/DeMaarco/gxx/main/install.sh | sh -s -- --version v0.0.19
 curl -fsSL https://raw.githubusercontent.com/DeMaarco/gxx/main/install.sh | sh -s -- --dir /usr/local/bin
 ```
 
@@ -86,7 +86,7 @@ That puts `gxx.exe` in `%LOCALAPPDATA%\gxx` and puts that folder first on your u
 Pin a release or another directory:
 
 ```powershell
-$env:GXX_VERSION = "v0.0.18"
+$env:GXX_VERSION = "v0.0.19"
 irm https://raw.githubusercontent.com/DeMaarco/gxx/main/install.ps1 | iex
 ```
 
@@ -149,7 +149,7 @@ Drop an `AGENTS.md` in the project root if you want extra instructions loaded in
 ## REPL
 
 ```text
-◆ gxx  v0.0.18     badge and version
+◆ gxx  v0.0.19     badge and version
 >                 type here  ·  Shift+Tab →  > ask  ·  Shift+Tab →  agent again
 gpt-5.6-sol · auto · medium · 272k · 0%
 ```

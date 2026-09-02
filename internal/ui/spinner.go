@@ -34,7 +34,17 @@ const (
 	showCursor = "\x1b[?25h"
 )
 
-var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+var thinkingFrames = []string{
+	"✦ · · · ✦",
+	"· ✧ · ✧ ·",
+	"· · ● · ·",
+	"· ✧ · ✧ ·",
+}
+
+var toolFrames = []string{"● ○ ○", "○ ● ○", "○ ○ ●"}
+
+// SpinnerFrames exposes the thinking animation for tests.
+var SpinnerFrames = thinkingFrames
 
 type runningTool struct {
 	id      string
@@ -129,10 +139,11 @@ func (r *Renderer) drawLiveLocked() {
 
 func (r *Renderer) composeLiveLocked() []string {
 	width := r.termWidth()
+	thinking := r.thinking && len(r.running) == 0
 	status := formatLiveStatus(
 		r.color,
-		r.frame,
-		r.liveGlyphColorLocked(),
+		r.liveGlyphLocked(thinking),
+		r.liveGlyphColorLocked(thinking),
 		r.liveLabelLocked(),
 		r.liveElapsedLocked(),
 		r.usage,
@@ -158,11 +169,21 @@ func (r *Renderer) liveDetailLinesLocked() []string {
 	return lines
 }
 
-func (r *Renderer) liveGlyphColorLocked() string {
+func (r *Renderer) liveGlyphColorLocked(thinking bool) string {
+	if thinking {
+		return yellow
+	}
 	if len(r.running) == 1 {
 		return verbColor(r.running[0].name)
 	}
 	return cyan
+}
+
+func (r *Renderer) liveGlyphLocked(thinking bool) string {
+	if thinking {
+		return thinkingFrames[r.frame%len(thinkingFrames)]
+	}
+	return toolFrames[r.frame%len(toolFrames)]
 }
 
 func (r *Renderer) paintLiveLinesLocked(lines []string) {
@@ -364,13 +385,10 @@ func compactRunningLabel(color bool, tools []runningTool) string {
 }
 
 func liveLine(color bool, frame int, label string, elapsed time.Duration, usage agent.Usage, width int) string {
-	return clearLine + formatLiveStatus(color, frame, cyan, label, elapsed, usage, width)
+	return clearLine + formatLiveStatus(color, thinkingFrames[frame%len(thinkingFrames)], yellow, label, elapsed, usage, width)
 }
 
-func formatLiveStatus(color bool, frame int, glyphColor, label string, elapsed time.Duration, usage agent.Usage, width int) string {
-	if frame < 0 {
-		frame = 0
-	}
+func formatLiveStatus(color bool, glyph, glyphColor, label string, elapsed time.Duration, usage agent.Usage, width int) string {
 	if width < 20 {
 		width = 20
 	}
@@ -380,7 +398,6 @@ func formatLiveStatus(color bool, frame int, glyphColor, label string, elapsed t
 	if glyphColor == "" {
 		glyphColor = cyan
 	}
-	glyph := spinnerFrames[frame%len(spinnerFrames)]
 	prefix := paint(color, glyphColor, glyph) + " "
 	suffix := liveMeta(color, elapsed, usage)
 	budget := width - visibleWidth(prefix) - visibleWidth(suffix)
