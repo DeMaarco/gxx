@@ -18,6 +18,8 @@ import (
 	"fmt"
 	"io"
 	"strings"
+
+	"gxx/internal/config"
 )
 
 const (
@@ -72,7 +74,7 @@ func formatStatus(settings REPLSettings) string {
 		paint(settings.Color, dim, orDefault(settings.Context, "272k")),
 		paint(settings.Color, contextPercentColor(percent), fmt.Sprintf("(%d%%)", percent)),
 	}
-	if settings.Fast {
+	if settings.Fast && !config.IsClaudeModel(settings.Model) {
 		parts = append(parts, paint(settings.Color, dim, "fast"))
 	}
 	return strings.Join(parts, paint(settings.Color, dim, "  ·  "))

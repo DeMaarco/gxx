@@ -1079,7 +1079,11 @@ func applyModelCommand(writer io.Writer, settings *REPLSettings, line string) (b
 			fmt.Fprintln(writer, paint(settings.Color, dim, marker+model))
 		}
 		fmt.Fprintln(writer, paint(settings.Color, dim, "Usage: /model [id] [context=272k] [effort=medium] [fast=on|off]"))
-		fmt.Fprintln(writer, paint(settings.Color, dim, "In a terminal, Tab opens context size, effort, and fast options."))
+		if config.IsClaudeModel(settings.Model) || settings.ActiveAccount == config.AccountClaude {
+			fmt.Fprintln(writer, paint(settings.Color, dim, "In a terminal, Tab opens context size and effort options (fast is OpenAI-only)."))
+		} else {
+			fmt.Fprintln(writer, paint(settings.Color, dim, "In a terminal, Tab opens context size, effort, and fast options."))
+		}
 		return false, nil
 	}
 
@@ -1097,6 +1101,10 @@ func applyModelCommand(writer io.Writer, settings *REPLSettings, line string) (b
 		settings.Effort = command.Effort
 	}
 	if command.Fast != nil {
+		if config.IsClaudeModel(settings.Model) {
+			*settings = previous
+			return false, fmt.Errorf("fast is OpenAI-only")
+		}
 		settings.Fast = *command.Fast
 	}
 	if settings.SyncSession != nil {

@@ -96,6 +96,20 @@ func TestFormatStatusAddsContextAndFast(t *testing.T) {
 	}
 }
 
+func TestFormatStatusHidesFastForClaude(t *testing.T) {
+	got := ui.FormatStatus(ui.REPLSettings{
+		Model:          "claude-sonnet-5",
+		PermissionMode: config.PermissionAsk,
+		Effort:         "high",
+		Context:        "272k",
+		Fast:           true,
+		ActiveAccount:  config.AccountClaude,
+	})
+	if strings.Contains(got, "fast") {
+		t.Fatalf("claude status = %q, want no fast badge", got)
+	}
+}
+
 func TestFormatStatusShowsPlan(t *testing.T) {
 	got := ui.FormatStatus(ui.REPLSettings{
 		Model:          "gpt-5.6-sol",

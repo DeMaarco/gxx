@@ -313,6 +313,11 @@ func (p *Provider) Respond(
 		}
 	}
 	if lastErr != nil {
+		if raw != nil {
+			p.mu.Lock()
+			p.rateLimit = parseRateLimit(raw.Header)
+			p.mu.Unlock()
+		}
 		rollbackUserAppend()
 		return result, lastErr
 	}
@@ -336,6 +341,9 @@ func (p *Provider) Respond(
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	defer p.refreshContextLocked()
+	if raw != nil {
+		p.rateLimit = parseRateLimit(raw.Header)
+	}
 	if p.generation == generation {
 		// Commit the staged (possibly slimmed) request history plus the new
 		// assistant turn. Slim is not durable until this success path.

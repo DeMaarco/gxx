@@ -37,6 +37,15 @@ const maxRetryAfter = 30 * time.Second
 
 func retryDelay(attempt int, raw *http.Response) time.Duration {
 	if raw != nil {
+		if ms := strings.TrimSpace(raw.Header.Get("Retry-After-Ms")); ms != "" {
+			if millis, err := strconv.Atoi(ms); err == nil && millis >= 0 {
+				delay := time.Duration(millis) * time.Millisecond
+				if delay > maxRetryAfter {
+					return maxRetryAfter
+				}
+				return delay
+			}
+		}
 		if value := strings.TrimSpace(raw.Header.Get("Retry-After")); value != "" {
 			if seconds, err := strconv.Atoi(value); err == nil && seconds >= 0 {
 				if seconds > int(maxRetryAfter/time.Second) {
@@ -56,7 +65,10 @@ func retryable(err error, ctx context.Context, raw *http.Response) bool {
 	if err == nil || ctx.Err() != nil {
 		return false
 	}
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) && ctx.Err() != nil {
+	if errors.Is(err, context.Canceled) {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) && ctx.Err() != nil {
 		return false
 	}
 	var apiErr *openaisdk.Error
@@ -81,7 +93,8 @@ func retryable(err error, ctx context.Context, raw *http.Response) bool {
 	message := strings.ToLower(err.Error())
 	return strings.Contains(message, "connection reset") ||
 		strings.Contains(message, "eof") ||
-		strings.Contains(message, "timeout")
+		strings.Contains(message, "timeout") ||
+		strings.Contains(message, "overloaded")
 }
 
 func sleepContext(ctx context.Context, delay time.Duration) error {

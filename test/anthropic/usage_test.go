@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"gxx/internal/agent"
 	"gxx/internal/anthropic"
 )
 
@@ -35,6 +36,57 @@ func TestOAuthUsageURL(t *testing.T) {
 	}
 	if got := anthropic.OAuthUsageURL("http://127.0.0.1:9"); got != "http://127.0.0.1:9/api/oauth/usage" {
 		t.Fatalf("custom = %q", got)
+	}
+}
+
+func TestParseRateLimitHeaders(t *testing.T) {
+	header := make(http.Header)
+	header.Set("anthropic-ratelimit-requests-limit", "50")
+	header.Set("anthropic-ratelimit-requests-remaining", "48")
+	header.Set("anthropic-ratelimit-requests-reset", "2026-09-02T12:00:00Z")
+	header.Set("anthropic-ratelimit-tokens-limit", "40000")
+	header.Set("anthropic-ratelimit-tokens-remaining", "39000")
+	header.Set("anthropic-ratelimit-tokens-reset", "2026-09-02T12:01:00Z")
+	got := anthropic.ParseRateLimit(header)
+	if !got.Known {
+		t.Fatal("Known = false, want true")
+	}
+	if got.RequestsLimit != 50 || got.RequestsRemaining != 48 {
+		t.Fatalf("requests = %+v", got)
+	}
+	if got.TokensLimit != 40000 || got.TokensRemaining != 39000 {
+		t.Fatalf("tokens = %+v", got)
+	}
+	if got.RequestsReset == "" || got.TokensReset == "" {
+		t.Fatalf("reset missing: %+v", got)
+	}
+}
+
+func TestRespondCapturesRateLimitHeaders(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if !strings.Contains(request.URL.Path, "messages") {
+			http.NotFound(writer, request)
+			return
+		}
+		writer.Header().Set("anthropic-ratelimit-requests-limit", "50")
+		writer.Header().Set("anthropic-ratelimit-requests-remaining", "49")
+		writer.Header().Set("anthropic-ratelimit-tokens-remaining", "39900")
+		writeClaudeTextStream(t, writer, "ok")
+	}))
+	defer server.Close()
+
+	provider := testClaudeProvider(t, server, "inst")
+	if _, err := provider.Respond(
+		context.Background(),
+		agent.ModelInput{UserText: "hello"},
+		nil,
+		nil,
+	); err != nil {
+		t.Fatalf("Respond() error = %v", err)
+	}
+	limit := provider.RateLimitState()
+	if !limit.Known || limit.RequestsRemaining != 49 {
+		t.Fatalf("rate limit = %+v", limit)
 	}
 }
 

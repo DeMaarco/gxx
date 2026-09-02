@@ -17,6 +17,7 @@ package ui_test
 import (
 	"bytes"
 	"errors"
+	"strings"
 	"testing"
 
 	"gxx/internal/config"
@@ -136,6 +137,30 @@ func TestEncodeModelCommand(t *testing.T) {
 	want := "/model gpt-5.6-sol context=272k effort=medium fast=off"
 	if got != want {
 		t.Fatalf("encode = %q, want %q", got, want)
+	}
+	got = ui.EncodeModelCommand("claude-sonnet-5", "272k", "high", true)
+	want = "/model claude-sonnet-5 context=272k effort=high"
+	if got != want {
+		t.Fatalf("claude encode = %q, want %q", got, want)
+	}
+}
+
+func TestApplyModelCommandRejectsFastOnClaude(t *testing.T) {
+	settings := ui.REPLSettings{
+		Model:            "claude-sonnet-5",
+		Context:          "272k",
+		Effort:           "medium",
+		ActiveAccount:    config.AccountClaude,
+		ClaudeConfigured: true,
+		SyncSession:      func(ui.REPLSettings) error { return nil },
+	}
+	var output bytes.Buffer
+	_, err := ui.ApplyModelCommand(&output, &settings, "/model fast=on")
+	if err == nil || !strings.Contains(err.Error(), "OpenAI-only") {
+		t.Fatalf("error = %v, want OpenAI-only", err)
+	}
+	if settings.Fast {
+		t.Fatal("Fast should stay false on Claude")
 	}
 }
 

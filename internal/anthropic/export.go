@@ -45,6 +45,7 @@ var (
 	DropAllThinking    = dropAllThinking
 	KeepLatestThinking = keepLatestThinking
 	ToolPairsIntact    = toolPairsIntact
+	ParseRateLimit     = parseRateLimit
 )
 
 func (p *Provider) SetHistory(items []anthropicsdk.MessageParam) {

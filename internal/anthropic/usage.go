@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -243,4 +244,30 @@ func oauthUsageError(status int, body []byte) string {
 		text = text[:180] + "…"
 	}
 	return text
+}
+
+func parseRateLimit(header http.Header) agent.RateLimit {
+	limit := agent.RateLimit{
+		RequestsLimit:     headerInt(header, "anthropic-ratelimit-requests-limit"),
+		RequestsRemaining: headerInt(header, "anthropic-ratelimit-requests-remaining"),
+		RequestsReset:     strings.TrimSpace(header.Get("anthropic-ratelimit-requests-reset")),
+		TokensLimit:       headerInt(header, "anthropic-ratelimit-tokens-limit"),
+		TokensRemaining:   headerInt(header, "anthropic-ratelimit-tokens-remaining"),
+		TokensReset:       strings.TrimSpace(header.Get("anthropic-ratelimit-tokens-reset")),
+	}
+	limit.Known = header.Get("anthropic-ratelimit-requests-remaining") != "" ||
+		header.Get("anthropic-ratelimit-tokens-remaining") != ""
+	return limit
+}
+
+func headerInt(header http.Header, key string) int64 {
+	value := strings.TrimSpace(header.Get(key))
+	if value == "" {
+		return 0
+	}
+	parsed, err := strconv.ParseInt(value, 10, 64)
+	if err != nil {
+		return 0
+	}
+	return parsed
 }

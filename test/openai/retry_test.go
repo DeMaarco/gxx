@@ -123,6 +123,18 @@ func TestRetryableClassifiesStatusCodes(t *testing.T) {
 	if !openai.Retryable(io.ErrUnexpectedEOF, ctx, nil) {
 		t.Fatal("unexpected EOF should be retryable")
 	}
+	if !openai.Retryable(errors.New("overloaded"), ctx, nil) {
+		t.Fatal("overloaded should be retryable")
+	}
+	deadline, cancelDeadline := context.WithTimeout(ctx, time.Nanosecond)
+	<-deadline.Done()
+	cancelDeadline()
+	if openai.Retryable(context.DeadlineExceeded, deadline, nil) {
+		t.Fatal("parent deadline should not be retryable")
+	}
+	if !openai.Retryable(context.DeadlineExceeded, ctx, nil) {
+		t.Fatal("attempt deadline with live parent should be retryable")
+	}
 }
 
 func TestRetryDelayCapsRetryAfter(t *testing.T) {
@@ -135,6 +147,11 @@ func TestRetryDelayCapsRetryAfter(t *testing.T) {
 	raw.Header.Set("Retry-After", "0")
 	if got := openai.RetryDelay(1, raw); got != 0 {
 		t.Fatalf("Retry-After 0 = %s, want 0", got)
+	}
+	raw.Header.Del("Retry-After")
+	raw.Header.Set("Retry-After-Ms", "120000")
+	if got := openai.RetryDelay(1, raw); got != openai.MaxRetryAfter {
+		t.Fatalf("Retry-After-Ms cap = %s, want %s", got, openai.MaxRetryAfter)
 	}
 	if got := openai.RetryDelay(1, nil); got != time.Second {
 		t.Fatalf("default attempt 1 = %s, want 1s", got)

@@ -149,6 +149,14 @@ func assignModelField(command *modelCommand, key, value string) error {
 }
 
 func formatModelStatus(model, context, effort string, fast bool) string {
+	if config.IsClaudeModel(model) {
+		return fmt.Sprintf(
+			"model %s · context %s · effort %s",
+			model,
+			context,
+			effort,
+		)
+	}
 	fastLabel := "off"
 	if fast {
 		fastLabel = "on"
@@ -163,6 +171,14 @@ func formatModelStatus(model, context, effort string, fast bool) string {
 }
 
 func encodeModelCommand(model, context, effort string, fast bool) string {
+	if config.IsClaudeModel(model) {
+		return fmt.Sprintf(
+			"/model %s context=%s effort=%s",
+			model,
+			context,
+			effort,
+		)
+	}
 	fastLabel := "off"
 	if fast {
 		fastLabel = "on"
@@ -174,4 +190,11 @@ func encodeModelCommand(model, context, effort string, fast bool) string {
 		effort,
 		fastLabel,
 	)
+}
+
+func optionCountForModel(model string) int {
+	if config.IsClaudeModel(model) {
+		return optionEffort + 1
+	}
+	return optionCount
 }

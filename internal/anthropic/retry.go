@@ -60,7 +60,10 @@ func retryable(err error, ctx context.Context, raw *http.Response) bool {
 	if err == nil || ctx.Err() != nil {
 		return false
 	}
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) && ctx.Err() != nil {
+	if errors.Is(err, context.Canceled) {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) && ctx.Err() != nil {
 		return false
 	}
 	var apiErr *anthropicsdk.Error

@@ -476,7 +476,9 @@ func (s *inputState) cycleOption(delta int) {
 	case optionEffort:
 		s.pickEffort = cycleValue(effortValues, s.pickEffort, delta)
 	case optionFast:
-		s.pickFast = !s.pickFast
+		if optionCountForModel(s.selectedModel()) > optionFast {
+			s.pickFast = !s.pickFast
+		}
 	}
 }
 
@@ -635,7 +637,8 @@ func (s *inputState) down() {
 		return
 	}
 	if s.picker == pickerOptions {
-		if s.optionIndex < optionCount-1 {
+		limit := optionCountForModel(s.selectedModel())
+		if s.optionIndex < limit-1 {
 			s.optionIndex++
 		}
 		return
@@ -940,17 +943,25 @@ func (e *lineEditor) renderPicker(settings REPLSettings) error {
 	e.state.clampModelIndex()
 	var body strings.Builder
 	if e.state.picker == pickerOptions {
-		fast := "off"
-		if e.state.pickFast {
-			fast = "on"
-		}
 		options := []struct {
 			name  string
 			value string
 		}{
 			{"context", e.state.pickContext},
 			{"effort", e.state.pickEffort},
-			{"fast", fast},
+		}
+		if optionCountForModel(e.state.selectedModel()) > optionFast {
+			fast := "off"
+			if e.state.pickFast {
+				fast = "on"
+			}
+			options = append(options, struct {
+				name  string
+				value string
+			}{"fast", fast})
+		}
+		if e.state.optionIndex >= len(options) {
+			e.state.optionIndex = len(options) - 1
 		}
 		for index, option := range options {
 			marker := "  "

@@ -52,6 +52,12 @@ func TestRetryableClassifiesStatusCodes(t *testing.T) {
 	if !anthropic.Retryable(io.ErrUnexpectedEOF, ctx, nil) {
 		t.Fatal("unexpected EOF should be retryable")
 	}
+	if !anthropic.Retryable(errors.New("overloaded"), ctx, nil) {
+		t.Fatal("overloaded should be retryable")
+	}
+	if !anthropic.Retryable(context.DeadlineExceeded, ctx, nil) {
+		t.Fatal("attempt deadline with live parent should be retryable")
+	}
 }
 
 func TestRetryDelayCapsRetryAfter(t *testing.T) {
