@@ -71,6 +71,7 @@ type REPLSettings struct {
 	SetEco              func(int) error
 	Eco                 int
 	EcoLast             int
+	Compact             func(context.Context, string) error
 	ChoosePlan          func(context.Context) (PlanChoice, error)
 	ListConversations   func() ([]ConversationEntry, error)
 	LoadConversation    func(id string) error
@@ -677,6 +678,12 @@ func RunREPL(
 				}
 				writeREPLGap(writer)
 				continue
+			case "/compact":
+				if err := applyCompactCommand(sessionCtx, writer, &settings, slashArgs); err != nil {
+					fmt.Fprintf(writer, "%s\n", paint(settings.Color, red, "error: "+err.Error()))
+				}
+				writeREPLGap(writer)
+				continue
 			}
 		}
 
@@ -931,6 +938,31 @@ func printREPLHelp(writer io.Writer, settings REPLSettings) {
 		paint(settings.Color, cyan, "Ctrl+O"),
 		paint(settings.Color, dim, "Open saved conversations for this workspace"),
 	)
+}
+
+func applyCompactCommand(ctx context.Context, writer io.Writer, settings *REPLSettings, args []string) error {
+	if settings == nil || settings.Compact == nil {
+		return fmt.Errorf("compaction is unavailable")
+	}
+	focus := strings.TrimSpace(strings.Join(args, " "))
+	before := settings.contextUsage()
+	if err := settings.Compact(ctx, focus); err != nil {
+		return err
+	}
+	after := settings.contextUsage()
+	msg := "Conversation compacted."
+	if before.UsedTokens > 0 && after.UsedTokens < before.UsedTokens {
+		msg = fmt.Sprintf("Conversation compacted · ~%dk → ~%dk tokens", before.UsedTokens/1000, after.UsedTokens/1000)
+	}
+	if settings.QuoteCost != nil && settings.FetchUsage != nil {
+		if report, err := settings.FetchUsage(ctx); err == nil {
+			if cost, ok := settings.QuoteCost(report.Session); ok && cost > 0 {
+				msg = fmt.Sprintf("%s · session ~$%.4f", msg, cost)
+			}
+		}
+	}
+	fmt.Fprintln(writer, paint(settings.Color, dim, msg))
+	return nil
 }
 
 func applyEcoCommand(writer io.Writer, settings *REPLSettings, line string) (bool, error) {

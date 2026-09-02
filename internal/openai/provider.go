@@ -211,9 +211,14 @@ func (p *Provider) Respond(
 	// so compaction cannot wait for the next prompt. Dropping whole turns only
 	// ever cuts at a user message, which never separates a call from its
 	// output.
-	if p.shouldCompact(input.UserText) {
-		p.compactLocked(emit)
+	needCompact := p.shouldCompact(input.UserText)
+	p.mu.Unlock()
+	if needCompact {
+		if err := p.compactSession(ctx, emit, "", false); err != nil && ctx.Err() != nil {
+			return result, err
+		}
 	}
+	p.mu.Lock()
 	// Snapshot before the user append so API failure / overflow / cancel can
 	// roll back only that message. Tool results from this Respond stay.
 	var historyBeforeUser []responses.ResponseInputItemUnionParam

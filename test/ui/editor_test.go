@@ -25,8 +25,12 @@ import (
 
 func TestMatchingCommandsFiltersByPrefix(t *testing.T) {
 	matches := ui.MatchingCommands("/c")
-	if len(matches) != 3 || matches[0].Name() != "/config" || matches[1].Name() != "/context" || matches[2].Name() != "/clear" {
-		t.Fatalf("matches = %#v, want /config, /context, and /clear", matches)
+	if len(matches) != 4 ||
+		matches[0].Name() != "/compact" ||
+		matches[1].Name() != "/config" ||
+		matches[2].Name() != "/context" ||
+		matches[3].Name() != "/clear" {
+		t.Fatalf("matches = %#v, want /compact, /config, /context, and /clear", matches)
 	}
 	if ui.MatchingCommands("help") != nil || ui.MatchingCommands("/help extra") != nil {
 		t.Fatal("matchingCommands() accepted a non-command prefix")
@@ -52,6 +56,7 @@ func TestInputStateCompletesSlashCommands(t *testing.T) {
 	for _, char := range "/c" {
 		state.Insert(char)
 	}
+	state.Apply(ui.KeyDown)
 	state.Apply(ui.KeyDown)
 	state.Apply(ui.KeyDown)
 	state.Apply(ui.KeyTab)

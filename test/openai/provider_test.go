@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1029,6 +1030,129 @@ func TestProviderCompactsUsingLastInputTokens(t *testing.T) {
 	}
 	if len(notices) != 1 || !strings.Contains(notices[0], "compacted") {
 		t.Fatalf("notices = %#v, want compaction from last input tokens", notices)
+	}
+}
+
+func TestProviderCompactUsesModelSummary(t *testing.T) {
+	var calls atomic.Int32
+	var summaryBody []byte
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, httpRequest *http.Request) {
+		body, _ := io.ReadAll(httpRequest.Body)
+		n := calls.Add(1)
+		if n == 1 {
+			summaryBody = append([]byte(nil), body...)
+			writeCompletedText(t, writer, "Goal: ship auth\nPending: write tests")
+			return
+		}
+		http.Error(writer, "unexpected second call", http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	provider := testStreamingProvider(t, server, "inst")
+	oldUser := strings.Repeat("old-turn-", 20)
+	provider.SetHistory([]responses.ResponseInputItemUnionParam{
+		responses.ResponseInputItemParamOfMessage(oldUser, responses.EasyInputMessageRoleUser),
+		responses.ResponseInputItemParamOfMessage("old answer", responses.EasyInputMessageRoleAssistant),
+		responses.ResponseInputItemParamOfMessage("recent question", responses.EasyInputMessageRoleUser),
+		responses.ResponseInputItemParamOfFunctionCall(`{"path":"."}`, "call-keep", "list_files"),
+		openai.FunctionCallOutputParam("call-keep", "listed"),
+		responses.ResponseInputItemParamOfMessage("recent answer", responses.EasyInputMessageRoleAssistant),
+	})
+
+	var notices []string
+	if err := provider.Compact(context.Background(), func(event agent.Event) {
+		if event.Kind == agent.EventNotice {
+			notices = append(notices, event.Text)
+		}
+	}, "auth"); err != nil {
+		t.Fatalf("Compact() error = %v", err)
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("summary calls = %d, want 1", calls.Load())
+	}
+	if !strings.Contains(string(summaryBody), "Prioritize details related to: auth") {
+		t.Fatalf("summary body = %s, want focus", summaryBody)
+	}
+	if strings.Contains(string(summaryBody), `"tools"`) {
+		t.Fatalf("summary request must not include tools: %s", summaryBody)
+	}
+	history, _ := json.Marshal(provider.History())
+	if !strings.Contains(string(history), "Goal: ship auth") {
+		t.Fatalf("history = %s, want model summary", history)
+	}
+	if strings.Contains(string(history), oldUser) {
+		t.Fatalf("history = %s, old turn should be dropped", history)
+	}
+	if !strings.Contains(string(history), "recent question") || !strings.Contains(string(history), "call-keep") {
+		t.Fatalf("history = %s, want kept tail with tool pair", history)
+	}
+	if len(notices) != 1 || !strings.Contains(notices[0], "compacted") {
+		t.Fatalf("notices = %#v", notices)
+	}
+	if provider.SessionUsage().TotalTokens == 0 {
+		t.Fatal("session usage should include summary call")
+	}
+}
+
+func TestProviderCompactFallsBackOnSummaryError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		http.Error(writer, "boom", http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	provider := testStreamingProvider(t, server, "inst")
+	oldUser := "remember this goal"
+	provider.SetHistory([]responses.ResponseInputItemUnionParam{
+		responses.ResponseInputItemParamOfMessage(oldUser, responses.EasyInputMessageRoleUser),
+		responses.ResponseInputItemParamOfMessage("old answer", responses.EasyInputMessageRoleAssistant),
+		responses.ResponseInputItemParamOfMessage("recent question", responses.EasyInputMessageRoleUser),
+		responses.ResponseInputItemParamOfMessage("recent answer", responses.EasyInputMessageRoleAssistant),
+	})
+	if err := provider.Compact(context.Background(), nil, ""); err != nil {
+		t.Fatalf("Compact() error = %v", err)
+	}
+	hist := provider.History()
+	if len(hist) != 3 {
+		t.Fatalf("history len = %d, want notice + recent turn", len(hist))
+	}
+	first, _ := json.Marshal(hist[0])
+	if !strings.Contains(string(first), "Prior user requests") && !strings.Contains(string(first), "compacted") {
+		t.Fatalf("notice = %s, want heuristic notice", first)
+	}
+	rest, _ := json.Marshal(hist[1:])
+	if !strings.Contains(string(rest), "recent question") {
+		t.Fatalf("history = %s, want kept recent turn", rest)
+	}
+	if strings.Contains(string(rest), oldUser) {
+		t.Fatalf("history = %s, old turn should be dropped", rest)
+	}
+}
+
+func TestProviderCompactCancelDoesNotCorruptHistory(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		t.Error("summary request should not complete when context is canceled")
+		http.Error(writer, "nope", http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	provider := testStreamingProvider(t, server, "inst")
+	before := []responses.ResponseInputItemUnionParam{
+		responses.ResponseInputItemParamOfMessage("old question", responses.EasyInputMessageRoleUser),
+		responses.ResponseInputItemParamOfMessage("old answer", responses.EasyInputMessageRoleAssistant),
+		responses.ResponseInputItemParamOfMessage("recent question", responses.EasyInputMessageRoleUser),
+		responses.ResponseInputItemParamOfMessage("recent answer", responses.EasyInputMessageRoleAssistant),
+	}
+	provider.SetHistory(before)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := provider.Compact(ctx, nil, "")
+	if err == nil {
+		t.Fatal("Compact() error = nil, want cancel")
+	}
+	got, _ := json.Marshal(provider.History())
+	want, _ := json.Marshal(before)
+	if string(got) != string(want) {
+		t.Fatalf("history changed on cancel:\ngot  %s\nwant %s", got, want)
 	}
 }
 

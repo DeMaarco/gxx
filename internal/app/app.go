@@ -698,6 +698,9 @@ func replSettings(rt *runtime, stdin io.Reader, stdout io.Writer) ui.REPLSetting
 			rt.eco = level
 			return applyEcoRuntime(rt)
 		},
+		Compact: func(ctx context.Context, focus string) error {
+			return rt.provider.Compact(ctx, nil, focus)
+		},
 		SyncSession: func(session ui.REPLSettings) error {
 			if _, err := config.SaveSession(
 				session.Model,

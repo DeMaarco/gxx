@@ -766,6 +766,46 @@ func TestRunREPLAppliesEcoCommand(t *testing.T) {
 	}
 }
 
+func TestRunREPLAppliesCompactCommand(t *testing.T) {
+	model := &replModel{}
+	loop := &agent.Loop{Model: model, Executor: emptyExecutor{}, MaxSteps: 2}
+	input := bufio.NewReader(strings.NewReader("/compact auth tests\n/exit\n"))
+	var output bytes.Buffer
+	var focuses []string
+
+	err := ui.RunREPL(
+		context.Background(),
+		loop,
+		input,
+		ui.NewRenderer(&output),
+		&output,
+		ui.REPLSettings{
+			Version:          "0.0.1",
+			Model:            "gpt-5.6-luna",
+			PermissionMode:   config.PermissionAsk,
+			Effort:           "medium",
+			Workspace:        "/workspace",
+			APIKeyConfigured: true,
+			FetchContext: func() agent.ContextUsage {
+				return agent.ContextUsage{UsedTokens: 12000, WindowTokens: 272000}
+			},
+			Compact: func(_ context.Context, focus string) error {
+				focuses = append(focuses, focus)
+				return nil
+			},
+		},
+	)
+	if err != nil {
+		t.Fatalf("RunREPL() error = %v", err)
+	}
+	if len(focuses) != 1 || focuses[0] != "auth tests" {
+		t.Fatalf("focuses = %#v", focuses)
+	}
+	if !strings.Contains(output.String(), "Conversation compacted") {
+		t.Fatalf("output = %q, want compact notice", output.String())
+	}
+}
+
 func TestRunREPLLoginAndLogoutClaude(t *testing.T) {
 	model := &replModel{}
 	loop := &agent.Loop{Model: model, Executor: emptyExecutor{}, MaxSteps: 2}

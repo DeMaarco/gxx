@@ -28,6 +28,7 @@ var slashCommands = []slashCommand{
 	{name: "/help", help: "Show this help"},
 	{name: "/model", help: "Select model, context size, effort, and fast"},
 	{name: "/eco", help: "Caveman input saver: lite, full, ultra"},
+	{name: "/compact", help: "Summarize older turns to free context"},
 	{name: "/mode", help: "Select permission mode for agent: ask, auto-writes, or auto"},
 	{name: "/config", help: "Set the OpenAI API key (same as /login api)"},
 	{name: "/login", help: "Connect one account: openai, claude, or api"},
@@ -40,11 +41,12 @@ var slashCommands = []slashCommand{
 }
 
 var slashCommandsWithArgs = map[string]struct{}{
-	"/model":  {},
-	"/mode":   {},
-	"/eco":    {},
-	"/login":  {},
-	"/logout": {},
+	"/model":   {},
+	"/mode":    {},
+	"/eco":     {},
+	"/compact": {},
+	"/login":   {},
+	"/logout":  {},
 }
 
 func matchingCommands(prefix string) []slashCommand {

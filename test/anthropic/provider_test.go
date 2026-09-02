@@ -403,6 +403,149 @@ func TestProviderCompactsUsingLastInputTokens(t *testing.T) {
 	}
 }
 
+func TestProviderCompactUsesModelSummary(t *testing.T) {
+	var calls atomic.Int32
+	var summaryBody []byte
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, httpRequest *http.Request) {
+		if !strings.Contains(httpRequest.URL.Path, "messages") {
+			http.NotFound(writer, httpRequest)
+			return
+		}
+		body, _ := io.ReadAll(httpRequest.Body)
+		n := calls.Add(1)
+		if n == 1 {
+			summaryBody = append([]byte(nil), body...)
+			writeClaudeTextStreamWithUsage(t, writer, "Goal: ship auth\nPending: write tests", 40, 0, 0)
+			return
+		}
+		http.Error(writer, "unexpected second call", http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	provider := testClaudeProvider(t, server, "inst")
+	oldUser := strings.Repeat("old-turn-", 20)
+	provider.SetHistory([]anthropicsdk.MessageParam{
+		anthropicsdk.NewUserMessage(anthropicsdk.NewTextBlock(oldUser)),
+		anthropicsdk.NewAssistantMessage(anthropicsdk.NewTextBlock("old answer")),
+		anthropicsdk.NewUserMessage(anthropicsdk.NewTextBlock("recent question")),
+		anthropicsdk.NewAssistantMessage(
+			anthropicsdk.NewToolUseBlock("call-keep", map[string]any{"path": "."}, "list_files"),
+		),
+		anthropicsdk.NewUserMessage(anthropicsdk.NewToolResultBlock("call-keep", "listed", false)),
+		anthropicsdk.NewAssistantMessage(anthropicsdk.NewTextBlock("recent answer")),
+	})
+
+	var notices []string
+	if err := provider.Compact(context.Background(), func(event agent.Event) {
+		if event.Kind == agent.EventNotice {
+			notices = append(notices, event.Text)
+		}
+	}, "auth"); err != nil {
+		t.Fatalf("Compact() error = %v", err)
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("summary calls = %d, want 1", calls.Load())
+	}
+	if !strings.Contains(string(summaryBody), "Prioritize details related to: auth") {
+		t.Fatalf("summary body = %s, want focus", summaryBody)
+	}
+	if strings.Contains(string(summaryBody), `"tools"`) {
+		t.Fatalf("summary request must not include tools: %s", summaryBody)
+	}
+	history, _ := json.Marshal(provider.History())
+	if !strings.Contains(string(history), "Goal: ship auth") {
+		t.Fatalf("history = %s, want model summary", history)
+	}
+	if strings.Contains(string(history), oldUser) {
+		t.Fatalf("history = %s, old turn should be dropped", history)
+	}
+	if !strings.Contains(string(history), "recent question") {
+		t.Fatalf("history = %s, want kept recent turn", history)
+	}
+	if !anthropic.ToolPairsIntact(provider.History()) {
+		t.Fatal("history tool pairs broken after model compact")
+	}
+	if len(notices) != 1 || !strings.Contains(notices[0], "compacted") {
+		t.Fatalf("notices = %#v", notices)
+	}
+	if provider.SessionUsage().TotalTokens == 0 {
+		t.Fatal("session usage should include summary call")
+	}
+}
+
+func TestProviderCompactFallsBackOnSummaryError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, httpRequest *http.Request) {
+		if !strings.Contains(httpRequest.URL.Path, "messages") {
+			http.NotFound(writer, httpRequest)
+			return
+		}
+		http.Error(writer, "boom", http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	provider := testClaudeProvider(t, server, "inst")
+	oldUser := "remember this goal"
+	provider.SetHistory([]anthropicsdk.MessageParam{
+		anthropicsdk.NewUserMessage(anthropicsdk.NewTextBlock(oldUser)),
+		anthropicsdk.NewAssistantMessage(anthropicsdk.NewTextBlock("old answer")),
+		anthropicsdk.NewUserMessage(anthropicsdk.NewTextBlock("recent question")),
+		anthropicsdk.NewAssistantMessage(anthropicsdk.NewTextBlock("recent answer")),
+	})
+	if err := provider.Compact(context.Background(), nil, ""); err != nil {
+		t.Fatalf("Compact() error = %v", err)
+	}
+	hist := provider.History()
+	if len(hist) != 3 {
+		t.Fatalf("history len = %d, want notice + recent turn", len(hist))
+	}
+	first, _ := json.Marshal(hist[0])
+	if !strings.Contains(string(first), "Prior user requests") && !strings.Contains(string(first), "compacted") {
+		t.Fatalf("notice = %s, want heuristic notice", first)
+	}
+	rest, _ := json.Marshal(hist[1:])
+	if !strings.Contains(string(rest), "recent question") {
+		t.Fatalf("history = %s, want kept recent turn", rest)
+	}
+	if strings.Contains(string(rest), oldUser) {
+		t.Fatalf("history = %s, old turn should be dropped", rest)
+	}
+	if !anthropic.ToolPairsIntact(provider.History()) {
+		t.Fatal("history tool pairs broken after heuristic compact")
+	}
+}
+
+func TestProviderCompactCancelDoesNotCorruptHistory(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, httpRequest *http.Request) {
+		if !strings.Contains(httpRequest.URL.Path, "messages") {
+			http.NotFound(writer, httpRequest)
+			return
+		}
+		t.Error("summary request should not complete when context is canceled")
+		http.Error(writer, "nope", http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	provider := testClaudeProvider(t, server, "inst")
+	before := []anthropicsdk.MessageParam{
+		anthropicsdk.NewUserMessage(anthropicsdk.NewTextBlock("old question")),
+		anthropicsdk.NewAssistantMessage(anthropicsdk.NewTextBlock("old answer")),
+		anthropicsdk.NewUserMessage(anthropicsdk.NewTextBlock("recent question")),
+		anthropicsdk.NewAssistantMessage(anthropicsdk.NewTextBlock("recent answer")),
+	}
+	provider.SetHistory(before)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := provider.Compact(ctx, nil, "")
+	if err == nil {
+		t.Fatal("Compact() error = nil, want cancel")
+	}
+	got, _ := json.Marshal(provider.History())
+	want, _ := json.Marshal(before)
+	if string(got) != string(want) {
+		t.Fatalf("history changed on cancel:\ngot  %s\nwant %s", got, want)
+	}
+}
+
 func TestFinalStepKeepsToolsAndForbidsCalls(t *testing.T) {
 	var request map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, httpRequest *http.Request) {

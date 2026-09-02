@@ -33,4 +33,7 @@ type Backend interface {
 	ContextSnapshot() ContextUsage
 	ExportHistory() (provider string, history json.RawMessage, err error)
 	ImportHistory(provider string, history json.RawMessage) error
+	// Compact drops older turns, replacing them with a model-written summary
+	// when possible (heuristic fallback on failure). focus is optional guidance.
+	Compact(ctx context.Context, emit EmitFunc, focus string) error
 }
