@@ -1,0 +1,61 @@
+---
+title: REPL
+description: Atajos de teclado, modos de sesión y comandos slash.
+---
+
+```text
+◆ gxx  v0.0.18     badge y versión
+>                 escribe aquí  ·  Shift+Tab →  > ask  ·  Shift+Tab →  agente otra vez
+gpt-5.6-sol · auto · medium · 272k · 0%
+```
+
+| Tecla | Acción |
+| --- | --- |
+| `/` | Comandos slash |
+| `Tab` | Autocompletar, o abrir selectores |
+| `Shift+Tab` | Desde ask/plan, volver a agente. Desde agente, alternar ask y plan |
+| `Ctrl+O` | Abrir conversaciones guardadas para este workspace |
+| `Ctrl+C` | Limpiar, cancelar, o confirmar salida |
+| `Ctrl+D` | Salir |
+
+`gxx` inicia en agente, así que `/mode` (`ask`, `auto-writes`, `auto`) aplica. Ask y plan son modos de sesión separados con `Shift+Tab`. Nunca se solapan. Una pulsación desde ask o plan vuelve a agente. Ambos son de solo lectura: solo lecturas de archivos e inspección git, sin prompt de aprobación. Son solo de sesión y no se guardan en config.
+
+Tras generar un plan, una terminal muestra un menú con flechas: ejecutar el plan, pedir cambios, o cancelar. Pedir cambios permanece en plan para enviar una revisión. Ejecutar cambia a agente e implementa, usando el modo de permisos actual.
+
+Las conversaciones se guardan automáticamente tras cada turno en `~/.config/gxx/conversations/` (por workspace). `Ctrl+O` o `/history` abre un menú con flechas para cargar un hilo anterior. La pantalla no reproduce turnos antiguos; el contexto del modelo se restaura en memoria. `/clear` archiva el hilo actual e inicia uno nuevo.
+
+`/eco` también es solo de sesión. Pinta verde en el prompt como plan. `/eco` alterna; `/eco lite` `full` `ultra` fijan la intensidad (alias: 1/2/3). Eco nunca cambia el modelo. Comprime la entrada de la petición al estilo Caveman: elimina relleno, conserva código, rutas, URLs e identificadores. Las descripciones de herramientas también se reducen. Ultra también elimina el replay de razonamiento.
+
+## Comandos
+
+| Comando | Qué hace |
+| --- | --- |
+| `/help` | Comandos |
+| `/model` | Modelos solo para la cuenta conectada · Tab para context, effort, fast |
+| `/eco` | Ahorrador de entrada Caveman · `lite` `full` `ultra` · verde en el prompt · solo sesión |
+| `/mode` | Permiso para **agente**: `ask` (confirmar escrituras y comandos) · `auto-writes` · `auto` |
+| `/config` | Guardar la OpenAI API key |
+| `/login` | Conectar una cuenta · openai · claude · api · verde marca la activa |
+| `/logout` | Limpiar la cuenta conectada |
+| `/context` | Ocupación de la ventana |
+| `/usage` | Tokens de sesión, coste estimado, y cuota restante de suscripción o API |
+| `/history` | Abrir conversaciones guardadas para este workspace |
+| `/clear` | Archivar esta conversación e iniciar una nueva |
+| `/exit` | Salir |
+
+Formas inline también funcionan:
+
+```text
+/model terra context=1m effort=high fast=on
+/model opus
+/mode auto-writes
+```
+
+`yolo` es un alias de `auto`.
+
+El badge del prompt es la sesión: `>` simple es agente, `> ask` y `> plan` tras `Shift+Tab`.
+La línea de estado es modelo · modo de permiso · effort · tamaño de contexto · llenado de ventana.
+`auto` se pinta rojo. El contexto se vuelve amarillo al 70% y rojo al 90%.
+Tras cada turno el footer añade USD estimado. Las tarifas se re-leen de las
+páginas oficiales de precios de OpenAI y Anthropic para que un cambio de precio
+se detecte sin una nueva release de gxx.

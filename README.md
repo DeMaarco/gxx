@@ -14,8 +14,9 @@
 Open a repo, type what you want, and it lists, searches, reads,
 inspects git, patches, generates images, and runs commands — in that folder only.
 
-[Install](#install) · [Quick start](#quick-start) · [REPL](#repl) · [Permissions](#permissions)
+[Website](https://demaarco.github.io/gxx/) · [Install](#install) · [Quick start](#quick-start) · [REPL](#repl) · [Permissions](#permissions)
 
+[![Docs](https://img.shields.io/badge/docs-online-a855f7?style=flat-square)](https://demaarco.github.io/gxx/)
 [![Release](https://img.shields.io/github/v/release/DeMaarco/gxx?style=flat-square&color=a855f7)](https://github.com/DeMaarco/gxx/releases)
 [![License](https://img.shields.io/badge/license-Apache%202.0-0ea5e9?style=flat-square)](LICENSE)
 [![Go](https://img.shields.io/badge/go-1.27+-00ADD8?style=flat-square&logo=go&logoColor=white)](https://go.dev)

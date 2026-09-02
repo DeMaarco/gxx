@@ -1,0 +1,133 @@
+---
+interface Props {
+	locale?: 'en' | 'es';
+	version?: string;
+}
+
+const { locale = 'en', version = 'v0.0.18' } = Astro.props;
+
+const labels = {
+	en: {
+		label: 'Preview',
+		hint: 'Shift+Tab cycles ask and plan modes',
+	},
+	es: {
+		label: 'Vista previa',
+		hint: 'Shift+Tab alterna los modos ask y plan',
+	},
+};
+
+const t = labels[locale];
+---
+
+<section class="terminal-section section">
+	<span class="section-label">{t.label}</span>
+	<div class="terminal-demo" aria-label="gxx REPL demo">
+		<div class="terminal-body">
+			<div class="terminal-line dim">◆ gxx {version}</div>
+			<div class="terminal-line prompt-line">
+				<span class="prompt-badge">&gt;</span>
+				<span class="prompt-cursor" aria-hidden="true"></span>
+			</div>
+			<div class="terminal-line status">
+				<span>gpt-5.6-sol</span>
+				<span class="sep">·</span>
+				<span class="mode-auto">auto</span>
+				<span class="sep">·</span>
+				<span>medium</span>
+				<span class="sep">·</span>
+				<span>272k</span>
+				<span class="sep">·</span>
+				<span>0%</span>
+			</div>
+		</div>
+		<p class="terminal-hint">{t.hint}</p>
+	</div>
+</section>
+
+<style>
+	.terminal-section {
+		margin-top: 0;
+		padding-top: 0;
+		border-top: none;
+	}
+
+	.terminal-demo {
+		border: 1px solid var(--gxx-border);
+		border-radius: var(--gxx-radius-lg);
+		background: var(--gxx-surface);
+		max-width: 28rem;
+		font-family: var(--gxx-font-mono);
+		font-size: 0.8125rem;
+		overflow: hidden;
+	}
+
+	.terminal-body {
+		padding: 1.25rem 1.5rem;
+	}
+
+	.terminal-line {
+		margin-bottom: 0.25rem;
+		line-height: 1.6;
+	}
+
+	.terminal-line.dim {
+		color: var(--gxx-text-muted);
+	}
+
+	.prompt-line {
+		margin: 0.5rem 0;
+	}
+
+	.prompt-badge {
+		color: var(--gxx-prompt);
+		font-weight: 500;
+	}
+
+	.prompt-cursor {
+		display: inline-block;
+		width: 0.5rem;
+		height: 1.125em;
+		background: var(--gxx-text-muted);
+		margin-left: 0.125rem;
+		vertical-align: text-bottom;
+		animation: blink 1.1s step-end infinite;
+	}
+
+	@keyframes blink {
+		50% {
+			opacity: 0;
+		}
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.prompt-cursor {
+			animation: none;
+			opacity: 0.6;
+		}
+	}
+
+	.status {
+		color: var(--gxx-text-muted);
+		font-size: 0.75rem;
+		margin-top: 0.75rem;
+	}
+
+	.sep {
+		margin: 0 0.35rem;
+		opacity: 0.5;
+	}
+
+	.mode-auto {
+		color: var(--gxx-status-auto);
+	}
+
+	.terminal-hint {
+		margin: 0;
+		padding: 0.75rem 1.5rem;
+		border-top: 1px solid var(--gxx-border);
+		font-size: 0.75rem;
+		color: var(--gxx-text-muted);
+		font-family: var(--gxx-font-sans);
+	}
+</style>

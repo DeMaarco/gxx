@@ -1,0 +1,184 @@
+---
+import CopyBlock from './CopyBlock.astro';
+
+interface Props {
+	locale?: 'en' | 'es';
+	version?: string;
+}
+
+const { locale = 'en', version = 'v0.0.18' } = Astro.props;
+
+const content = {
+	en: {
+		label: 'Install',
+		title: 'Get started in one command',
+		tabs: ['macOS / Linux', 'Windows', 'From source'],
+		macos: {
+			main: 'curl -fsSL https://raw.githubusercontent.com/DeMaarco/gxx/main/install.sh | sh',
+			path: 'export PATH="$HOME/.local/bin:$PATH"\ngxx version',
+			pin: `curl -fsSL https://raw.githubusercontent.com/DeMaarco/gxx/main/install.sh | sh -s -- --version ${version}\ncurl -fsSL https://raw.githubusercontent.com/DeMaarco/gxx/main/install.sh | sh -s -- --dir /usr/local/bin`,
+			note: 'Installs to ~/.local/bin. Add it to PATH if the shell cannot find gxx.',
+		},
+		windows: {
+			main: 'irm https://raw.githubusercontent.com/DeMaarco/gxx/main/install.ps1 | iex',
+			pin: `$env:GXX_VERSION = "${version}"\nirm https://raw.githubusercontent.com/DeMaarco/gxx/main/install.ps1 | iex`,
+			note: 'Installs to %LOCALAPPDATA%\\gxx. Requires Git for Windows on PATH.',
+		},
+		source: {
+			code: `git clone https://github.com/DeMaarco/gxx.git\ncd gxx\ngo install ./cmd/gxx\ngo test ./test/...`,
+			note: 'Requires Go 1.27+.',
+		},
+		pathLabel: 'Add to PATH',
+		pinLabel: 'Pin a version',
+	},
+	es: {
+		label: 'Instalación',
+		title: 'Empieza con un comando',
+		tabs: ['macOS / Linux', 'Windows', 'Desde fuente'],
+		macos: {
+			main: 'curl -fsSL https://raw.githubusercontent.com/DeMaarco/gxx/main/install.sh | sh',
+			path: 'export PATH="$HOME/.local/bin:$PATH"\ngxx version',
+			pin: `curl -fsSL https://raw.githubusercontent.com/DeMaarco/gxx/main/install.sh | sh -s -- --version ${version}\ncurl -fsSL https://raw.githubusercontent.com/DeMaarco/gxx/main/install.sh | sh -s -- --dir /usr/local/bin`,
+			note: 'Instala en ~/.local/bin. Añádelo a PATH si el shell no encuentra gxx.',
+		},
+		windows: {
+			main: 'irm https://raw.githubusercontent.com/DeMaarco/gxx/main/install.ps1 | iex',
+			pin: `$env:GXX_VERSION = "${version}"\nirm https://raw.githubusercontent.com/DeMaarco/gxx/main/install.ps1 | iex`,
+			note: 'Instala en %LOCALAPPDATA%\\gxx. Requiere Git for Windows en PATH.',
+		},
+		source: {
+			code: `git clone https://github.com/DeMaarco/gxx.git\ncd gxx\ngo install ./cmd/gxx\ngo test ./test/...`,
+			note: 'Requiere Go 1.27+.',
+		},
+		pathLabel: 'Añadir a PATH',
+		pinLabel: 'Fijar versión',
+	},
+};
+
+const t = content[locale];
+---
+
+<section class="section install-tabs" id="install">
+	<span class="section-label">{t.label}</span>
+	<h2>{t.title}</h2>
+	<div class="tabs" role="tablist">
+		{
+			t.tabs.map((label, i) => (
+				<button
+					type="button"
+					class:list={['tab', { active: i === 0 }]}
+					role="tab"
+					aria-selected={i === 0}
+					data-tab={i}
+				>
+					{label}
+				</button>
+			))
+		}
+	</div>
+
+	<div class="tab-panel active" data-panel="0" role="tabpanel">
+		<p class="tab-note">{t.macos.note}</p>
+		<CopyBlock code={t.macos.main} lang="sh" />
+		<p class="tab-sub">{t.pathLabel}</p>
+		<CopyBlock code={t.macos.path} lang="sh" />
+		<p class="tab-sub">{t.pinLabel}</p>
+		<CopyBlock code={t.macos.pin} lang="sh" />
+	</div>
+
+	<div class="tab-panel" data-panel="1" role="tabpanel" hidden>
+		<p class="tab-note">{t.windows.note}</p>
+		<CopyBlock code={t.windows.main} lang="powershell" />
+		<p class="tab-sub">{t.pinLabel}</p>
+		<CopyBlock code={t.windows.pin} lang="powershell" />
+	</div>
+
+	<div class="tab-panel" data-panel="2" role="tabpanel" hidden>
+		<p class="tab-note">{t.source.note}</p>
+		<CopyBlock code={t.source.code} lang="sh" />
+	</div>
+</section>
+
+<style>
+	.tabs {
+		display: flex;
+		gap: 1.5rem;
+		margin-bottom: 1.5rem;
+		border-bottom: 1px solid var(--gxx-border);
+	}
+
+	.tab {
+		padding: 0.75rem 0;
+		margin-bottom: -1px;
+		border: none;
+		border-bottom: 1px solid transparent;
+		background: transparent;
+		color: var(--gxx-text-muted);
+		cursor: pointer;
+		font-family: inherit;
+		font-size: 0.875rem;
+		font-weight: 500;
+		transition: color 0.15s ease, border-color 0.15s ease;
+	}
+
+	.tab:hover {
+		color: var(--gxx-text-secondary);
+	}
+
+	.tab.active {
+		color: var(--gxx-text);
+		border-bottom-color: var(--gxx-text);
+	}
+
+	.tab-panel {
+		display: none;
+	}
+
+	.tab-panel.active {
+		display: block;
+	}
+
+	.tab-note {
+		color: var(--gxx-text-secondary);
+		font-size: 0.875rem;
+		margin: 0 0 1rem;
+		line-height: 1.6;
+	}
+
+	.tab-sub {
+		margin: 1.5rem 0 0.5rem;
+		font-size: 0.8125rem;
+		font-weight: 500;
+		color: var(--gxx-text-muted);
+	}
+</style>
+
+<script>
+	document.querySelectorAll('.install-tabs').forEach((section) => {
+		const tabs = section.querySelectorAll('.tab');
+		const panels = section.querySelectorAll('.tab-panel');
+
+		tabs.forEach((tab) => {
+			tab.addEventListener('click', () => {
+				const index = tab.getAttribute('data-tab');
+
+				tabs.forEach((t) => {
+					t.classList.remove('active');
+					t.setAttribute('aria-selected', 'false');
+				});
+				panels.forEach((p) => {
+					p.classList.remove('active');
+					p.setAttribute('hidden', '');
+				});
+
+				tab.classList.add('active');
+				tab.setAttribute('aria-selected', 'true');
+				const panel = section.querySelector(`[data-panel="${index}"]`);
+				if (panel) {
+					panel.classList.add('active');
+					panel.removeAttribute('hidden');
+				}
+			});
+		});
+	});
+</script>

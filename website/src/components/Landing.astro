@@ -1,0 +1,113 @@
+---
+import TerminalDemo from './TerminalDemo.astro';
+import FeatureGrid from './FeatureGrid.astro';
+import CompareTable from './CompareTable.astro';
+import InstallTabs from './InstallTabs.astro';
+import '../styles/landing.css';
+
+interface Props {
+	locale?: 'en' | 'es';
+}
+
+const { locale = 'en' } = Astro.props;
+const base = import.meta.env.BASE_URL;
+const version = 'v0.0.18';
+
+const content = {
+	en: {
+		lang: 'en',
+		title: 'gxx — A small coding agent for the terminal',
+		description:
+			'Open a repo, type what you want. One workspace, OpenAI or Claude, no TUI.',
+		eyebrow: 'Terminal agent',
+		headline: 'A small coding agent for the terminal.',
+		subhead:
+			'Open a repo, type what you want. It lists, searches, reads, patches, and runs commands — in that folder only.',
+		navDocs: 'Docs',
+		navInstall: 'Install',
+		ctaInstall: 'Install gxx',
+		ctaDocs: 'Read the docs',
+		footer: 'Licensed under',
+	},
+	es: {
+		lang: 'es',
+		title: 'gxx — Un agente de código pequeño para la terminal',
+		description:
+			'Abre un repo, escribe lo que quieres. Un workspace, OpenAI o Claude, sin TUI.',
+		eyebrow: 'Agente de terminal',
+		headline: 'Un agente de código pequeño para la terminal.',
+		subhead:
+			'Abre un repo, escribe lo que quieres. Lista, busca, lee, parchea y ejecuta comandos — solo en esa carpeta.',
+		navDocs: 'Docs',
+		navInstall: 'Instalación',
+		ctaInstall: 'Instalar gxx',
+		ctaDocs: 'Leer la documentación',
+		footer: 'Licencia',
+	},
+};
+
+const t = content[locale];
+const docsBase = locale === 'es' ? `${base}es/` : base;
+const homeEn = base;
+const homeEs = `${base}es/`;
+---
+
+<!doctype html>
+<html lang={t.lang}>
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<meta name="description" content={t.description} />
+		<meta property="og:title" content={t.title} />
+		<meta property="og:description" content={t.description} />
+		<meta property="og:type" content="website" />
+		<title>{t.title}</title>
+		<link rel="icon" type="image/svg+xml" href={`${base}favicon.svg`} />
+		<link rel="preconnect" href="https://fonts.googleapis.com" />
+		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+		<link
+			href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap"
+			rel="stylesheet"
+		/>
+	</head>
+	<body class="landing">
+		<header class="landing-header">
+			<a href={locale === 'es' ? homeEs : homeEn} class="landing-brand">gxx</a>
+			<nav class="landing-nav">
+				<a href={`${docsBase}install/`}>{t.navDocs}</a>
+				<a href="#install">{t.navInstall}</a>
+				<a href="https://github.com/DeMaarco/gxx" target="_blank" rel="noopener">GitHub</a>
+				<div class="lang-switch">
+					<a href={homeEn} class:list={[{ active: locale === 'en' }]}>EN</a>
+					<a href={homeEs} class:list={[{ active: locale === 'es' }]}>ES</a>
+				</div>
+			</nav>
+		</header>
+
+		<main class="landing-main">
+			<section class="hero">
+				<p class="hero-eyebrow">{t.eyebrow}</p>
+				<h1>{t.headline}</h1>
+				<p class="hero-description">{t.subhead}</p>
+				<div class="hero-cta">
+					<a href="#install" class="btn btn-primary">{t.ctaInstall}</a>
+					<a href={`${docsBase}quick-start/`} class="btn btn-secondary">{t.ctaDocs}</a>
+				</div>
+			</section>
+
+			<TerminalDemo locale={locale} version={version} />
+			<FeatureGrid locale={locale} />
+			<CompareTable locale={locale} />
+			<InstallTabs locale={locale} version={version} />
+		</main>
+
+		<footer class="landing-footer">
+			<p>
+				{t.footer}
+				<a href="https://github.com/DeMaarco/gxx/blob/main/LICENSE" target="_blank" rel="noopener"
+					>Apache 2.0</a
+				>
+			</p>
+		</footer>
+	</body>
+</html>

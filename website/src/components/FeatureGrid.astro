@@ -1,0 +1,122 @@
+---
+interface Props {
+	locale?: 'en' | 'es';
+}
+
+const { locale = 'en' } = Astro.props;
+
+const content = {
+	en: {
+		label: 'Features',
+		title: 'Built for one repo at a time',
+		intro: 'Everything runs inside the directory you start in.',
+		items: [
+			{
+				name: 'Workspace-bound',
+				desc: 'The directory you start in is the whole world. No traversal, no outside symlinks.',
+			},
+			{
+				name: 'Ask / Plan',
+				desc: 'Shift+Tab cycles read-only ask and plan modes. After a plan, execute, request changes, or cancel.',
+			},
+			{
+				name: 'Git inspect',
+				desc: 'git_status, git_diff, and git_log stay read-only and inside the workspace.',
+			},
+			{
+				name: 'Images',
+				desc: 'generate_image writes GPT Image output to the workspace. Requires a platform API key.',
+			},
+			{
+				name: 'One-shot CLI',
+				desc: 'gxx ask for scripts and pipes. --json for machine-readable output.',
+			},
+			{
+				name: 'Secret-aware',
+				desc: '.env, keys, and credential paths are blocked. Requests use store:false.',
+			},
+		],
+	},
+	es: {
+		label: 'Características',
+		title: 'Hecho para un repo a la vez',
+		intro: 'Todo funciona dentro del directorio desde el que inicias.',
+		items: [
+			{
+				name: 'Acotado al workspace',
+				desc: 'El directorio desde el que inicias es todo el mundo. Sin traversal ni symlinks externos.',
+			},
+			{
+				name: 'Ask / Plan',
+				desc: 'Shift+Tab alterna modos ask y plan de solo lectura. Tras un plan: ejecutar, pedir cambios o cancelar.',
+			},
+			{
+				name: 'Inspección git',
+				desc: 'git_status, git_diff y git_log permanecen de solo lectura dentro del workspace.',
+			},
+			{
+				name: 'Imágenes',
+				desc: 'generate_image escribe salida GPT Image en el workspace. Requiere API key de plataforma.',
+			},
+			{
+				name: 'CLI one-shot',
+				desc: 'gxx ask para scripts y pipes. --json para salida legible por máquina.',
+			},
+			{
+				name: 'Consciente de secretos',
+				desc: '.env, claves y rutas de credenciales bloqueadas. Peticiones con store:false.',
+			},
+		],
+	},
+};
+
+const t = content[locale];
+---
+
+<section class="section feature-grid">
+	<span class="section-label">{t.label}</span>
+	<h2>{t.title}</h2>
+	<p class="section-intro">{t.intro}</p>
+	<div class="feature-cards">
+		{
+			t.items.map((item) => (
+				<article class="feature-card">
+					<h3>{item.name}</h3>
+					<p>{item.desc}</p>
+				</article>
+			))
+		}
+	</div>
+</section>
+
+<style>
+	.feature-cards {
+		display: grid;
+		grid-template-columns: repeat(auto-fill, minmax(18rem, 1fr));
+		gap: 1px;
+		background: var(--gxx-border);
+		border: 1px solid var(--gxx-border);
+		border-radius: var(--gxx-radius-lg);
+		overflow: hidden;
+	}
+
+	.feature-card {
+		background: var(--gxx-bg);
+		padding: 1.5rem;
+	}
+
+	.feature-card h3 {
+		margin: 0 0 0.5rem;
+		font-size: 0.9375rem;
+		font-weight: 500;
+		letter-spacing: -0.01em;
+		color: var(--gxx-text);
+	}
+
+	.feature-card p {
+		margin: 0;
+		font-size: 0.875rem;
+		line-height: 1.6;
+		color: var(--gxx-text-secondary);
+	}
+</style>
