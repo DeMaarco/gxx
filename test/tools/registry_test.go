@@ -1079,6 +1079,25 @@ func TestSearchFilesTODODoesNotMatchSpanishTodo(t *testing.T) {
 	if strings.Contains(word.Output, "func helpers()") {
 		t.Fatalf("identifier search = %q, should not match helpers", word.Output)
 	}
+
+	writeTestFile(t, root, "src/context.go", "package src\n\nfunc ContextSizes() {}\nfunc ContextSizesForModel() {}\n")
+	camel := registry.Execute(context.Background(), []agent.ToolCall{
+		toolCall("search", "search_files", map[string]any{
+			"query": "ContextSizes", "path": "src", "glob": nil, "max_results": nil, "case_sensitive": nil,
+		}),
+	}, nil)[0]
+	if camel.IsError || !strings.Contains(camel.Output, "ContextSizesForModel") {
+		t.Fatalf("camel search = %+v, want ContextSizesForModel", camel)
+	}
+
+	alt := registry.Execute(context.Background(), []agent.ToolCall{
+		toolCall("search", "search_files", map[string]any{
+			"query": "Context|Haiku", "path": "src", "glob": nil, "max_results": nil, "case_sensitive": nil,
+		}),
+	}, nil)[0]
+	if alt.IsError || !strings.Contains(alt.Output, "ContextSizes") {
+		t.Fatalf("alternation search = %+v, want case-insensitive Context hit", alt)
+	}
 }
 
 func TestApplyPatchRejectsLegacyPatchDocument(t *testing.T) {

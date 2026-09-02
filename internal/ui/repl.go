@@ -31,6 +31,7 @@ import (
 	"gxx/internal/agent"
 	"gxx/internal/auth"
 	"gxx/internal/config"
+	"gxx/internal/models"
 	"gxx/internal/osutil"
 )
 
@@ -1094,7 +1095,7 @@ func applyModelCommand(writer io.Writer, settings *REPLSettings, line string) (b
 			writer,
 			paint(settings.Color, dim, formatModelStatus(
 				settings.Model,
-				orDefault(settings.Context, "272k"),
+				orDefault(settings.Context, config.DefaultContextForModel(settings.Model)),
 				orDefault(settings.Effort, "medium"),
 				settings.Fast,
 			)),
@@ -1108,13 +1109,22 @@ func applyModelCommand(writer io.Writer, settings *REPLSettings, line string) (b
 			if model == settings.Model {
 				marker = "* "
 			}
-			fmt.Fprintln(writer, paint(settings.Color, dim, marker+model))
+			alias := models.Alias(model)
+			line := marker + model
+			if alias != "" && alias != model {
+				line = marker + alias + "  " + model
+			}
+			fmt.Fprintln(writer, paint(settings.Color, dim, line))
 		}
-		fmt.Fprintln(writer, paint(settings.Color, dim, "Usage: /model [id] [context=272k] [effort=medium] [fast=on|off]"))
+		sizes := config.ContextSizesForModel(settings.Model)
+		fmt.Fprintln(writer, paint(settings.Color, dim, fmt.Sprintf(
+			"Usage: /model [id] [context=%s] [effort=medium] [fast=on|off]",
+			strings.Join(sizes, "|"),
+		)))
 		if config.IsClaudeModel(settings.Model) || settings.ActiveAccount == config.AccountClaude {
-			fmt.Fprintln(writer, paint(settings.Color, dim, "In a terminal, Tab opens context size and effort options (fast is OpenAI-only)."))
+			fmt.Fprintln(writer, paint(settings.Color, dim, "In a terminal, Tab opens context and effort (fast is OpenAI-only)."))
 		} else {
-			fmt.Fprintln(writer, paint(settings.Color, dim, "In a terminal, Tab opens context size, effort, and fast options."))
+			fmt.Fprintln(writer, paint(settings.Color, dim, "In a terminal, Tab opens context, effort, and fast."))
 		}
 		return false, nil
 	}
@@ -1127,7 +1137,13 @@ func applyModelCommand(writer io.Writer, settings *REPLSettings, line string) (b
 		settings.Model = command.Model
 	}
 	if command.Context != "" {
+		if err := config.ValidateContextForModel(settings.Model, command.Context); err != nil {
+			*settings = previous
+			return false, err
+		}
 		settings.Context = command.Context
+	} else if command.Model != "" {
+		settings.Context = config.ClampContextForModel(settings.Model, settings.Context)
 	}
 	if command.Effort != "" {
 		settings.Effort = command.Effort
@@ -1160,7 +1176,7 @@ func applyModelCommand(writer io.Writer, settings *REPLSettings, line string) (b
 		writer,
 		paint(settings.Color, dim, formatModelStatus(
 			settings.Model,
-			orDefault(settings.Context, "272k"),
+			orDefault(settings.Context, config.DefaultContextForModel(settings.Model)),
 			orDefault(settings.Effort, "medium"),
 			settings.Fast,
 		)),

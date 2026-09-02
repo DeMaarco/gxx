@@ -626,7 +626,7 @@ func TestRunREPLAppliesModelCommand(t *testing.T) {
 	text := output.String()
 	for _, expected := range []string{
 		"model gpt-5.6-sol · context 272k · effort medium · fast off",
-		"* gpt-5.6-sol",
+		"* sol  gpt-5.6-sol",
 		"model gpt-5.6-terra · context 272k · effort medium · fast off",
 		"model gpt-5.6-terra · context 272k · effort high · fast on",
 		"Conversation cleared.",

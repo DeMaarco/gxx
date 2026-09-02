@@ -190,6 +190,16 @@ func familyOf(account, id string) string {
 	}
 }
 
+// Alias returns the short family name for a catalog model ID (sol, opus, …).
+func Alias(id string) string {
+	id = config.CanonicalModel(id)
+	account := config.AccountAPI
+	if config.IsClaudeModel(id) {
+		account = config.AccountClaude
+	}
+	return familyOf(account, id)
+}
+
 func preferAlias(id string) string {
 	return datedSuffix.ReplaceAllString(id, "")
 }

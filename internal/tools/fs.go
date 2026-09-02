@@ -76,7 +76,7 @@ func (r *Registry) searchFilesSpec() toolSpec {
 	return toolSpec{
 		definition: agent.ToolDefinition{
 			Name:        "search_files",
-			Description: "Search regular text files and return matching lines as path:line:text. query is a RE2 regular expression; if it does not compile, it is searched as a literal string. A bare identifier is matched as a whole word. ALL-CAPS tokens such as TODO or FIXME are case-sensitive unless case_sensitive is false. Matching is otherwise case-insensitive unless case_sensitive is true. Optional glob limits files (gitignore style, for example *.go or **/*_test.go). Default dependency directories, .gitignore, and .gxxignore patterns are skipped.",
+			Description: "Search regular text files and return matching lines as path:line:text. query is a RE2 regular expression; if it does not compile, it is searched as a literal string. A bare identifier is matched as a whole word (CamelCase prefixes also match longer symbols, so ContextSizes matches ContextSizesForModel). ALL-CAPS tokens such as TODO or FIXME are case-sensitive unless case_sensitive is false. Matching is otherwise case-insensitive unless case_sensitive is true. Leave max_results null for the configured default; small caps hide useful hits. Optional glob limits files (gitignore style, for example *.go or **/*_test.go). Default dependency directories, .gitignore, and .gxxignore patterns are skipped.",
 			ReadOnly:    true,
 			Parameters: objectSchema(map[string]any{
 				"query": map[string]any{
@@ -740,16 +740,34 @@ func searchPattern(query string, caseSensitive, explicitCase bool) (string, bool
 		caseSensitive = true
 	}
 	if isBareIdentifier(query) {
-		pattern := `\b` + regexp.QuoteMeta(query) + `\b`
+		escaped := regexp.QuoteMeta(query)
+		// Exact symbol, or CamelCase continuation (Foo → FooBar / ContextSizes → ContextSizesForModel).
+		pattern := `\b` + escaped + `(?:[A-Z][A-Za-z0-9_]*)?`
+		if !hasCamelContinuation(query) {
+			pattern = `\b` + escaped + `\b`
+		}
 		if !caseSensitive {
 			return "(?i)" + pattern, caseSensitive
 		}
 		return pattern, caseSensitive
 	}
 	if !caseSensitive {
-		return "(?i)" + query, caseSensitive
+		// (?i) only applies to the next atom; wrap so a|b stays case-insensitive.
+		return "(?i)(?:" + query + ")", caseSensitive
 	}
 	return query, caseSensitive
+}
+
+func hasCamelContinuation(query string) bool {
+	if len(query) < 2 {
+		return false
+	}
+	for _, r := range query[1:] {
+		if r >= 'A' && r <= 'Z' {
+			return true
+		}
+	}
+	return false
 }
 
 func isBareIdentifier(query string) bool {

@@ -53,7 +53,6 @@ const (
 	MaxSearchResultsLimit     = 1000
 	ParallelReadsLimit        = 32
 	maxConfigBytes            = 64 * 1024
-	claudeNativeContext       = 200_000
 )
 
 var PermissionModes = []string{PermissionAsk, PermissionAutoWrites, PermissionAuto}
@@ -115,14 +114,14 @@ func Load(workspace string) Config {
 			model = DefaultClaudeModel
 		}
 	}
-	return Config{
+	cfg := Config{
 		APIKey:             apiKey,
 		Provider:           resolveProvider(providerHint, model),
 		ClaudeTokens:       resolveClaudeTokens(stored),
 		OpenAITokens:       stored.openAITokens(),
 		Model:              model,
 		Effort:             envString("GXX_EFFORT", validEffortOr(stored.Effort, DefaultEffort)),
-		Context:            envString("GXX_CONTEXT", validContextOr(stored.Context, DefaultContext)),
+		Context:            envString("GXX_CONTEXT", validContextOr(stored.Context, DefaultContextForModel(model))),
 		Fast:               envBool("GXX_FAST", stored.Fast),
 		PermissionMode:     envString("GXX_PERMISSION", validPermissionOr(stored.Permission, DefaultPermissionMode)),
 		Workspace:          workspace,
@@ -134,6 +133,8 @@ func Load(workspace string) Config {
 		APITimeout:         envDuration("GXX_API_TIMEOUT", DefaultAPITimeout),
 		LoadError:          loadErr,
 	}
+	cfg.Context = ClampContextForModel(cfg.Model, cfg.Context)
+	return cfg
 }
 
 // Validate normalizes the workspace and rejects unusable settings.
@@ -165,9 +166,14 @@ func (c *Config) validate(requireCredentials bool) error {
 	}
 	normalized, err := NormalizeContext(c.Context)
 	if err != nil {
-		return err
+		if isRemovedContextLabel(c.Context) {
+			c.Context = DefaultContextForModel(c.Model)
+		} else {
+			return err
+		}
+	} else {
+		c.Context = ClampContextForModel(c.Model, normalized)
 	}
-	c.Context = normalized
 	permission, err := CanonicalPermission(c.PermissionMode)
 	if err != nil {
 		return err
@@ -818,15 +824,6 @@ func ValidateEffort(value string) error {
 	}
 }
 
-var ContextSizes = []string{"32k", "128k", "272k", "1m"}
-
-var contextTokens = map[string]int{
-	"32k":  32_000,
-	"128k": 128_000,
-	"272k": 272_000,
-	"1m":   1_050_000,
-}
-
 // CanonicalModel maps provider aliases onto bundled model IDs.
 func CanonicalModel(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
@@ -880,52 +877,5 @@ func CanonicalProvider(value string) (string, error) {
 		return "", errors.New("provider cannot be empty")
 	default:
 		return "", fmt.Errorf("provider must be one of %s", strings.Join(Providers, ", "))
-	}
-}
-
-func NormalizeContext(value string) (string, error) {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "32k", "32000":
-		return "32k", nil
-	case "128k", "128000":
-		return "128k", nil
-	case "272k", "272000":
-		return "272k", nil
-	case "1m", "1050k", "1.05m", "1050000":
-		return "1m", nil
-	case "":
-		return "", errors.New("context cannot be empty")
-	default:
-		return "", fmt.Errorf("context must be one of %s", strings.Join(ContextSizes, ", "))
-	}
-}
-
-func ContextTokens(value string) int {
-	label, err := NormalizeContext(value)
-	if err != nil {
-		return contextTokens[DefaultContext]
-	}
-	return contextTokens[label]
-}
-
-// ContextTokensFor returns the context window for a provider and size label.
-// Claude's native window is 200k; the 272k label maps onto that.
-func ContextTokensFor(provider, value string) int {
-	if provider != ProviderAnthropic {
-		return ContextTokens(value)
-	}
-	label, err := NormalizeContext(value)
-	if err != nil {
-		return claudeNativeContext
-	}
-	switch label {
-	case "32k":
-		return 32_000
-	case "128k":
-		return 128_000
-	case "1m":
-		return 1_000_000
-	default:
-		return claudeNativeContext
 	}
 }

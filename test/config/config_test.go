@@ -331,7 +331,7 @@ func TestSaveSessionPersistsAndLoads(t *testing.T) {
 func TestEnvironmentOverridesPersistedSession(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("OPENAI_API_KEY", "")
-	if _, err := config.SaveSession("gpt-5.6-luna", "low", "32k", true, config.PermissionAuto); err != nil {
+	if _, err := config.SaveSession("gpt-5.6-luna", "low", "272k", true, config.PermissionAuto); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("GXX_MODEL", "gpt-5.6-sol")
@@ -351,7 +351,7 @@ func TestEnvironmentOverridesPersistedSession(t *testing.T) {
 
 func TestSaveAPIKeyPreservesSessionFields(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	if _, err := config.SaveSession("gpt-5.6-terra", "high", "128k", true, config.PermissionAsk); err != nil {
+	if _, err := config.SaveSession("gpt-5.6-terra", "high", "1m", true, config.PermissionAsk); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := config.SaveAPIKey("later-key"); err != nil {

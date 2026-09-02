@@ -702,12 +702,16 @@ func TestProviderOmitsEncryptedReasoningInEcoMax(t *testing.T) {
 
 func TestProviderContextBudgetUsesWindowSize(t *testing.T) {
 	provider := openai.New("test-key", "gpt-5.6-sol", strings.Repeat("x", 64), time.Second)
-	provider.SetContext("32k")
-	if provider.ContextTokens() != 32_000 {
-		t.Fatalf("contextTokens = %d, want 32000", provider.ContextTokens())
+	provider.SetContext("272k")
+	if provider.ContextTokens() != 272_000 {
+		t.Fatalf("contextTokens = %d, want 272000", provider.ContextTokens())
 	}
 	if provider.OverBudget(nil) {
-		t.Fatal("default 32k budget should accept empty history")
+		t.Fatal("default 272k budget should accept empty history")
+	}
+	provider.SetContext("1m")
+	if provider.ContextTokens() != 1_050_000 {
+		t.Fatalf("contextTokens = %d, want 1050000", provider.ContextTokens())
 	}
 	provider.SetContextTokens(4)
 	if !provider.OverBudget(nil) {

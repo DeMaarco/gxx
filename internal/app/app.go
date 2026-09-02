@@ -47,7 +47,7 @@ import (
 	"gxx/internal/workspace"
 )
 
-var Version = "0.0.19"
+var Version = "0.0.20"
 
 type runtime struct {
 	config    config.Config
@@ -1242,7 +1242,7 @@ func printAskUsage(writer io.Writer) {
 func printCommonFlags(writer io.Writer) {
 	fmt.Fprintln(writer, "  --model string          Model (default: GXX_MODEL, config.json, or gpt-5.6-sol)")
 	fmt.Fprintln(writer, "  --effort string         Reasoning effort (default: GXX_EFFORT, config.json, or medium)")
-	fmt.Fprintln(writer, "  --context string        Context window size (default: GXX_CONTEXT, config.json, or 272k)")
+	fmt.Fprintln(writer, "  --context string        Context window size for the active model (OpenAI: 272k|1m; Claude: 300k|1m, Haiku 200k)")
 	fmt.Fprintln(writer, "  --permission string     Permission mode for agent (default: GXX_PERMISSION, config.json, or ask)")
 	fmt.Fprintln(writer, "                          ask confirms writes and commands; auto-writes applies files; auto applies files and commands")
 	fmt.Fprintln(writer, "                          Ask/plan session modes only read files and ignore this flag")

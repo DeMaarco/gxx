@@ -94,7 +94,7 @@ func New(apiKey, model, instructions string, timeout time.Duration) *Provider {
 		apiKey:        apiKey,
 		model:         model,
 		effort:        "medium",
-		contextTokens: config.ContextTokens(config.DefaultContext),
+		contextTokens: config.ContextTokensForModel(model, config.DefaultContextForModel(model)),
 		instructions:  instructions,
 		timeout:       timeout,
 		compactNumer:  2,
@@ -144,7 +144,7 @@ func (p *Provider) SetContext(value string) {
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.contextTokens = config.ContextTokens(value)
+	p.contextTokens = config.ContextTokensForModel(p.model, value)
 	p.refreshContextLocked()
 }
 

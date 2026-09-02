@@ -264,10 +264,30 @@ func TestActiveAccountUsesClaudeWhenOnlyClaudeExists(t *testing.T) {
 }
 
 func TestContextTokensForClaude(t *testing.T) {
-	if got := config.ContextTokensFor(config.ProviderAnthropic, "272k"); got != 200_000 {
-		t.Fatalf("272k = %d", got)
+	if got := config.ContextTokensForModel("claude-haiku-4-5", "200k"); got != 200_000 {
+		t.Fatalf("haiku 200k = %d", got)
 	}
-	if got := config.ContextTokensFor(config.ProviderOpenAI, "272k"); got != 272_000 {
+	if got := config.ContextTokensForModel("claude-sonnet-5", "300k"); got != 300_000 {
+		t.Fatalf("sonnet 300k = %d", got)
+	}
+	if got := config.ContextTokensForModel("claude-sonnet-5", "1m"); got != 1_000_000 {
+		t.Fatalf("sonnet 1m = %d", got)
+	}
+	if got := config.ContextTokensForModel("gpt-5.6-sol", "272k"); got != 272_000 {
 		t.Fatalf("openai 272k = %d", got)
+	}
+	if got := config.ClampContextForModel("claude-sonnet-5", "272k"); got != "300k" {
+		t.Fatalf("clamp sonnet 272k = %q, want 300k", got)
+	}
+	if got := config.DefaultContextForModel("claude-opus-5"); got != "300k" {
+		t.Fatalf("opus default = %q, want 300k", got)
+	}
+	sizes := config.ContextSizesForModel("gpt-5.6-sol")
+	if len(sizes) != 2 || sizes[0] != "272k" || sizes[1] != "1m" {
+		t.Fatalf("sol sizes = %#v", sizes)
+	}
+	sizes = config.ContextSizesForModel("claude-sonnet-5")
+	if len(sizes) != 2 || sizes[0] != "300k" || sizes[1] != "1m" {
+		t.Fatalf("sonnet sizes = %#v", sizes)
 	}
 }

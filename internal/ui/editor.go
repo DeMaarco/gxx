@@ -29,6 +29,7 @@ import (
 
 	"gxx/internal/auth"
 	"gxx/internal/config"
+	"gxx/internal/models"
 	"gxx/internal/osutil"
 )
 
@@ -283,7 +284,7 @@ func (s *inputState) startPicker() {
 	s.optionIndex = 0
 	s.pickContext = s.sessionContext
 	if s.pickContext == "" {
-		s.pickContext = "272k"
+		s.pickContext = config.DefaultContextForModel(s.sessionModel)
 	}
 	s.pickEffort = s.sessionEffort
 	if s.pickEffort == "" {
@@ -291,6 +292,7 @@ func (s *inputState) startPicker() {
 	}
 	s.pickFast = s.sessionFast
 	s.clampModelIndex()
+	s.syncPickContext()
 }
 
 func (s *inputState) modelQuery() string {
@@ -472,7 +474,11 @@ func (s *inputState) startContextPicker() {
 func (s *inputState) cycleOption(delta int) {
 	switch s.optionIndex {
 	case optionContext:
-		s.pickContext = cycleValue(config.ContextSizes, s.pickContext, delta)
+		sizes := config.ContextSizesForModel(s.selectedModel())
+		if len(sizes) == 0 {
+			return
+		}
+		s.pickContext = cycleValue(sizes, s.pickContext, delta)
 	case optionEffort:
 		s.pickEffort = cycleValue(effortValues, s.pickEffort, delta)
 	case optionFast:
@@ -480,6 +486,10 @@ func (s *inputState) cycleOption(delta int) {
 			s.pickFast = !s.pickFast
 		}
 	}
+}
+
+func (s *inputState) syncPickContext() {
+	s.pickContext = config.ClampContextForModel(s.selectedModel(), s.pickContext)
 }
 
 func (s *inputState) submit() string {
@@ -589,6 +599,7 @@ func (s *inputState) up() {
 	if s.picker == pickerModels {
 		if s.modelIndex > 0 {
 			s.modelIndex--
+			s.syncPickContext()
 		}
 		return
 	}
@@ -633,6 +644,7 @@ func (s *inputState) down() {
 	if s.picker == pickerModels {
 		if s.modelIndex < len(s.visibleModels())-1 {
 			s.modelIndex++
+			s.syncPickContext()
 		}
 		return
 	}
@@ -941,8 +953,22 @@ func (e *lineEditor) renderPicker(settings REPLSettings) error {
 		return e.renderLoginPicker(settings)
 	}
 	e.state.clampModelIndex()
+	e.state.syncPickContext()
 	var body strings.Builder
 	if e.state.picker == pickerOptions {
+		model := e.state.selectedModel()
+		alias := models.Alias(model)
+		title := model
+		if alias != "" {
+			title = alias
+		}
+		body.WriteString(paint(e.color, bold, title))
+		if alias != "" && alias != model {
+			body.WriteString(paint(e.color, dim, "  "+model))
+		}
+		body.WriteString("\r\n")
+		body.WriteString(paint(e.color, dim, "── adjust ──") + "\r\n")
+
 		options := []struct {
 			name  string
 			value string
@@ -950,7 +976,7 @@ func (e *lineEditor) renderPicker(settings REPLSettings) error {
 			{"context", e.state.pickContext},
 			{"effort", e.state.pickEffort},
 		}
-		if optionCountForModel(e.state.selectedModel()) > optionFast {
+		if optionCountForModel(model) > optionFast {
 			fast := "off"
 			if e.state.pickFast {
 				fast = "on"
@@ -963,18 +989,31 @@ func (e *lineEditor) renderPicker(settings REPLSettings) error {
 		if e.state.optionIndex >= len(options) {
 			e.state.optionIndex = len(options) - 1
 		}
+		nameWidth := 7
 		for index, option := range options {
+			selected := index == e.state.optionIndex
 			marker := "  "
-			name := option.name
+			name := padRight(option.name, nameWidth)
 			value := option.value
-			if index == e.state.optionIndex {
+			if selected {
 				marker = paint(e.color, cyan, "▸ ")
-				name = paint(e.color, bold+cyan, option.name)
-				value = paint(e.color, cyan, option.value)
+				name = paint(e.color, bold+cyan, padRight(option.name, nameWidth))
+				if option.name == "context" && len(config.ContextSizesForModel(model)) > 1 {
+					value = paint(e.color, bold+cyan, "‹ "+option.value+" ›")
+				} else if option.name == "effort" {
+					value = paint(e.color, bold+cyan, "‹ "+option.value+" ›")
+				} else if option.name == "fast" {
+					value = paint(e.color, bold+cyan, "‹ "+option.value+" ›")
+				} else {
+					value = paint(e.color, cyan, option.value)
+				}
+			} else {
+				name = paint(e.color, dim, name)
+				value = paint(e.color, dim, value)
 			}
 			body.WriteString(marker + name + "  " + value + "\r\n")
 		}
-		body.WriteString(paint(e.color, dim, "← → cycle · tab models · enter apply") + "\r\n")
+		body.WriteString(paint(e.color, dim, "← → change · ↑ ↓ row · tab models · enter apply") + "\r\n")
 	} else {
 		visible := e.state.visibleModels()
 		if len(visible) == 0 {
@@ -983,34 +1022,71 @@ func (e *lineEditor) renderPicker(settings REPLSettings) error {
 			} else {
 				body.WriteString(paint(e.color, dim, "  no matching models") + "\r\n")
 			}
+		} else {
+			body.WriteString(paint(e.color, dim, "── models ──") + "\r\n")
 		}
 		width := e.termWidth()
-		start, end := windowRange(len(visible), e.state.modelIndex, e.pickerListLimit(settings, 1))
+		start, end := windowRange(len(visible), e.state.modelIndex, e.pickerListLimit(settings, 2))
+		aliasWidth := 0
+		for index := start; index < end; index++ {
+			if a := models.Alias(visible[index]); len(a) > aliasWidth {
+				aliasWidth = len(a)
+			}
+		}
+		if aliasWidth < 4 {
+			aliasWidth = 4
+		}
 		for index := start; index < end; index++ {
 			model := visible[index]
+			alias := models.Alias(model)
+			if alias == "" {
+				alias = model
+			}
+			inUse := model == e.state.sessionModel
+			selected := index == e.state.modelIndex
 			marker := "  "
-			label := model
+			aliasLabel := padRight(alias, aliasWidth)
+			idLabel := model
 			note := ""
-			if model == e.state.sessionModel {
+			switch {
+			case inUse && selected:
+				marker = paint(e.color, green, "● ")
+				aliasLabel = paint(e.color, bold+green, aliasLabel)
+				idLabel = paint(e.color, dim, model)
 				note = paint(e.color, dim, "  in use")
-			}
-			if index == e.state.modelIndex {
+			case inUse:
+				marker = paint(e.color, green, "● ")
+				aliasLabel = paint(e.color, green, aliasLabel)
+				idLabel = paint(e.color, dim, model)
+				note = paint(e.color, dim, "  in use")
+			case selected:
 				marker = paint(e.color, cyan, "▸ ")
-				label = paint(e.color, bold+cyan, model)
+				aliasLabel = paint(e.color, bold+cyan, aliasLabel)
+				idLabel = paint(e.color, dim, model)
+			default:
+				aliasLabel = paint(e.color, dim, aliasLabel)
+				idLabel = paint(e.color, dim, model)
 			}
-			line := marker + label + note
+			line := marker + aliasLabel + "  " + idLabel + note
 			if width > 4 {
 				line = truncateVisible(line, width-1)
 			}
 			body.WriteString(line + "\r\n")
 		}
-		hint := "tab options · enter apply · esc cancel"
+		hint := "tab adjust · enter apply · esc cancel"
 		if end-start < len(visible) {
 			hint = fmt.Sprintf("%s · %d/%d", hint, e.state.modelIndex+1, len(visible))
 		}
 		body.WriteString(paint(e.color, dim, hint) + "\r\n")
 	}
 	return e.paintFrame(settings, body.String(), strings.Count(body.String(), "\r\n"), true)
+}
+
+func padRight(value string, width int) string {
+	if len(value) >= width {
+		return value
+	}
+	return value + strings.Repeat(" ", width-len(value))
 }
 
 func (e *lineEditor) renderModePicker(settings REPLSettings) error {

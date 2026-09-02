@@ -41,15 +41,18 @@ func TestParseModelCommand(t *testing.T) {
 		t.Fatalf("fast = %v, want on", command.Fast)
 	}
 
-	command, err = ui.ParseModelCommand("/model context 128k fast off")
+	command, err = ui.ParseModelCommand("/model context 272k fast off")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if command.Model != "" || command.Context != "128k" {
+	if command.Model != "" || command.Context != "272k" {
 		t.Fatalf("spaced fields = %+v", command)
 	}
 	if command.Fast == nil || *command.Fast {
 		t.Fatalf("fast = %v, want off", command.Fast)
+	}
+	if _, err := ui.ParseModelCommand("/model context 128k"); err == nil {
+		t.Fatal("expected removed context size error")
 	}
 
 	command, err = ui.ParseModelCommand("/model luna")
@@ -67,6 +70,45 @@ func TestParseModelCommand(t *testing.T) {
 	}
 	if _, err := ui.ParseModelCommand("/model extra leftover"); err == nil {
 		t.Fatal("expected unexpected argument error")
+	}
+}
+
+func TestApplyModelCommandRejectsUnsupportedContext(t *testing.T) {
+	settings := ui.REPLSettings{
+		Model:         "claude-haiku-4-5",
+		Context:       "200k",
+		Effort:        "medium",
+		ActiveAccount: config.AccountClaude,
+		SyncSession:   func(ui.REPLSettings) error { return nil },
+	}
+	var output bytes.Buffer
+	_, err := ui.ApplyModelCommand(&output, &settings, "/model haiku context=1m")
+	if err == nil || !strings.Contains(err.Error(), "not supported") {
+		t.Fatalf("error = %v, want unsupported context", err)
+	}
+	if settings.Context != "200k" {
+		t.Fatalf("context mutated = %q", settings.Context)
+	}
+}
+
+func TestApplyModelCommandClampsContextOnModelSwitch(t *testing.T) {
+	settings := ui.REPLSettings{
+		Model:            "gpt-5.6-sol",
+		Context:          "272k",
+		Effort:           "medium",
+		ActiveAccount:    config.AccountAPI,
+		APIKeyConfigured: true,
+		OpenAIConfigured: true,
+		ClaudeConfigured: true,
+		SyncSession:      func(ui.REPLSettings) error { return nil },
+	}
+	var output bytes.Buffer
+	_, err := ui.ApplyModelCommand(&output, &settings, "/model sonnet")
+	if err != nil {
+		t.Fatalf("ApplyModelCommand() error = %v", err)
+	}
+	if settings.Context != "300k" {
+		t.Fatalf("context = %q, want clamped 300k", settings.Context)
 	}
 }
 
@@ -138,8 +180,8 @@ func TestEncodeModelCommand(t *testing.T) {
 	if got != want {
 		t.Fatalf("encode = %q, want %q", got, want)
 	}
-	got = ui.EncodeModelCommand("claude-sonnet-5", "272k", "high", true)
-	want = "/model claude-sonnet-5 context=272k effort=high"
+	got = ui.EncodeModelCommand("claude-sonnet-5", "1m", "high", true)
+	want = "/model claude-sonnet-5 context=1m effort=high"
 	if got != want {
 		t.Fatalf("claude encode = %q, want %q", got, want)
 	}
