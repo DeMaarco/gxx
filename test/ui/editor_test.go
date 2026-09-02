@@ -383,3 +383,13 @@ func TestInputStateCtrlCConfirmsBeforeExit(t *testing.T) {
 		t.Fatalf("ctrl+c in picker = eof=%v picker=%d text=%q armed=%v, want dismiss", eof, state.Picker(), state.Text(), state.ExitArmed())
 	}
 }
+
+func TestReadKeyCtrlO(t *testing.T) {
+	event, err := ui.ReadKey(strings.NewReader("\x0f"))
+	if err != nil {
+		t.Fatalf("ReadKey() error = %v", err)
+	}
+	if event.Kind != ui.KeyCtrlO {
+		t.Fatalf("kind = %v, want Ctrl+O", event.Kind)
+	}
+}

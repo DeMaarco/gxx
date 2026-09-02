@@ -41,6 +41,7 @@ const (
 	KeyRight      = keyRight
 	KeyEsc        = keyEsc
 	KeyCtrlC      = keyCtrlC
+	KeyCtrlO      = keyCtrlO
 	PickerClosed  = int(pickerClosed)
 	PickerModels  = int(pickerModels)
 	PickerOptions = int(pickerOptions)
@@ -118,6 +119,22 @@ type ApprovalMenu struct {
 
 type PlanMenu struct {
 	inner planMenu
+}
+
+type ConversationMenu struct {
+	inner conversationMenu
+}
+
+func NewConversationMenu(entries []ConversationEntry) ConversationMenu {
+	return ConversationMenu{inner: newConversationMenu(entries)}
+}
+
+func (m *ConversationMenu) Apply(kind KeyKind) (bool, string) {
+	return m.inner.apply(keyEvent{kind: keyKind(kind)})
+}
+
+func FormatRelativeTime(when, now time.Time) string {
+	return formatRelativeTime(when, now)
 }
 
 func NewPlanMenu() PlanMenu {

@@ -29,7 +29,7 @@ Inspired by [`fx`](https://github.com/vercel-labs/fx), but narrower on purpose:
 **OpenAI or Claude**, **one workspace**, **no TUI**. Just a prompt.
 
 ```text
-◆ gxx  v0.0.17
+◆ gxx  v0.0.18
 >
 gpt-5.6-sol · auto · medium · 272k · 0%
 ```
@@ -70,7 +70,7 @@ gxx version
 Pin a release or another directory:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/DeMaarco/gxx/main/install.sh | sh -s -- --version v0.0.17
+curl -fsSL https://raw.githubusercontent.com/DeMaarco/gxx/main/install.sh | sh -s -- --version v0.0.18
 curl -fsSL https://raw.githubusercontent.com/DeMaarco/gxx/main/install.sh | sh -s -- --dir /usr/local/bin
 ```
 
@@ -85,7 +85,7 @@ That puts `gxx.exe` in `%LOCALAPPDATA%\gxx` and puts that folder first on your u
 Pin a release or another directory:
 
 ```powershell
-$env:GXX_VERSION = "v0.0.17"
+$env:GXX_VERSION = "v0.0.18"
 irm https://raw.githubusercontent.com/DeMaarco/gxx/main/install.ps1 | iex
 ```
 
@@ -148,7 +148,7 @@ Drop an `AGENTS.md` in the project root if you want extra instructions loaded in
 ## REPL
 
 ```text
-◆ gxx  v0.0.17     badge and version
+◆ gxx  v0.0.18     badge and version
 >                 type here  ·  Shift+Tab →  > ask  ·  Shift+Tab →  agent again
 gpt-5.6-sol · auto · medium · 272k · 0%
 ```
@@ -158,12 +158,15 @@ gpt-5.6-sol · auto · medium · 272k · 0%
 | `/` | Slash commands |
 | `Tab` | Complete, or open pickers |
 | `Shift+Tab` | From ask/plan, back to agent. From agent, cycle ask and plan |
+| `Ctrl+O` | Open saved conversations for this workspace |
 | `Ctrl+C` | Clear, cancel, or confirm exit |
 | `Ctrl+D` | Exit |
 
 `gxx` starts in agent, so `/mode` (`ask`, `auto-writes`, `auto`) applies. Ask and plan are separate session modes on `Shift+Tab`. They never overlap. One press from ask or plan returns to agent. Both are read-only: only file reads and git inspect, with no approval prompt. They are session-only and not saved to config.
 
 After a plan is generated, a terminal shows an arrow-key menu: execute the plan, request changes, or cancel. Request changes stays in plan so you can send a revision. Execute switches to agent and implements, using the current permission mode.
+
+Conversations are saved automatically after each turn to `~/.config/gxx/conversations/` (per workspace). `Ctrl+O` or `/history` opens an arrow-key menu to load a previous thread. The screen does not replay old turns; the model context is restored in memory. `/clear` archives the current thread and starts a new one.
 
 `/eco` is also session-only. It paints green on the prompt like plan. `/eco` toggles; `/eco lite` `full` `ultra` set the strength (aliases: 1/2/3). Eco never changes the model. It compresses request input the way Caveman does: drop filler, keep code, paths, URLs, and identifiers. Tool descriptions shrink too. Ultra also drops reasoning replay.
 
@@ -180,7 +183,8 @@ After a plan is generated, a terminal shows an arrow-key menu: execute the plan,
 | `/logout` | Clear the connected account |
 | `/context` | Window occupancy |
 | `/usage` | Session tokens, estimated cost, and remaining subscription or API quota |
-| `/clear` | Forget this conversation |
+| `/history` | Open saved conversations for this workspace |
+| `/clear` | Archive this conversation and start a new one |
 | `/exit` | Quit |
 
 Inline forms work too:

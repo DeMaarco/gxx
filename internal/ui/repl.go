@@ -72,6 +72,13 @@ type REPLSettings struct {
 	Eco                 int
 	EcoLast             int
 	ChoosePlan          func(context.Context) (PlanChoice, error)
+	ListConversations   func() ([]ConversationEntry, error)
+	LoadConversation    func(id string) error
+	SaveConversation    func() error
+	ArchiveAndClear     func() error
+	RefreshSession      func(*REPLSettings)
+	ChooseConversation  func(context.Context, io.Writer) (string, error)
+	PendingConversationID string
 }
 
 type Renderer struct {
@@ -506,6 +513,9 @@ func RunREPL(
 	if settings.QuoteCost != nil {
 		renderer.SetQuote(settings.QuoteCost)
 	}
+	if settings.SaveConversation != nil {
+		defer func() { _ = settings.SaveConversation() }()
+	}
 
 	sessionCtx, cancelSession := context.WithCancel(ctx)
 	defer cancelSession()
@@ -553,6 +563,15 @@ func RunREPL(
 			}
 			return err
 		}
+		if settings.PendingConversationID != "" {
+			id := settings.PendingConversationID
+			settings.PendingConversationID = ""
+			if err := loadSelectedConversation(writer, &settings, id); err != nil {
+				fmt.Fprintf(writer, "%s\n", paint(settings.Color, red, "error: "+err.Error()))
+			}
+			fmt.Fprintln(writer)
+			continue
+		}
 		if len(line) > maxPromptBytes {
 			fmt.Fprintln(writer, paint(settings.Color, red, "error: prompt is too large"))
 			continue
@@ -576,11 +595,28 @@ func RunREPL(
 			case "/exit":
 				return nil
 			case "/clear":
+				if settings.ArchiveAndClear != nil {
+					if err := settings.ArchiveAndClear(); err != nil {
+						fmt.Fprintf(writer, "%s\n", paint(settings.Color, red, "error: "+err.Error()))
+						fmt.Fprintln(writer)
+						continue
+					}
+				} else if settings.RefreshInstructions != nil {
+					settings.RefreshInstructions()
+					loop.Reset()
+				} else {
+					loop.Reset()
+				}
 				if settings.RefreshInstructions != nil {
 					settings.RefreshInstructions()
 				}
-				loop.Reset()
 				fmt.Fprintln(writer, paint(settings.Color, dim, "Conversation cleared."))
+				fmt.Fprintln(writer)
+				continue
+			case "/history":
+				if err := openConversationMenu(sessionCtx, writer, &settings); err != nil {
+					fmt.Fprintf(writer, "%s\n", paint(settings.Color, red, "error: "+err.Error()))
+				}
 				fmt.Fprintln(writer)
 				continue
 			case "/config":
@@ -647,6 +683,12 @@ func RunREPL(
 		ok, err := runREPLTurn(sessionCtx, &turns, loop, renderer, writer, &settings, prompt)
 		if err != nil {
 			return err
+		}
+		if ok && settings.SaveConversation != nil {
+			if err := settings.SaveConversation(); err != nil {
+				fmt.Fprintf(writer, "%s\n", paint(settings.Color, red, "error: "+err.Error()))
+				fmt.Fprintln(writer)
+			}
 		}
 		if ok && settings.Plan {
 			if err := handlePlanFollowup(sessionCtx, &turns, loop, renderer, reader, editor, writer, &settings); err != nil {
@@ -836,6 +878,37 @@ func watchInterrupts(
 	}
 }
 
+func openConversationMenu(ctx context.Context, writer io.Writer, settings *REPLSettings) error {
+	if settings == nil || settings.ChooseConversation == nil {
+		return fmt.Errorf("conversation menu is unavailable")
+	}
+	id, err := settings.ChooseConversation(ctx, writer)
+	if err != nil {
+		return err
+	}
+	if id == "" {
+		return nil
+	}
+	return loadSelectedConversation(writer, settings, id)
+}
+
+func loadSelectedConversation(writer io.Writer, settings *REPLSettings, id string) error {
+	if settings == nil || settings.LoadConversation == nil {
+		return fmt.Errorf("conversation loading is unavailable")
+	}
+	if err := settings.LoadConversation(id); err != nil {
+		return err
+	}
+	if settings.RefreshSession != nil {
+		settings.RefreshSession(settings)
+	}
+	if settings.RefreshInstructions != nil {
+		settings.RefreshInstructions()
+	}
+	fmt.Fprintln(writer, paint(settings.Color, dim, "Conversation loaded."))
+	return nil
+}
+
 func printREPLHelp(writer io.Writer, settings REPLSettings) {
 	for _, command := range slashCommands {
 		fmt.Fprintf(
@@ -850,6 +923,12 @@ func printREPLHelp(writer io.Writer, settings REPLSettings) {
 		"%s  %s\n",
 		paint(settings.Color, cyan, "Shift+Tab"),
 		paint(settings.Color, dim, "From ask or plan, return to agent; from agent, cycle ask and plan. After a plan, choose execute, request changes, or cancel"),
+	)
+	fmt.Fprintf(
+		writer,
+		"%s  %s\n",
+		paint(settings.Color, cyan, "Ctrl+O"),
+		paint(settings.Color, dim, "Open saved conversations for this workspace"),
 	)
 }
 

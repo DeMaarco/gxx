@@ -165,6 +165,41 @@ func (p *Provider) Reset() {
 	p.refreshContextLocked()
 }
 
+func (p *Provider) ExportHistory() (string, json.RawMessage, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if len(p.history) == 0 {
+		return config.ProviderAnthropic, nil, nil
+	}
+	data, err := json.Marshal(p.history)
+	if err != nil {
+		return "", nil, fmt.Errorf("encode anthropic history: %w", err)
+	}
+	return config.ProviderAnthropic, data, nil
+}
+
+func (p *Provider) ImportHistory(provider string, history json.RawMessage) error {
+	if strings.TrimSpace(provider) != config.ProviderAnthropic {
+		return fmt.Errorf("history provider %q does not match anthropic", provider)
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if len(history) == 0 {
+		p.generation++
+		p.history = nil
+		p.refreshContextLocked()
+		return nil
+	}
+	var items []anthropicsdk.MessageParam
+	if err := json.Unmarshal(history, &items); err != nil {
+		return fmt.Errorf("decode anthropic history: %w", err)
+	}
+	p.generation++
+	p.history = items
+	p.refreshContextLocked()
+	return nil
+}
+
 func (p *Provider) Respond(
 	ctx context.Context,
 	input agent.ModelInput,
@@ -291,7 +326,7 @@ func (p *Provider) requestParamsLocked(
 	definitions []agent.ToolDefinition,
 	finalStep bool,
 ) anthropicsdk.MessageNewParams {
-	instructions := agent.CompressProjectInstructions(p.instructions, p.ecoLevel)
+	instructions := p.instructions
 	thinking, maxTokens := thinkingForEffort(p.effort, p.omitReasoning)
 	params := anthropicsdk.MessageNewParams{
 		Model:     anthropicsdk.Model(p.model),

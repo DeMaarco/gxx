@@ -38,6 +38,7 @@ import (
 	"gxx/internal/auth/claude"
 	openaiAuth "gxx/internal/auth/openai"
 	"gxx/internal/config"
+	"gxx/internal/conversations"
 	"gxx/internal/models"
 	openaiProvider "gxx/internal/openai"
 	"gxx/internal/pricing"
@@ -46,7 +47,7 @@ import (
 	"gxx/internal/workspace"
 )
 
-var Version = "0.0.17"
+var Version = "0.0.18"
 
 type runtime struct {
 	config    config.Config
@@ -58,6 +59,9 @@ type runtime struct {
 	policy    *approval.Policy
 	registry  *tools.Registry
 	eco       int
+
+	conversationStore    *conversations.Store
+	activeConversationID string
 
 	modelsMu      sync.Mutex
 	modelsGen     atomic.Uint64
@@ -604,6 +608,12 @@ func newRuntimeFromConfig(
 		policy:    policy,
 		registry:  registry,
 	}
+	loop.ProjectContext = func() string {
+		return agent.ProjectContext(ws, rt.eco)
+	}
+	if store, err := conversations.NewStore(); err == nil {
+		rt.conversationStore = store
+	}
 	registry.SetGenerateImage(rt.generateImage)
 	return rt, nil
 }
@@ -716,6 +726,32 @@ func replSettings(rt *runtime, stdin io.Reader, stdout io.Writer) ui.REPLSetting
 				}
 			}
 			return applyEcoRuntime(rt)
+		},
+		ListConversations: func() ([]ui.ConversationEntry, error) {
+			return rt.listConversationEntries()
+		},
+		LoadConversation: func(id string) error {
+			return rt.loadConversation(id)
+		},
+		SaveConversation: func() error {
+			return rt.saveConversation()
+		},
+		ArchiveAndClear: func() error {
+			return rt.archiveAndClear()
+		},
+		RefreshSession: func(session *ui.REPLSettings) {
+			rt.refreshREPLSession(session)
+		},
+		ChooseConversation: func(ctx context.Context, writer io.Writer) (string, error) {
+			entries, err := rt.listConversationEntries()
+			if err != nil {
+				return "", err
+			}
+			file := terminalFile(stdin)
+			if file == nil {
+				return "", fmt.Errorf("conversation menu requires a terminal")
+			}
+			return ui.ReadConversationChoice(ctx, file, writer, entries, ui.ColorEnabled(stdout))
 		},
 	}
 }

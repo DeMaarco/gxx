@@ -35,6 +35,9 @@ type Loop struct {
 	// Overview, if set, returns a cheap workspace snapshot prepended to each
 	// user turn so the model does not need to list the root first.
 	Overview func(context.Context) string
+	// ProjectContext, if set, returns AGENTS.md quoted data prepended after
+	// Overview and before the user's text on each turn.
+	ProjectContext func() string
 }
 
 func (l *Loop) Run(ctx context.Context, prompt string, emit EmitFunc) (Result, error) {
@@ -55,6 +58,11 @@ func (l *Loop) Run(ctx context.Context, prompt string, emit EmitFunc) (Result, e
 	if l.Overview != nil {
 		if snap := strings.TrimSpace(l.Overview(ctx)); snap != "" {
 			prompt = snap + "\n\n" + prompt
+		}
+	}
+	if l.ProjectContext != nil {
+		if project := strings.TrimSpace(l.ProjectContext()); project != "" {
+			prompt = project + "\n\n" + prompt
 		}
 	}
 

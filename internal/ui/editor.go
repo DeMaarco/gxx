@@ -59,6 +59,7 @@ const (
 	keyCtrlU
 	keyCtrlW
 	keyCtrlL
+	keyCtrlO
 )
 
 type keyEvent struct {
@@ -866,6 +867,21 @@ func (e *lineEditor) Read(ctx context.Context, settings *REPLSettings) (string, 
 			}
 			continue
 		}
+		if event.kind == keyCtrlO && e.state.picker == pickerClosed && settings.ChooseConversation != nil {
+			e.finish(*settings, "")
+			id, err := settings.ChooseConversation(ctx, e.out)
+			if err != nil {
+				return "", err
+			}
+			if id != "" {
+				settings.PendingConversationID = id
+				return "", nil
+			}
+			if err := e.render(*settings); err != nil {
+				return "", err
+			}
+			continue
+		}
 		line, eof, submitted := e.state.apply(event)
 		if eof {
 			e.finish(*settings, "")
@@ -1327,6 +1343,8 @@ func readKey(reader io.Reader) (keyEvent, error) {
 		return keyEvent{kind: keyCtrlW}, nil
 	case 0x0c:
 		return keyEvent{kind: keyCtrlL}, nil
+	case 0x0f:
+		return keyEvent{kind: keyCtrlO}, nil
 	case 0x03:
 		return keyEvent{kind: keyCtrlC}, nil
 	case 0x04:

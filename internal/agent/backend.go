@@ -14,7 +14,10 @@
 
 package agent
 
-import "context"
+import (
+	"context"
+	"encoding/json"
+)
 
 // Backend is a provider conversation plus the session knobs the CLI runtime
 // already uses for OpenAI. Anthropic implements the same surface.
@@ -28,4 +31,6 @@ type Backend interface {
 	SetInstructions(string)
 	Report(context.Context) UsageReport
 	ContextSnapshot() ContextUsage
+	ExportHistory() (provider string, history json.RawMessage, err error)
+	ImportHistory(provider string, history json.RawMessage) error
 }

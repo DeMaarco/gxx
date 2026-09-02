@@ -320,7 +320,7 @@ func (p *Provider) requestParamsLocked(
 	definitions []agent.ToolDefinition,
 	finalStep bool,
 ) responses.ResponseNewParams {
-	instructions := agent.CompressProjectInstructions(p.instructions, p.ecoLevel)
+	instructions := p.instructions
 	if p.oauth && strings.TrimSpace(instructions) == "" {
 		instructions = defaultCodexInstructions
 	}
@@ -512,6 +512,46 @@ func (p *Provider) Reset() {
 	p.history = nil
 	p.lastInputTokens = 0
 	p.refreshContextLocked()
+}
+
+func (p *Provider) ExportHistory() (string, json.RawMessage, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if len(p.history) == 0 {
+		return config.ProviderOpenAI, nil, nil
+	}
+	data, err := json.Marshal(p.history)
+	if err != nil {
+		return "", nil, fmt.Errorf("encode openai history: %w", err)
+	}
+	return config.ProviderOpenAI, data, nil
+}
+
+func (p *Provider) ImportHistory(provider string, history json.RawMessage) error {
+	if strings.TrimSpace(provider) != config.ProviderOpenAI {
+		return fmt.Errorf("history provider %q does not match openai", provider)
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if len(history) == 0 {
+		p.generation++
+		p.sessionID = newSessionID()
+		p.history = nil
+		p.lastInputTokens = 0
+		p.refreshContextLocked()
+		return nil
+	}
+	var items []responses.ResponseInputItemUnionParam
+	items, err := decodeOpenAIHistory(history)
+	if err != nil {
+		return err
+	}
+	p.generation++
+	p.sessionID = newSessionID()
+	p.history = items
+	p.lastInputTokens = 0
+	p.refreshContextLocked()
+	return nil
 }
 
 func toolParams(definitions []agent.ToolDefinition, eco int, strict, programmatic bool) []responses.ToolUnionParam {

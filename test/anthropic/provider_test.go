@@ -124,3 +124,31 @@ func TestRespondRequiresToken(t *testing.T) {
 		t.Fatalf("error = %v", err)
 	}
 }
+
+func TestExportImportHistoryRoundTrip(t *testing.T) {
+	provider := anthropic.New(anthropic.StaticToken("tok"), "claude-sonnet-4-6", "hi", time.Second)
+	provider.SetHistory([]anthropicsdk.MessageParam{
+		anthropicsdk.NewUserMessage(anthropicsdk.NewTextBlock("hello history")),
+	})
+	gotProvider, data, err := provider.ExportHistory()
+	if err != nil {
+		t.Fatalf("ExportHistory() error = %v", err)
+	}
+	if gotProvider != config.ProviderAnthropic || len(data) == 0 {
+		t.Fatalf("ExportHistory() = provider %q len=%d", gotProvider, len(data))
+	}
+	provider.Reset()
+	if err := provider.ImportHistory(config.ProviderOpenAI, data); err == nil {
+		t.Fatal("ImportHistory() with wrong provider should fail")
+	}
+	if err := provider.ImportHistory(gotProvider, data); err != nil {
+		t.Fatalf("ImportHistory() error = %v", err)
+	}
+	_, data2, err := provider.ExportHistory()
+	if err != nil {
+		t.Fatalf("ExportHistory() after import error = %v", err)
+	}
+	if string(data) != string(data2) {
+		t.Fatalf("round trip = %s, want %s", data2, data)
+	}
+}

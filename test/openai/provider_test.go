@@ -32,6 +32,7 @@ import (
 	"github.com/openai/openai-go/v3/responses"
 
 	"gxx/internal/agent"
+	"gxx/internal/config"
 )
 
 func TestToolParamsEnableStrictSchemas(t *testing.T) {
@@ -1429,5 +1430,47 @@ func responseFixture(output []any) map[string]any {
 				"reasoning_tokens": 1,
 			},
 		},
+	}
+}
+
+func TestExportImportHistoryRoundTrip(t *testing.T) {
+	provider := openai.New("test-key", "gpt-5.6", "instructions", time.Second)
+	provider.SetHistory([]responses.ResponseInputItemUnionParam{
+		responses.ResponseInputItemParamOfMessage("hello history", responses.EasyInputMessageRoleUser),
+	})
+	gotProvider, data, err := provider.ExportHistory()
+	if err != nil {
+		t.Fatalf("ExportHistory() error = %v", err)
+	}
+	if gotProvider != config.ProviderOpenAI || len(data) == 0 {
+		t.Fatalf("ExportHistory() = provider %q len=%d", gotProvider, len(data))
+	}
+	provider.Reset()
+	if _, replay, err := provider.ExportHistory(); err != nil || len(replay) != 0 {
+		t.Fatalf("Reset() history = %d err=%v, want empty", len(replay), err)
+	}
+	if err := provider.ImportHistory(config.ProviderAnthropic, data); err == nil {
+		t.Fatal("ImportHistory() with wrong provider should fail")
+	}
+	if err := provider.ImportHistory(gotProvider, data); err != nil {
+		t.Fatalf("ImportHistory() error = %v", err)
+	}
+	if replay := provider.History(); len(replay) != 1 {
+		t.Fatalf("History() len = %d, want 1", len(replay))
+	}
+	_, data2, err := provider.ExportHistory()
+	if err != nil {
+		t.Fatalf("ExportHistory() after import error = %v", err)
+	}
+	var before []map[string]any
+	var after []map[string]any
+	if err := json.Unmarshal(data, &before); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data2, &after); err != nil {
+		t.Fatal(err)
+	}
+	if before[0]["content"] != after[0]["content"] || before[0]["role"] != after[0]["role"] {
+		t.Fatalf("round trip content = %+v, want %+v", after[0], before[0])
 	}
 }

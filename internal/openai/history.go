@@ -16,6 +16,7 @@ package openai
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"unicode/utf8"
 
@@ -25,6 +26,38 @@ import (
 	"gxx/internal/agent"
 	"gxx/internal/caveman"
 )
+
+func decodeOpenAIHistory(raw json.RawMessage) ([]responses.ResponseInputItemUnionParam, error) {
+	var items []map[string]any
+	if err := json.Unmarshal(raw, &items); err != nil {
+		return nil, fmt.Errorf("decode openai history: %w", err)
+	}
+	decoded := make([]responses.ResponseInputItemUnionParam, 0, len(items))
+	for _, item := range items {
+		if _, ok := item["type"]; !ok {
+			switch {
+			case item["role"] != nil:
+				item["type"] = "message"
+			case item["output"] != nil && item["call_id"] != nil:
+				item["type"] = "function_call_output"
+			case item["name"] != nil && item["arguments"] != nil && item["call_id"] != nil:
+				item["type"] = "function_call"
+			default:
+				return nil, fmt.Errorf("decode openai history: unknown item shape")
+			}
+		}
+		data, err := json.Marshal(item)
+		if err != nil {
+			return nil, fmt.Errorf("decode openai history: %w", err)
+		}
+		var union responses.ResponseInputItemUnionParam
+		if err := json.Unmarshal(data, &union); err != nil {
+			return nil, fmt.Errorf("decode openai history: %w", err)
+		}
+		decoded = append(decoded, union)
+	}
+	return decoded, nil
+}
 
 const (
 	compactNotice           = "Earlier conversation was compacted by gxx to fit the context window. Continue from the remaining history."
