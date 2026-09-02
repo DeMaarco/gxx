@@ -607,7 +607,7 @@ func TestRespondUpdatesTokenFactorFromUsage(t *testing.T) {
 			http.NotFound(writer, httpRequest)
 			return
 		}
-		writeClaudeTextStreamWithUsage(t, writer, "ok", 200)
+		writeClaudeTextStreamWithUsage(t, writer, "ok", 200, 0, 0)
 	}))
 	defer server.Close()
 
@@ -634,6 +634,85 @@ func TestRespondUpdatesTokenFactorFromUsage(t *testing.T) {
 	}
 }
 
+func TestRespondNormalizesCachedInputTokens(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, httpRequest *http.Request) {
+		if !strings.Contains(httpRequest.URL.Path, "messages") {
+			http.NotFound(writer, httpRequest)
+			return
+		}
+		writeClaudeTextStreamWithUsage(t, writer, "ok", 50, 100_000, 200)
+	}))
+	defer server.Close()
+
+	provider := testClaudeProvider(t, server, "inst")
+	result, err := provider.Respond(
+		context.Background(),
+		agent.ModelInput{UserText: "hello"},
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("Respond() error = %v", err)
+	}
+	wantInput := int64(50 + 100_000 + 200)
+	if result.Usage.InputTokens != wantInput {
+		t.Fatalf("InputTokens = %d, want %d", result.Usage.InputTokens, wantInput)
+	}
+	if result.Usage.CachedTokens != 100_000 {
+		t.Fatalf("CachedTokens = %d, want 100000", result.Usage.CachedTokens)
+	}
+	if result.Usage.CacheWriteTokens != 200 {
+		t.Fatalf("CacheWriteTokens = %d, want 200", result.Usage.CacheWriteTokens)
+	}
+	if result.Usage.TotalTokens != wantInput+1 {
+		t.Fatalf("TotalTokens = %d, want %d", result.Usage.TotalTokens, wantInput+1)
+	}
+	if provider.LastInputTokens() != wantInput {
+		t.Fatalf("lastInputTokens = %d, want %d", provider.LastInputTokens(), wantInput)
+	}
+	session := provider.SessionUsage()
+	if session.InputTokens != wantInput || session.TotalTokens != wantInput+1 {
+		t.Fatalf("session = %+v, want inclusive totals", session)
+	}
+}
+
+func TestTokenFactorIncludesToolSchemas(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, httpRequest *http.Request) {
+		if !strings.Contains(httpRequest.URL.Path, "messages") {
+			http.NotFound(writer, httpRequest)
+			return
+		}
+		// Observed usage close to history+instructions+tools estimate; without
+		// counting tools the factor would clamp near 2.0.
+		writeClaudeTextStreamWithUsage(t, writer, "ok", 400, 0, 0)
+	}))
+	defer server.Close()
+
+	provider := testClaudeProvider(t, server, "inst")
+	tools := []agent.ToolDefinition{{
+		Name:        "read_file",
+		Description: strings.Repeat("tool schema padding ", 80),
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"path": map[string]any{"type": "string", "description": strings.Repeat("path ", 40)},
+			},
+		},
+	}}
+	if _, err := provider.Respond(
+		context.Background(),
+		agent.ModelInput{UserText: "hi"},
+		tools,
+		nil,
+	); err != nil {
+		t.Fatalf("Respond() error = %v", err)
+	}
+	factor := provider.TokenFactor()
+	if factor >= 1.8 {
+		t.Fatalf("token factor = %v, want well below clamp when tools are counted", factor)
+	}
+}
+
 func testClaudeProvider(t *testing.T, server *httptest.Server, instructions string) *anthropic.Provider {
 	t.Helper()
 	provider := anthropic.New(anthropic.StaticToken("tok"), "claude-sonnet-4-6", instructions, time.Second)
@@ -642,7 +721,7 @@ func testClaudeProvider(t *testing.T, server *httptest.Server, instructions stri
 	return provider
 }
 
-func writeClaudeTextStreamWithUsage(t *testing.T, writer http.ResponseWriter, text string, inputTokens int64) {
+func writeClaudeTextStreamWithUsage(t *testing.T, writer http.ResponseWriter, text string, inputTokens, cacheRead, cacheWrite int64) {
 	t.Helper()
 	writer.Header().Set("Content-Type", "text/event-stream")
 	flusher, _ := writer.(http.Flusher)
@@ -652,7 +731,10 @@ func writeClaudeTextStreamWithUsage(t *testing.T, writer http.ResponseWriter, te
 			flusher.Flush()
 		}
 	}
-	write("message_start", fmt.Sprintf(`{"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","content":[],"model":"claude-sonnet-5","stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":%d,"output_tokens":1}}}`, inputTokens))
+	write("message_start", fmt.Sprintf(
+		`{"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","content":[],"model":"claude-sonnet-5","stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":%d,"cache_creation_input_tokens":%d,"cache_read_input_tokens":%d,"output_tokens":1}}}`,
+		inputTokens, cacheWrite, cacheRead,
+	))
 	write("content_block_start", `{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`)
 	write("content_block_delta", fmt.Sprintf(`{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":%q}}`, text))
 	write("content_block_stop", `{"type":"content_block_stop","index":0}`)

@@ -81,8 +81,8 @@ func (p *Provider) calibrate(tokens int64) int64 {
 	return int64(float64(tokens) * factor)
 }
 
-func (p *Provider) updateTokenFactorLocked(staged []responses.ResponseInputItemUnionParam) {
-	est := historyTokens(staged, p.instructions)
+func (p *Provider) updateTokenFactorLocked(staged []responses.ResponseInputItemUnionParam, toolTokens int64) {
+	est := historyTokens(staged, p.instructions) + toolTokens
 	if est <= 0 || p.lastInputTokens <= 0 {
 		return
 	}

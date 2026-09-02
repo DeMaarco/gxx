@@ -103,6 +103,14 @@ func (p *Provider) SetTokenFactor(factor float64) {
 	p.tokenFactor = factor
 }
 
+func (p *Provider) SessionUsage() agent.Usage {
+	return p.session
+}
+
+func (p *Provider) RateLimitState() agent.RateLimit {
+	return p.rateLimit
+}
+
 func StaticToken(token string) TokenSource {
 	return staticToken(token)
 }

@@ -75,6 +75,10 @@ type ToolResult struct {
 	Truncated  bool          `json:"truncated"`
 }
 
+// Usage is provider-normalized token accounting for a turn or session.
+// InputTokens is always the total input billable/processed (including cached
+// and cache-write tokens). CachedTokens and CacheWriteTokens are subsets of
+// that total when the provider reports them separately.
 type Usage struct {
 	InputTokens      int64 `json:"input_tokens"`
 	OutputTokens     int64 `json:"output_tokens"`

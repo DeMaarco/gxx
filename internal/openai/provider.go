@@ -337,7 +337,8 @@ func (p *Provider) Respond(
 		p.session.Add(result.Usage)
 		p.sessionRequests++
 		p.lastInputTokens = result.Usage.InputTokens
-		p.updateTokenFactorLocked(staged)
+		lite := p.oauth && usesResponsesLite(p.model)
+		p.updateTokenFactorLocked(staged, estimateJSON(toolParams(definitions, p.ecoLevel, !p.oauth, lite)))
 	}
 	return result, nil
 }

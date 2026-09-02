@@ -149,7 +149,9 @@ func emergencyFit(
 	window int,
 	instructions string,
 ) []anthropicsdk.MessageParam {
-	messages = dropAllThinking(messages)
+	// Keep thinking on the latest user turn: Anthropic rejects tool_use
+	// without its adjacent thinking when thinking was enabled for that turn.
+	messages = dropOldThinking(messages)
 	messages = clipAllToolOutputs(messages, emergencyToolClipBytes)
 	if window > 0 {
 		messages = dropOldTurns(messages, int64(window)/2, instructions)

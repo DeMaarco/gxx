@@ -319,13 +319,18 @@ func (p *Provider) Respond(
 
 	result.Text = assistantText(message)
 	result.ToolCalls = assistantToolCalls(message)
+	// Anthropic splits input into uncached / cache_read / cache_creation.
+	// Normalize to inclusive InputTokens so pricing and calibration match OpenAI.
+	inputTokens := message.Usage.InputTokens +
+		message.Usage.CacheReadInputTokens +
+		message.Usage.CacheCreationInputTokens
 	result.Usage = agent.Usage{
-		InputTokens:      message.Usage.InputTokens,
+		InputTokens:      inputTokens,
 		OutputTokens:     message.Usage.OutputTokens,
 		CachedTokens:     message.Usage.CacheReadInputTokens,
 		CacheWriteTokens: message.Usage.CacheCreationInputTokens,
 		ReasoningTokens:  message.Usage.OutputTokensDetails.ThinkingTokens,
-		TotalTokens:      message.Usage.InputTokens + message.Usage.OutputTokens,
+		TotalTokens:      inputTokens + message.Usage.OutputTokens,
 	}
 
 	p.mu.Lock()
@@ -338,7 +343,7 @@ func (p *Provider) Respond(
 		p.session.Add(result.Usage)
 		p.sessionRequests++
 		p.lastInputTokens = result.Usage.InputTokens
-		p.updateTokenFactorLocked(staged)
+		p.updateTokenFactorLocked(staged, estimateJSON(toolParams(definitions, p.ecoLevel)))
 	}
 	return result, nil
 }
@@ -516,8 +521,8 @@ func (p *Provider) calibrate(tokens int64) int64 {
 	return int64(float64(tokens) * factor)
 }
 
-func (p *Provider) updateTokenFactorLocked(staged []anthropicsdk.MessageParam) {
-	est := historyTokens(staged, p.instructions)
+func (p *Provider) updateTokenFactorLocked(staged []anthropicsdk.MessageParam, toolTokens int64) {
+	est := historyTokens(staged, p.instructions) + toolTokens
 	if est <= 0 || p.lastInputTokens <= 0 {
 		return
 	}

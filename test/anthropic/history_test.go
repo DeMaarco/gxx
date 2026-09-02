@@ -159,6 +159,30 @@ func TestEmergencyFitClipsCurrentTurnToolOutput(t *testing.T) {
 	}
 }
 
+func TestEmergencyFitKeepsLatestThinkingWithToolUse(t *testing.T) {
+	messages := []anthropicsdk.MessageParam{
+		anthropicsdk.NewUserMessage(anthropicsdk.NewTextBlock("old")),
+		anthropicsdk.NewAssistantMessage(anthropicsdk.NewThinkingBlock("sig_old", "old think")),
+		anthropicsdk.NewUserMessage(anthropicsdk.NewTextBlock("task")),
+		anthropicsdk.NewAssistantMessage(
+			anthropicsdk.NewThinkingBlock("sig_new", "keep this think"),
+			anthropicsdk.NewToolUseBlock("call_1", map[string]any{"path": "a.go"}, "read_file"),
+		),
+		anthropicsdk.NewUserMessage(anthropicsdk.NewToolResultBlock("call_1", strings.Repeat("x", 2000), false)),
+	}
+	got := anthropic.EmergencyFit(messages, 80, "inst")
+	all, _ := json.Marshal(got)
+	if strings.Contains(string(all), "old think") {
+		t.Fatalf("kept old thinking: %s", all)
+	}
+	if !strings.Contains(string(all), "keep this think") {
+		t.Fatalf("dropped latest thinking: %s", all)
+	}
+	if !anthropic.ToolPairsIntact(got) {
+		t.Fatalf("tool pairs broken: %s", all)
+	}
+}
+
 func TestDropOldThinkingKeepsLatestTurn(t *testing.T) {
 	messages := []anthropicsdk.MessageParam{
 		anthropicsdk.NewUserMessage(anthropicsdk.NewTextBlock("first")),

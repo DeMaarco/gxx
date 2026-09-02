@@ -1180,6 +1180,66 @@ func TestRespondUpdatesTokenFactorFromUsage(t *testing.T) {
 	}
 }
 
+func TestTokenFactorIncludesToolSchemas(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Content-Type", "text/event-stream")
+		writeSSE(t, writer, map[string]any{
+			"type": "response.completed",
+			"response": map[string]any{
+				"id":     "resp_1",
+				"object": "response",
+				"status": "completed",
+				"output": []any{map[string]any{
+					"id":     "msg_1",
+					"type":   "message",
+					"role":   "assistant",
+					"status": "completed",
+					"content": []any{map[string]any{
+						"type": "output_text", "text": "ok", "annotations": []any{},
+					}},
+				}},
+				"usage": map[string]any{
+					"input_tokens":  500,
+					"output_tokens": 2,
+					"total_tokens":  502,
+					"input_tokens_details": map[string]any{
+						"cached_tokens":      0,
+						"cache_write_tokens": 0,
+					},
+					"output_tokens_details": map[string]any{
+						"reasoning_tokens": 0,
+					},
+				},
+			},
+		})
+		_, _ = fmt.Fprint(writer, "data: [DONE]\n\n")
+	}))
+	defer server.Close()
+
+	provider := testStreamingProvider(t, server, "inst")
+	tools := []agent.ToolDefinition{{
+		Name:        "read_file",
+		Description: strings.Repeat("tool schema padding ", 80),
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"path": map[string]any{"type": "string", "description": strings.Repeat("path ", 40)},
+			},
+		},
+	}}
+	if _, err := provider.Respond(
+		context.Background(),
+		agent.ModelInput{UserText: "hi"},
+		tools,
+		nil,
+	); err != nil {
+		t.Fatalf("Respond() error = %v", err)
+	}
+	if provider.TokenFactor() >= 1.8 {
+		t.Fatalf("token factor = %v, want well below clamp when tools are counted", provider.TokenFactor())
+	}
+}
+
 func testStreamingProvider(t *testing.T, server *httptest.Server, instructions string) *openai.Provider {
 	t.Helper()
 	provider := openai.New("test-key", "gpt-5.6", instructions, time.Second)

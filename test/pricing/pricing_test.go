@@ -60,6 +60,27 @@ func TestEstimateSplitsCachedAndWrites(t *testing.T) {
 	}
 }
 
+func TestEstimateClaudeInclusiveInputWithCache(t *testing.T) {
+	catalog := pricing.New(nil)
+	// Inclusive InputTokens = uncached + cached + writes (Anthropic normalization).
+	got, ok := catalog.Estimate(pricing.Query{
+		Model: "claude-sonnet-5",
+		Usage: agent.Usage{
+			InputTokens:      100_050, // 50 uncached + 100_000 read
+			CachedTokens:     100_000,
+			CacheWriteTokens: 0,
+			OutputTokens:     0,
+		},
+	})
+	if !ok {
+		t.Fatal("estimate should succeed for bundled sonnet")
+	}
+	// 50 * $2/M + 100_000 * $0.20/M = 0.0001 + 0.02
+	if abs(got-0.0201) > 0.00001 {
+		t.Fatalf("claude cached cost = %v, want $0.0201", got)
+	}
+}
+
 func TestEstimateUsesLongContextWhenInputExceeds272k(t *testing.T) {
 	catalog := pricing.New(nil)
 	got, ok := catalog.Estimate(pricing.Query{
