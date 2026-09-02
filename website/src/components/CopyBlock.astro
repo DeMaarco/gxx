@@ -1,90 +1,27 @@
 ---
 interface Props {
 	code: string;
-	lang?: string;
 }
 
-const { code, lang = 'text' } = Astro.props;
+const { code } = Astro.props;
 const id = `copy-${Math.random().toString(36).slice(2, 9)}`;
 ---
 
-<div class="copy-block" data-copy-block>
-	<div class="copy-block-header">
-		<span class="copy-block-lang">{lang}</span>
-		<button type="button" class="copy-btn" data-copy-target={id} aria-label="Copy to clipboard">
-			Copy
-		</button>
-	</div>
-	<pre class="copy-block-pre"><code id={id}>{code}</code></pre>
+<div class="relative my-2 rounded-xl border border-line bg-surface" data-copy-block>
+	<button
+		type="button"
+		class="absolute right-2.5 top-2.5 rounded-md border border-line bg-paper px-2 py-1 text-[0.6875rem] uppercase tracking-wide text-muted hover:border-accent hover:text-accent"
+		data-copy-target={id}
+		aria-label="Copy to clipboard"
+	>
+		copy
+	</button>
+	<pre class="m-0 overflow-x-auto p-4 pr-16 text-[0.8125rem] text-ink"><code id={id} class="block whitespace-pre">{code}</code></pre>
 </div>
-
-<style>
-	.copy-block {
-		border: 1px solid var(--gxx-border);
-		border-radius: var(--gxx-radius-lg);
-		overflow: hidden;
-		background: var(--gxx-surface);
-		margin: 0.75rem 0;
-	}
-
-	.copy-block-header {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		padding: 0.5rem 1rem;
-		border-bottom: 1px solid var(--gxx-border);
-	}
-
-	.copy-block-lang {
-		font-family: var(--gxx-font-mono);
-		font-size: 0.6875rem;
-		color: var(--gxx-text-muted);
-		text-transform: uppercase;
-		letter-spacing: 0.06em;
-	}
-
-	.copy-btn {
-		font-size: 0.75rem;
-		font-weight: 500;
-		padding: 0.25rem 0.625rem;
-		border: 1px solid var(--gxx-border);
-		border-radius: var(--gxx-radius);
-		background: transparent;
-		color: var(--gxx-text-secondary);
-		cursor: pointer;
-		font-family: inherit;
-		transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
-	}
-
-	.copy-btn:hover {
-		border-color: var(--gxx-border-subtle);
-		color: var(--gxx-text);
-		background: var(--gxx-surface-raised);
-	}
-
-	.copy-btn:focus-visible {
-		outline: 2px solid var(--gxx-text-muted);
-		outline-offset: 2px;
-	}
-
-	.copy-block-pre {
-		margin: 0;
-		padding: 1rem 1.25rem;
-		overflow-x: auto;
-		font-family: var(--gxx-font-mono);
-		font-size: 0.8125rem;
-		line-height: 1.6;
-		color: var(--gxx-text-secondary);
-	}
-
-	.copy-block-pre code {
-		white-space: pre;
-	}
-</style>
 
 <script>
 	document.querySelectorAll('[data-copy-block]').forEach((block) => {
-		const btn = block.querySelector('.copy-btn');
+		const btn = block.querySelector('button');
 		const code = block.querySelector('code');
 		if (!btn || !code) return;
 
@@ -92,15 +29,12 @@ const id = `copy-${Math.random().toString(36).slice(2, 9)}`;
 			const text = code.textContent ?? '';
 			try {
 				await navigator.clipboard.writeText(text);
-				btn.textContent = 'Copied';
+				btn.textContent = 'copied';
 				setTimeout(() => {
-					btn.textContent = 'Copy';
+					btn.textContent = 'copy';
 				}, 2000);
 			} catch {
-				btn.textContent = 'Failed';
-				setTimeout(() => {
-					btn.textContent = 'Copy';
-				}, 2000);
+				btn.textContent = 'failed';
 			}
 		});
 	});

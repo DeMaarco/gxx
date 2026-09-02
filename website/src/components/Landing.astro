@@ -1,55 +1,22 @@
 ---
-import TerminalDemo from './TerminalDemo.astro';
+import SiteHeader from './SiteHeader.astro';
+import SpecsSection from './landing/SpecsSection.astro';
+import InterfaceGallery from './landing/InterfaceGallery.astro';
+import VisualSection from './landing/VisualSection.astro';
 import FeatureGrid from './FeatureGrid.astro';
-import CompareTable from './CompareTable.astro';
+import Principles from './Principles.astro';
 import InstallTabs from './InstallTabs.astro';
-import '../styles/landing.css';
+import { landingContent } from '../lib/landing';
+import '../styles/app.css';
 
 interface Props {
 	locale?: 'en' | 'es';
 }
 
 const { locale = 'en' } = Astro.props;
+const t = landingContent(locale);
 const base = import.meta.env.BASE_URL;
-const version = 'v0.0.20';
-
-const content = {
-	en: {
-		lang: 'en',
-		title: 'gxx — A small coding agent for the terminal',
-		description:
-			'Open a repo, type what you want. One workspace, OpenAI or Claude, no TUI.',
-		eyebrow: 'Terminal agent',
-		headline: 'A small coding agent for the terminal.',
-		subhead:
-			'Open a repo, type what you want. It lists, searches, reads, patches, and runs commands — in that folder only.',
-		navDocs: 'Docs',
-		navInstall: 'Install',
-		ctaInstall: 'Install gxx',
-		ctaDocs: 'Read the docs',
-		footer: 'Licensed under',
-	},
-	es: {
-		lang: 'es',
-		title: 'gxx — Un agente de código pequeño para la terminal',
-		description:
-			'Abre un repo, escribe lo que quieres. Un workspace, OpenAI o Claude, sin TUI.',
-		eyebrow: 'Agente de terminal',
-		headline: 'Un agente de código pequeño para la terminal.',
-		subhead:
-			'Abre un repo, escribe lo que quieres. Lista, busca, lee, parchea y ejecuta comandos — solo en esa carpeta.',
-		navDocs: 'Docs',
-		navInstall: 'Instalación',
-		ctaInstall: 'Instalar gxx',
-		ctaDocs: 'Leer la documentación',
-		footer: 'Licencia',
-	},
-};
-
-const t = content[locale];
 const docsBase = locale === 'es' ? `${base}es/` : base;
-const homeEn = base;
-const homeEs = `${base}es/`;
 ---
 
 <!doctype html>
@@ -62,52 +29,99 @@ const homeEs = `${base}es/`;
 		<meta property="og:description" content={t.description} />
 		<meta property="og:type" content="website" />
 		<title>{t.title}</title>
-		<link rel="icon" type="image/svg+xml" href={`${base}favicon.svg`} />
+		<link rel="icon" type="image/svg+xml" href={`${import.meta.env.BASE_URL}favicon.svg`} />
 		<link rel="preconnect" href="https://fonts.googleapis.com" />
 		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 		<link
-			href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap"
+			href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap"
 			rel="stylesheet"
 		/>
 	</head>
-	<body class="landing">
-		<header class="landing-header">
-			<a href={locale === 'es' ? homeEs : homeEn} class="landing-brand">gxx</a>
-			<nav class="landing-nav">
-				<a href={`${docsBase}install/`}>{t.navDocs}</a>
-				<a href="#install">{t.navInstall}</a>
-				<a href="https://github.com/DeMaarco/gxx" target="_blank" rel="noopener">GitHub</a>
-				<div class="lang-switch">
-					<a href={homeEn} class:list={[{ active: locale === 'en' }]}>EN</a>
-					<a href={homeEs} class:list={[{ active: locale === 'es' }]}>ES</a>
-				</div>
-			</nav>
-		</header>
+	<body>
+		<a href="#main-content" class="skip-link">{locale === 'es' ? 'Saltar al contenido' : 'Skip to content'}</a>
+		<SiteHeader locale={locale} current="home" />
 
-		<main class="landing-main">
-			<section class="hero">
-				<p class="hero-eyebrow">{t.eyebrow}</p>
-				<h1>{t.headline}</h1>
-				<p class="hero-description">{t.subhead}</p>
-				<div class="hero-cta">
-					<a href="#install" class="btn btn-primary">{t.ctaInstall}</a>
-					<a href={`${docsBase}quick-start/`} class="btn btn-secondary">{t.ctaDocs}</a>
+		<main id="main-content" class="mx-auto max-w-4xl px-6 pb-20 pt-12">
+			<section class="mb-10" aria-labelledby="hero-heading">
+				<h1 id="hero-heading" class="mb-5 max-w-2xl text-base font-semibold tracking-tight text-ink">
+					{t.headline}
+				</h1>
+				<div class="flex max-w-3xl flex-wrap items-start gap-3 text-secondary">
+					<span class="font-medium text-accent" aria-hidden="true">$</span>
+					<code id="hero-install-cmd" class="min-w-0 flex-1 overflow-x-auto whitespace-pre text-ink">
+						{t.installCmd}
+					</code>
+					<button
+						type="button"
+						class="shrink-0 rounded-md border border-line px-2 py-1 text-[0.6875rem] uppercase tracking-wide text-muted hover:border-accent hover:text-accent"
+						data-copy={t.installCmd}
+						data-copy-label={t.copy}
+						data-copied-label={t.copied}
+						data-failed-label={t.failed}
+						aria-label={locale === 'es' ? 'Copiar comando de instalación' : 'Copy install command'}
+					>
+						{t.copy}
+					</button>
 				</div>
+
+				<figure class="mt-10">
+					<img
+						src={`${base}screenshots/gxx-repl.jpg`}
+						alt={t.heroImageAlt}
+						width="1200"
+						height="720"
+						fetchpriority="high"
+						decoding="async"
+						class="w-full rounded-xl border border-line shadow-sm"
+					/>
+					<figcaption class="mt-2 text-xs text-muted">{t.screens.repl}</figcaption>
+				</figure>
 			</section>
 
-			<TerminalDemo locale={locale} version={version} />
-			<FeatureGrid locale={locale} />
-			<CompareTable locale={locale} />
-			<InstallTabs locale={locale} version={version} />
+			<div class="prose-gxx mt-10 max-w-2xl space-y-4 text-secondary">
+				{t.about.map((p) => <p>{p}</p>)}
+			</div>
+
+			<SpecsSection locale={locale} version={t.version} />
+			<InterfaceGallery locale={locale} version={t.version} />
+			<VisualSection locale={locale} />
+			<Principles locale={locale} title={t.principlesTitle} />
+			<FeatureGrid locale={locale} label={t.featuresLabel} />
+			<InstallTabs locale={locale} version={t.version} />
 		</main>
 
-		<footer class="landing-footer">
-			<p>
-				{t.footer}
-				<a href="https://github.com/DeMaarco/gxx/blob/main/LICENSE" target="_blank" rel="noopener"
-					>Apache 2.0</a
-				>
+		<footer class="border-t border-line px-6 py-6">
+			<p class="mx-auto flex max-w-4xl flex-wrap gap-4 text-[0.6875rem] uppercase tracking-wide text-muted">
+				<a href="https://github.com/DeMaarco/gxx/blob/main/LICENSE" target="_blank" rel="noopener noreferrer" class="no-underline hover:text-accent">
+					{t.footerLicense}
+				</a>
+				<a href="https://github.com/DeMaarco/gxx" target="_blank" rel="noopener noreferrer" class="no-underline hover:text-accent">
+					{t.footerSource}
+				</a>
+				<a href={`${docsBase}install/`} class="no-underline hover:text-accent">{t.footerDocs}</a>
 			</p>
 		</footer>
+
+		<script>
+			document.querySelectorAll('[data-copy]').forEach((btn) => {
+				const copyLabel = btn.getAttribute('data-copy-label') ?? 'copy';
+				const copiedLabel = btn.getAttribute('data-copied-label') ?? 'copied';
+				const failedLabel = btn.getAttribute('data-failed-label') ?? 'failed';
+
+				btn.addEventListener('click', async () => {
+					const text = btn.getAttribute('data-copy') ?? '';
+					try {
+						await navigator.clipboard.writeText(text);
+						btn.textContent = copiedLabel;
+						btn.setAttribute('aria-live', 'polite');
+						setTimeout(() => {
+							btn.textContent = copyLabel;
+						}, 2000);
+					} catch {
+						btn.textContent = failedLabel;
+					}
+				});
+			});
+		</script>
 	</body>
 </html>

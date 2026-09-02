@@ -1,0 +1,59 @@
+---
+interface Props {
+	locale?: 'en' | 'es';
+	title?: string;
+}
+
+const { locale = 'en', title } = Astro.props;
+
+const content = {
+	en: {
+		items: [
+			{
+				name: 'One folder, one world',
+				desc: 'The directory you start in is the boundary. No parent traversal, no outside symlinks — the agent stays where you put it.',
+			},
+			{
+				name: 'Read before write',
+				desc: 'Ask and plan modes are read-only by design. Shift+Tab switches modes without losing context or permission scope.',
+			},
+			{
+				name: 'Your keys stay yours',
+				desc: 'Credentials live in a local config file with restricted permissions. Requests use store:false and secret paths are blocked.',
+			},
+		],
+	},
+	es: {
+		items: [
+			{
+				name: 'Una carpeta, un mundo',
+				desc: 'El directorio desde el que inicias es el límite. Sin traversal hacia arriba ni symlinks externos — el agente se queda donde lo pones.',
+			},
+			{
+				name: 'Leer antes de escribir',
+				desc: 'Los modos ask y plan son de solo lectura por diseño. Shift+Tab cambia de modo sin perder contexto ni alcance de permisos.',
+			},
+			{
+				name: 'Tus claves son tuyas',
+				desc: 'Las credenciales viven en un config local con permisos restringidos. Las peticiones usan store:false y las rutas secretas están bloqueadas.',
+			},
+		],
+	},
+};
+
+const t = content[locale];
+---
+
+<section class="mt-16 border-t border-line pt-16" aria-labelledby="principles-heading">
+	<h2 id="principles-heading" class="mb-6 text-sm font-semibold tracking-tight text-ink">{title}</h2>
+	<ul class="max-w-2xl space-y-6">
+		{
+			t.items.map((item) => (
+				<li class="border-l-2 border-accent pl-3.5">
+					<h3 class="text-[0.8125rem] font-semibold text-ink">{item.name}</h3>
+					<p class="mt-1 text-secondary">{item.desc}</p>
+				</li>
+			))
+		}
+	</ul>
+</section>

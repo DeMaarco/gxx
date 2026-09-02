@@ -1,0 +1,18 @@
+# gxx
+
+> A small coding agent for the terminal.
+
+gxx is a Go CLI that runs inside one directory. Open a repo, type what you want — it lists, searches, reads, patches, and runs commands in that folder only.
+
+## Documentation
+
+- [Install](/gxx/install.md): Install on macOS, Linux, and Windows
+- [Quick start](/gxx/quick-start.md): Connect OpenAI or Claude and run your first session
+- [REPL](/gxx/repl.md): Keyboard shortcuts, session modes, and slash commands
+- [Permissions](/gxx/permissions.md): File writes and shell commands in agent mode
+- [Privacy](/gxx/privacy.md): Secrets, storage, and provider requests
+- [CLI](/gxx/cli.md): One-shot commands, flags, and piping
+
+## Source
+
+https://github.com/DeMaarco/gxx

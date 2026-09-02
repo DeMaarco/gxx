@@ -1,0 +1,135 @@
+---
+import TerminalFrame from '../ui/TerminalFrame.astro';
+import type { LandingLocale } from '../../lib/landing';
+import { landingContent } from '../../lib/landing';
+
+interface Props {
+	locale?: LandingLocale;
+	version?: string;
+}
+
+const { locale = 'en', version = 'v0.0.20' } = Astro.props;
+const t = landingContent(locale);
+const m = t.mockups;
+---
+
+<section class="mt-16 border-t border-line pt-16" aria-labelledby="interface-heading">
+	<h2 id="interface-heading" class="mb-2 text-sm font-semibold tracking-tight text-ink">
+		{t.interfaceTitle}
+	</h2>
+	<p class="mb-8 max-w-2xl text-secondary">{t.interfaceIntro}</p>
+
+	<div class="grid gap-6 lg:grid-cols-2">
+		<div class="space-y-2">
+			<h3 class="text-xs font-medium text-muted">{m.repl}</h3>
+			<TerminalFrame label={m.repl}>
+				<div class="text-badge">◆ gxx {version}</div>
+				<div class="mt-2"><span class="text-accent font-semibold">&gt;</span><span class="ml-1 inline-block h-[1.1em] w-2 bg-muted align-text-bottom" aria-hidden="true"></span></div>
+				<div class="mt-3 text-[0.75rem] text-muted">
+					gpt-5.6-sol · <span class="text-danger font-medium">auto</span> · medium · 272k · 0%
+				</div>
+			</TerminalFrame>
+		</div>
+
+		<div class="space-y-2">
+			<h3 class="text-xs font-medium text-muted">{m.model}</h3>
+			<TerminalFrame label={m.model}>
+				<div class="text-muted">── models ──</div>
+				<div class="mt-1"><span class="text-accent">●</span> gpt-5.6-sol <span class="text-muted">in use</span></div>
+				<div class="text-muted">  gpt-5.6-luna</div>
+				<div class="text-muted">  claude-sonnet-4-6</div>
+				<div class="mt-3 t-hint">tab adjust · enter apply · esc cancel</div>
+			</TerminalFrame>
+		</div>
+
+		<div class="space-y-2">
+			<h3 class="text-xs font-medium text-muted">{m.adjust}</h3>
+			<TerminalFrame label={m.adjust}>
+				<div class="text-muted">── adjust ──</div>
+				<div class="mt-1 text-muted">context</div>
+				<div class="text-ink">  ‹ 272k ›</div>
+				<div class="mt-1 text-muted">effort</div>
+				<div class="text-ink">  ‹ medium ›</div>
+				<div class="mt-1 text-muted">fast</div>
+				<div class="text-ink">  ‹ on ›</div>
+				<div class="mt-3 t-hint">← → change · ↑ ↓ row · tab models · enter apply</div>
+			</TerminalFrame>
+		</div>
+
+		<div class="space-y-2">
+			<h3 class="text-xs font-medium text-muted">{m.eco}</h3>
+			<TerminalFrame label={m.eco}>
+				<div class="text-muted">── eco ──</div>
+				<div class="mt-1 text-eco font-medium">● eco full</div>
+				<div class="text-muted">  eco lite</div>
+				<div class="text-muted">  eco ultra</div>
+				<div class="text-muted">  eco off</div>
+				<div class="mt-3 text-[0.75rem] text-muted">
+					&gt; <span class="text-eco">plan</span> refactor auth module <span class="text-eco">eco full</span>
+				</div>
+				<div class="mt-1 t-hint">session only · model unchanged · green on prompt</div>
+			</TerminalFrame>
+		</div>
+
+		<div class="space-y-2">
+			<h3 class="text-xs font-medium text-muted">{m.context}</h3>
+			<TerminalFrame label={m.context}>
+				<div class="font-medium text-ink">Context window</div>
+				<div class="mt-2 text-muted">12% used · 32k / 272k tokens</div>
+				<div class="mt-3 space-y-1 text-[0.75rem]">
+					<div class="flex justify-between gap-4"><span class="text-muted">instructions</span><span>18%</span></div>
+					<div class="flex justify-between gap-4"><span class="text-muted">user</span><span>34%</span></div>
+					<div class="flex justify-between gap-4"><span class="text-muted">assistant</span><span>28%</span></div>
+					<div class="flex justify-between gap-4"><span class="text-muted">tools</span><span>12%</span></div>
+					<div class="flex justify-between gap-4"><span class="text-muted">free</span><span>88%</span></div>
+				</div>
+				<div class="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-surface">
+					<div class="h-full w-[12%] rounded-full bg-accent" aria-hidden="true"></div>
+				</div>
+			</TerminalFrame>
+		</div>
+
+		<div class="space-y-2">
+			<h3 class="text-xs font-medium text-muted">{m.usage}</h3>
+			<TerminalFrame label={m.usage}>
+				<div class="font-medium text-ink">Usage · ChatGPT Plus</div>
+				<div class="mt-2 text-[0.75rem] text-muted">Session</div>
+				<div class="space-y-0.5 text-[0.75rem]">
+					<div class="flex justify-between gap-4"><span class="text-muted">requests</span><span>3</span></div>
+					<div class="flex justify-between gap-4"><span class="text-muted">input</span><span>24.1k</span></div>
+					<div class="flex justify-between gap-4"><span class="text-muted">output</span><span>1.8k</span></div>
+					<div class="flex justify-between gap-4"><span class="text-muted">cost</span><span>$0.04</span></div>
+				</div>
+				<div class="mt-3 text-[0.75rem] text-muted">Account this month</div>
+				<div class="flex justify-between gap-4 text-[0.75rem]"><span class="text-muted">remaining</span><span>82%</span></div>
+				<div class="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-surface">
+					<div class="h-full w-[18%] rounded-full bg-badge" aria-hidden="true"></div>
+				</div>
+			</TerminalFrame>
+		</div>
+
+		<div class="space-y-2">
+			<h3 class="text-xs font-medium text-muted">{m.mode}</h3>
+			<TerminalFrame label={m.mode}>
+				<div class="text-muted">── permission ──</div>
+				<div class="mt-1 text-muted">  ask</div>
+				<div class="text-muted">  auto-writes</div>
+				<div><span class="text-accent">●</span> auto</div>
+				<div class="mt-3 text-[0.75rem] text-muted">
+					permission auto · file changes and commands run without confirmation
+				</div>
+			</TerminalFrame>
+		</div>
+
+		<div class="space-y-2">
+			<h3 class="text-xs font-medium text-muted">{m.plan}</h3>
+			<TerminalFrame label={m.plan}>
+				<div class="font-medium text-ink">What next?</div>
+				<div class="mt-2"><span class="text-accent">●</span> Execute plan</div>
+				<div class="text-muted">  Request changes</div>
+				<div class="text-muted">  Cancel</div>
+				<div class="mt-3 t-hint">↑↓ select · enter confirm · esc cancel</div>
+			</TerminalFrame>
+		</div>
+	</div>
+</section>

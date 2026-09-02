@@ -1,0 +1,236 @@
+---
+import type { DocLocale, DocNavSection } from '../../lib/docs';
+import { docPath } from '../../lib/docs';
+import SiteHeader from '../SiteHeader.astro';
+import '../../styles/app.css';
+import '../../styles/global.css';
+
+interface Props {
+	locale: DocLocale;
+	nav: DocNavSection[];
+	title: string;
+	description?: string;
+	currentSlug: string;
+	headings: { depth: number; slug: string; text: string }[];
+	prev: { slug: string; label: string } | null;
+	next: { slug: string; label: string } | null;
+	markdownUrl: string;
+}
+
+const { locale, nav, title, description, currentSlug, headings, prev, next, markdownUrl } =
+	Astro.props;
+
+const toc = headings.filter((h) => h.depth >= 2 && h.depth <= 3);
+const labels = {
+	en: {
+		skip: 'Skip to content',
+		toc: 'On this page',
+		prev: 'Previous',
+		next: 'Next',
+		browse: 'Browse docs',
+		copyLlm: 'Copy for LLM',
+		copied: 'Copied',
+		failed: 'Failed',
+		main: 'Documentation',
+		sidebar: 'Documentation sections',
+		article: 'Article',
+		pagination: 'Page navigation',
+	},
+	es: {
+		skip: 'Saltar al contenido',
+		toc: 'En esta página',
+		prev: 'Anterior',
+		next: 'Siguiente',
+		browse: 'Ver docs',
+		copyLlm: 'Copiar para LLM',
+		copied: 'Copiado',
+		failed: 'Error',
+		main: 'Documentación',
+		sidebar: 'Secciones de documentación',
+		article: 'Artículo',
+		pagination: 'Navegación de página',
+	},
+};
+const t = labels[locale];
+---
+
+<!doctype html>
+<html lang={locale}>
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		{description && <meta name="description" content={description} />}
+		<title>{title} | gxx</title>
+		<link rel="icon" type="image/svg+xml" href={`${import.meta.env.BASE_URL}favicon.svg`} />
+		<link rel="alternate" type="text/markdown" href={markdownUrl} title={`${title} (Markdown)`} />
+		<link rel="preconnect" href="https://fonts.googleapis.com" />
+		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+		<link
+			href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap"
+			rel="stylesheet"
+		/>
+	</head>
+	<body>
+		<a href="#main-content" class="skip-link">{t.skip}</a>
+		<SiteHeader locale={locale} current="docs" slug={currentSlug} />
+
+		<details class="docs-mobile-nav" id="docs-mobile-nav">
+			<summary aria-controls="docs-mobile-menu">{t.browse}</summary>
+			<nav class="docs-sidebar" id="docs-mobile-menu" aria-label={t.sidebar}>
+				{
+					nav.map((section) => (
+						<div class="docs-sidebar-section">
+							<h2 class="docs-sidebar-label">{section.label}</h2>
+							<ul class="docs-sidebar-list">
+								{
+									section.items.map((item) => (
+										<li>
+											<a
+												href={docPath(item.slug, locale)}
+												aria-current={item.slug === currentSlug ? 'page' : undefined}
+											>
+												{item.label}
+											</a>
+										</li>
+									))
+								}
+							</ul>
+						</div>
+					))
+				}
+			</nav>
+		</details>
+
+		<div class="docs-shell">
+			<nav class="docs-sidebar docs-sidebar-desktop" aria-label={t.sidebar}>
+				{
+					nav.map((section) => (
+						<div class="docs-sidebar-section">
+							<h2 class="docs-sidebar-label">{section.label}</h2>
+							<ul class="docs-sidebar-list">
+								{
+									section.items.map((item) => (
+										<li>
+											<a
+												href={docPath(item.slug, locale)}
+												aria-current={item.slug === currentSlug ? 'page' : undefined}
+											>
+												{item.label}
+											</a>
+										</li>
+									))
+								}
+							</ul>
+						</div>
+					))
+				}
+			</nav>
+
+			<div class="docs-main-wrap">
+				<main id="main-content" class="docs-main" aria-label={t.main}>
+					<div class="docs-toolbar">
+						<button
+							type="button"
+							class="docs-copy-llm"
+							data-markdown-url={markdownUrl}
+							data-copy-label={t.copyLlm}
+							data-copied-label={t.copied}
+							data-failed-label={t.failed}
+							aria-describedby="copy-llm-hint"
+						>
+							{t.copyLlm}
+						</button>
+						<span id="copy-llm-hint" class="sr-only">
+							{locale === 'es'
+								? 'Copia el contenido markdown de esta página al portapapeles'
+								: 'Copies this page markdown content to the clipboard'}
+						</span>
+						<span class="sr-only" aria-live="polite" id="copy-llm-status"></span>
+					</div>
+					<article class="docs-article" aria-labelledby="doc-title">
+						<h1 id="doc-title">{title}</h1>
+						<slot />
+					</article>
+
+					{
+						(prev || next) && (
+							<nav class="docs-pager" aria-label={t.pagination}>
+								{prev ? (
+									<a href={docPath(prev.slug, locale)}>
+										<span class="docs-pager-label">{t.prev}</span>
+										{prev.label}
+									</a>
+								) : (
+									<div aria-hidden="true"></div>
+								)}
+								{next ? (
+									<a class="next" href={docPath(next.slug, locale)}>
+										<span class="docs-pager-label">{t.next}</span>
+										{next.label}
+									</a>
+								) : (
+									<div aria-hidden="true"></div>
+								)}
+							</nav>
+						)
+					}
+				</main>
+
+				{
+					toc.length > 0 && (
+						<aside class="docs-toc" aria-labelledby="toc-heading">
+							<h2 id="toc-heading" class="docs-toc-label">{t.toc}</h2>
+							<nav aria-label={t.toc}>
+								<ol class="docs-toc-list">
+									{
+										toc.map((heading) => (
+											<li>
+												<a href={`#${heading.slug}`}>{heading.text}</a>
+											</li>
+										))
+									}
+								</ol>
+							</nav>
+						</aside>
+					)
+				}
+			</div>
+		</div>
+
+		<script>
+			document.querySelectorAll('[data-markdown-url]').forEach((btn) => {
+				const status = document.getElementById('copy-llm-status');
+				const copyLabel = btn.getAttribute('data-copy-label') ?? 'Copy for LLM';
+				const copiedLabel = btn.getAttribute('data-copied-label') ?? 'Copied';
+				const failedLabel = btn.getAttribute('data-failed-label') ?? 'Failed';
+
+				btn.addEventListener('click', async () => {
+					const url = btn.getAttribute('data-markdown-url');
+					if (!url) return;
+					try {
+						const res = await fetch(url);
+						const text = await res.text();
+						await navigator.clipboard.writeText(text);
+						btn.textContent = copiedLabel;
+						if (status) status.textContent = copiedLabel;
+						setTimeout(() => {
+							btn.textContent = copyLabel;
+							if (status) status.textContent = '';
+						}, 2000);
+					} catch {
+						btn.textContent = failedLabel;
+						if (status) status.textContent = failedLabel;
+					}
+				});
+			});
+
+			const mobileNav = document.getElementById('docs-mobile-nav');
+			if (mobileNav) {
+				mobileNav.addEventListener('toggle', () => {
+					const summary = mobileNav.querySelector('summary');
+					if (summary) summary.setAttribute('aria-expanded', String(mobileNav.open));
+				});
+			}
+		</script>
+	</body>
+</html>

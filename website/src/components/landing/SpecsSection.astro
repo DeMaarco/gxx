@@ -1,0 +1,73 @@
+---
+import type { LandingLocale } from '../../lib/landing';
+import { buildSizes, landingContent } from '../../lib/landing';
+
+interface Props {
+	locale?: LandingLocale;
+	version?: string;
+}
+
+const { locale = 'en', version = 'v0.0.20' } = Astro.props;
+const t = landingContent(locale);
+---
+
+<section class="mt-16 border-t border-line pt-16" aria-labelledby="specs-heading">
+	<h2 id="specs-heading" class="mb-2 text-sm font-semibold tracking-tight text-ink">
+		{t.specsTitle}
+	</h2>
+	<p class="mb-8 max-w-2xl text-secondary">{t.specsIntro}</p>
+
+	<dl class="mb-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+		<div class="rounded-lg border border-line bg-surface/50 p-4">
+			<dt class="text-xs uppercase tracking-wide text-muted">{t.specsRuntime}</dt>
+			<dd class="mt-1 font-medium text-ink">{t.specsRuntimeValue}</dd>
+		</div>
+		<div class="rounded-lg border border-line bg-surface/50 p-4">
+			<dt class="text-xs uppercase tracking-wide text-muted">{t.specsPlatforms}</dt>
+			<dd class="mt-1 font-medium text-ink">{t.specsPlatformsValue}</dd>
+		</div>
+		<div class="rounded-lg border border-line bg-surface/50 p-4">
+			<dt class="text-xs uppercase tracking-wide text-muted">Version</dt>
+			<dd class="mt-1 font-medium text-ink">{version}</dd>
+		</div>
+		<div class="rounded-lg border border-line bg-surface/50 p-4">
+			<dt class="text-xs uppercase tracking-wide text-muted">{t.specsLicense}</dt>
+			<dd class="mt-1 font-medium text-ink">
+				<a href="https://github.com/DeMaarco/gxx/blob/main/LICENSE" class="underline underline-offset-2 hover:text-accent">
+					{t.specsLicenseValue}
+				</a>
+			</dd>
+		</div>
+	</dl>
+
+	<h3 class="mb-3 text-xs font-medium text-muted">{t.specsBinary} ({version})</h3>
+	<div class="overflow-x-auto rounded-xl border border-line">
+		<table class="w-full min-w-[20rem] text-left text-[0.8125rem]">
+			<thead class="border-b border-line bg-surface">
+				<tr>
+					<th scope="col" class="px-4 py-2.5 font-medium text-ink">Platform</th>
+					<th scope="col" class="px-4 py-2.5 font-medium text-ink">Arch</th>
+					<th scope="col" class="px-4 py-2.5 font-medium text-ink">Size</th>
+				</tr>
+			</thead>
+			<tbody>
+				{
+					buildSizes.map((row) => (
+						<tr class="border-b border-line last:border-b-0">
+							<td class="px-4 py-2.5 text-secondary">{row.platform}</td>
+							<td class="px-4 py-2.5 text-secondary">{row.arch}</td>
+							<td class="px-4 py-2.5 font-medium text-ink">{row.size}</td>
+						</tr>
+					))
+				}
+			</tbody>
+		</table>
+	</div>
+	<p class="mt-3 text-[0.75rem] text-muted">
+		{locale === 'es' ? 'Descargado desde' : 'Downloaded from'}
+		<a href={`https://github.com/DeMaarco/gxx/releases/tag/${version}`} class="underline underline-offset-2 hover:text-accent">
+			GitHub Releases
+		</a>
+		{locale === 'es' ? ' · verificado con checksums SHA256' : ' · verified with SHA256 checksums'}
+	</p>
+</section>
