@@ -35,10 +35,10 @@ func (p *Provider) refreshContextLocked() {
 func (p *Provider) computeContextLocked() agent.ContextUsage {
 	usage := agent.ContextUsage{
 		WindowTokens:       int64(p.contextTokens),
-		InstructionsTokens: estimateTokens(len(p.instructions)),
+		InstructionsTokens: p.calibrate(estimateTokens(len(p.instructions))),
 	}
 	for _, item := range p.history {
-		tokens := estimateJSON(item)
+		tokens := p.calibrate(estimateJSON(item))
 		switch itemKind(item) {
 		case "user":
 			usage.UserTokens += tokens
@@ -63,14 +63,40 @@ func (p *Provider) overBudget(items []responses.ResponseInputItemUnionParam) boo
 	if p.contextTokens <= 0 {
 		return len(items) > fallbackHistoryItems
 	}
-	return historyTokens(items, p.instructions) > int64(p.contextTokens)
+	return p.calibrate(historyTokens(items, p.instructions)) > int64(p.contextTokens)
 }
 
 func (p *Provider) overTarget(items []responses.ResponseInputItemUnionParam) bool {
 	if p.contextTokens <= 0 {
 		return len(items) > fallbackHistoryItems
 	}
-	return historyTokens(items, p.instructions) > p.compactTarget()
+	return p.calibrate(historyTokens(items, p.instructions)) > p.compactTarget()
+}
+
+func (p *Provider) calibrate(tokens int64) int64 {
+	factor := p.tokenFactor
+	if factor <= 0 {
+		factor = 1.0
+	}
+	return int64(float64(tokens) * factor)
+}
+
+func (p *Provider) updateTokenFactorLocked(staged []responses.ResponseInputItemUnionParam) {
+	est := historyTokens(staged, p.instructions)
+	if est <= 0 || p.lastInputTokens <= 0 {
+		return
+	}
+	observed := float64(p.lastInputTokens) / float64(est)
+	if observed < 0.5 {
+		observed = 0.5
+	} else if observed > 2.0 {
+		observed = 2.0
+	}
+	old := p.tokenFactor
+	if old <= 0 {
+		old = 1.0
+	}
+	p.tokenFactor = 0.3*observed + 0.7*old
 }
 
 func itemKind(item responses.ResponseInputItemUnionParam) string {

@@ -277,12 +277,12 @@ func (r *Registry) applyPatchChange(
 		}
 		count, needle := matchOldText(work.after, []byte(oldText))
 		if count == 0 {
-			return nil, fmt.Errorf("old_text not found in %s", clean)
+			return nil, oldTextNotFoundError(clean, work.after, []byte(oldText))
 		}
 		limit := 1
 		if count > 1 {
 			if !replaceEveryCopy(oldText) {
-				return nil, fmt.Errorf("old_text is ambiguous in %s; found %d occurrences", clean, count)
+				return nil, oldTextAmbiguousError(clean, work.after, needle, count)
 			}
 			limit = -1
 		}
@@ -319,6 +319,87 @@ func matchOldText(haystack, needle []byte) (int, []byte) {
 		}
 	}
 	return 0, needle
+}
+
+const maxPatchDiagBytes = 1536
+
+func oldTextNotFoundError(path string, haystack, oldText []byte) error {
+	var b strings.Builder
+	fmt.Fprintf(&b, "old_text not found in %s", path)
+	fmt.Fprintf(&b, "\nlooked for: %q", truncateForDiag(string(oldText), 120))
+	if crlfMismatch(haystack, oldText) {
+		b.WriteString("\nhint: file and old_text differ in CRLF vs LF line endings; check whitespace")
+	}
+	b.WriteString("\nsuggestion: widen old_text for a unique span, or pass content to rewrite the file")
+	return errors.New(capDiag(b.String()))
+}
+
+func oldTextAmbiguousError(path string, haystack, needle []byte, count int) error {
+	var b strings.Builder
+	fmt.Fprintf(&b, "old_text is ambiguous in %s; found %d occurrences", path, count)
+	for _, occ := range findOldTextOccurrences(haystack, needle, 3) {
+		fmt.Fprintf(&b, "\n  line %d: %s", occ.line, truncateForDiag(occ.snippet, 100))
+	}
+	b.WriteString("\nsuggestion: include more surrounding context in old_text")
+	return errors.New(capDiag(b.String()))
+}
+
+func crlfMismatch(haystack, needle []byte) bool {
+	fileCRLF := bytes.Contains(haystack, []byte("\r\n"))
+	needleCRLF := bytes.Contains(needle, []byte("\r\n"))
+	needleLF := bytes.Contains(needle, []byte("\n"))
+	if fileCRLF && needleLF && !needleCRLF {
+		return true
+	}
+	if !fileCRLF && needleCRLF {
+		return true
+	}
+	return false
+}
+
+type oldTextOccurrence struct {
+	line    int
+	snippet string
+}
+
+func findOldTextOccurrences(haystack, needle []byte, limit int) []oldTextOccurrence {
+	if len(needle) == 0 || limit <= 0 {
+		return nil
+	}
+	out := make([]oldTextOccurrence, 0, limit)
+	start := 0
+	for len(out) < limit {
+		rel := bytes.Index(haystack[start:], needle)
+		if rel < 0 {
+			break
+		}
+		pos := start + rel
+		line := 1 + bytes.Count(haystack[:pos], []byte("\n"))
+		lineStart := bytes.LastIndexByte(haystack[:pos], '\n') + 1
+		lineEnd := len(haystack)
+		if i := bytes.IndexByte(haystack[pos:], '\n'); i >= 0 {
+			lineEnd = pos + i
+		}
+		snippet := string(haystack[lineStart:lineEnd])
+		snippet = strings.TrimSuffix(snippet, "\r")
+		out = append(out, oldTextOccurrence{line: line, snippet: snippet})
+		start = pos + len(needle)
+	}
+	return out
+}
+
+func truncateForDiag(value string, limit int) string {
+	if limit <= 0 || len(value) <= limit {
+		return value
+	}
+	return value[:limit] + "…"
+}
+
+func capDiag(value string) string {
+	if len(value) <= maxPatchDiagBytes {
+		return value
+	}
+	return value[:maxPatchDiagBytes] + "…"
 }
 
 func replaceEveryCopy(oldText string) bool {

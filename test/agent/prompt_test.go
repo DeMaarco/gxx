@@ -321,3 +321,56 @@ func TestCompressProjectContextLeavesTrustedPromptAlone(t *testing.T) {
 		t.Fatalf("trusted-only prompt changed: %q", got)
 	}
 }
+
+// TestSystemPromptWithOptionsStablePrefix documents the prompt-cache contract:
+// with mode, eco, HasGit, and AGENTS status fixed, SystemPromptWithOptions is
+// byte-identical across calls. Flips that invalidate the cache key/prefix:
+// plan↔ask↔agent mode, eco level, HasGit, and AGENTS.md status notes
+// (missing/empty/oversized/unreadable).
+func TestSystemPromptWithOptionsStablePrefix(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "AGENTS.md"), []byte("Use focused tests."), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ws, err := workspace.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ws.Close()
+
+	first := agent.SystemPromptWithOptions(ws, false, false, 0)
+	second := agent.SystemPromptWithOptions(ws, false, false, 0)
+	if first != second {
+		t.Fatalf("system prompt not byte-identical across calls with fixed options")
+	}
+
+	plan := agent.SystemPromptWithOptions(ws, true, false, 0)
+	if plan == first {
+		t.Fatal("plan mode should change the system prompt (cache-invalidating flip)")
+	}
+	ask := agent.SystemPromptWithOptions(ws, false, true, 0)
+	if ask == first {
+		t.Fatal("ask mode should change the system prompt (cache-invalidating flip)")
+	}
+	eco := agent.SystemPromptWithOptions(ws, false, false, 2)
+	if eco == first {
+		t.Fatal("eco level should change the system prompt (cache-invalidating flip)")
+	}
+
+	if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	withGit := agent.SystemPromptWithOptions(ws, false, false, 0)
+	if withGit == first {
+		t.Fatal("HasGit should change the system prompt (cache-invalidating flip)")
+	}
+
+	if err := os.WriteFile(filepath.Join(root, "AGENTS.md"), []byte(""), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	emptyAgents := agent.SystemPromptWithOptions(ws, false, false, 0)
+	// empty AGENTS adds a status note; withGit workspace still has .git
+	if emptyAgents == withGit {
+		t.Fatal("AGENTS status note should change the system prompt (cache-invalidating flip)")
+	}
+}

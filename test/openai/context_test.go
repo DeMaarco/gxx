@@ -67,6 +67,9 @@ func TestRespondFailsClosedWhenHistoryExceedsWindow(t *testing.T) {
 	if !errors.Is(err, openai.ErrContextOverflow) {
 		t.Fatalf("Respond() error = %v, want context overflow", err)
 	}
+	if len(provider.History()) != 0 {
+		t.Fatalf("history after overflow = %d items, want user append rolled back", len(provider.History()))
+	}
 }
 
 func TestEmergencyFitClipsCurrentTurnToolOutput(t *testing.T) {
@@ -78,5 +81,43 @@ func TestEmergencyFitClipsCurrentTurnToolOutput(t *testing.T) {
 	data, _ := json.Marshal(got[len(got)-1])
 	if !strings.Contains(string(data), "context clipped") {
 		t.Fatalf("current-turn tool output = %s, want emergency clip", data)
+	}
+}
+
+func TestTokenFactorCalibratesContextSnapshot(t *testing.T) {
+	provider := openai.New("test-key", "gpt-5.6", strings.Repeat("x", 64), time.Second)
+	provider.SetHistory([]responses.ResponseInputItemUnionParam{
+		responses.ResponseInputItemParamOfMessage("hello from the user", responses.EasyInputMessageRoleUser),
+	})
+	provider.SetTokenFactor(1.0)
+	provider.RefreshContext()
+	base := provider.ContextSnapshot()
+
+	provider.SetTokenFactor(2.0)
+	provider.RefreshContext()
+	scaled := provider.ContextSnapshot()
+	if scaled.UsedTokens < base.UsedTokens*2-1 || scaled.UsedTokens > base.UsedTokens*2+1 {
+		t.Fatalf("factor 2.0 used = %d, base = %d", scaled.UsedTokens, base.UsedTokens)
+	}
+	if scaled.UsedTokens <= base.UsedTokens {
+		t.Fatalf("used should rise with factor: base=%d scaled=%d", base.UsedTokens, scaled.UsedTokens)
+	}
+}
+
+func TestTokenFactorDefaultIsOneWithoutUsage(t *testing.T) {
+	provider := openai.New("test-key", "gpt-5.6", "inst", time.Second)
+	if provider.TokenFactor() != 1.0 {
+		t.Fatalf("default factor = %v, want 1.0", provider.TokenFactor())
+	}
+	provider.SetHistory([]responses.ResponseInputItemUnionParam{
+		responses.ResponseInputItemParamOfMessage("hello", responses.EasyInputMessageRoleUser),
+	})
+	provider.RefreshContext()
+	withFactor := provider.ContextSnapshot()
+	provider.SetTokenFactor(1.0)
+	provider.RefreshContext()
+	baseline := provider.ContextSnapshot()
+	if withFactor.UsedTokens != baseline.UsedTokens {
+		t.Fatalf("unused factor should match 1.0: got %d want %d", withFactor.UsedTokens, baseline.UsedTokens)
 	}
 }

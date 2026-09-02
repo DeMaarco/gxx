@@ -415,3 +415,89 @@ func TestLoopAbsorbsToolResultsWhenCancelledAfterExecute(t *testing.T) {
 		t.Fatalf("model inputs = %#v, want only the first step", model.inputs)
 	}
 }
+
+func TestLoopDoesNotCacheMutatingToolsAcrossSteps(t *testing.T) {
+	args := json.RawMessage(`{"changes":[{"path":"a.txt","action":"update","old_text":"x","new_text":"y"}]}`)
+	model := &fakeModel{responses: []agent.ModelResponse{
+		{ToolCalls: []agent.ToolCall{{ID: "call-1", Name: "apply_patch", Arguments: args}}},
+		{ToolCalls: []agent.ToolCall{{ID: "call-2", Name: "apply_patch", Arguments: args}}},
+		{Text: "Done."},
+	}}
+	executor := &countingExecutor{
+		definitions: []agent.ToolDefinition{{Name: "apply_patch", ReadOnly: false}},
+	}
+	loop := &agent.Loop{Model: model, Executor: executor, MaxSteps: 4}
+
+	if _, err := loop.Run(context.Background(), "patch twice", nil); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if len(executor.calls) != 2 {
+		t.Fatalf("executor calls = %#v, want apply_patch re-executed each step", executor.calls)
+	}
+}
+
+func TestLoopEmitsNoticeAfterRepeatedIdenticalFailures(t *testing.T) {
+	args := json.RawMessage(`{"path":"missing.go"}`)
+	call := func(id string) agent.ToolCall {
+		return agent.ToolCall{ID: id, Name: "read_file", Arguments: args}
+	}
+	model := &fakeModel{responses: []agent.ModelResponse{
+		{ToolCalls: []agent.ToolCall{call("c1")}},
+		{ToolCalls: []agent.ToolCall{call("c2")}},
+		{ToolCalls: []agent.ToolCall{call("c3")}},
+		{Text: "Stopped."},
+	}}
+	executor := &errorExecutor{
+		definitions: []agent.ToolDefinition{{Name: "read_file", ReadOnly: true}},
+		output:      "error: open missing.go: no such file or directory",
+	}
+	loop := &agent.Loop{Model: model, Executor: executor, MaxSteps: 5}
+
+	var notices []string
+	result, err := loop.Run(context.Background(), "read missing", func(event agent.Event) {
+		if event.Kind == agent.EventNotice {
+			notices = append(notices, event.Text)
+		}
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if result.Answer != "Stopped." {
+		t.Fatalf("Answer = %q", result.Answer)
+	}
+	if len(executor.calls) != 1 {
+		t.Fatalf("executor calls = %#v, want read cached after first failure", executor.calls)
+	}
+	if len(notices) != 1 || !strings.Contains(notices[0], "failed repeatedly") {
+		t.Fatalf("notices = %#v, want one loop notice", notices)
+	}
+}
+
+type errorExecutor struct {
+	definitions []agent.ToolDefinition
+	calls       [][]agent.ToolCall
+	output      string
+}
+
+func (e *errorExecutor) Definitions() []agent.ToolDefinition {
+	return e.definitions
+}
+
+func (e *errorExecutor) Execute(
+	_ context.Context,
+	calls []agent.ToolCall,
+	_ agent.EmitFunc,
+) []agent.ToolResult {
+	copied := append([]agent.ToolCall(nil), calls...)
+	e.calls = append(e.calls, copied)
+	results := make([]agent.ToolResult, len(calls))
+	for i, call := range calls {
+		results[i] = agent.ToolResult{
+			CallID:  call.ID,
+			Name:    call.Name,
+			Output:  e.output,
+			IsError: true,
+		}
+	}
+	return results
+}

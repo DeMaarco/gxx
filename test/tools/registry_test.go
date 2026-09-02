@@ -1143,6 +1143,12 @@ func TestApplyPatchRejectsNonUniqueUpdate(t *testing.T) {
 	if !result.IsError || !strings.Contains(result.Output, "ambiguous") {
 		t.Fatalf("result = %+v, want unique-replace error", result)
 	}
+	if !strings.Contains(result.Output, "line 1:") || !strings.Contains(result.Output, "line 2:") {
+		t.Fatalf("result = %+v, want occurrence line snippets", result)
+	}
+	if len(result.Output) > 2048 {
+		t.Fatalf("result length = %d, want capped diagnostics", len(result.Output))
+	}
 	assertToolFileContents(t, filepath.Join(root, "file.txt"), "same\nsame\n")
 }
 
@@ -1192,8 +1198,17 @@ func TestApplyPatchNotFoundIsShort(t *testing.T) {
 	if !result.IsError || !strings.Contains(result.Output, "old_text not found in file.txt") {
 		t.Fatalf("result = %+v, want not-found error", result)
 	}
+	if !strings.Contains(result.Output, `looked for: "missing"`) {
+		t.Fatalf("result = %+v, want short old_text preview", result)
+	}
+	if !strings.Contains(result.Output, "suggestion:") {
+		t.Fatalf("result = %+v, want actionable suggestion", result)
+	}
 	if strings.Contains(result.Output, "exactly once") || strings.Contains(result.Output, "occurrences") {
 		t.Fatalf("result = %+v, want short not-found error", result)
+	}
+	if len(result.Output) > 2048 {
+		t.Fatalf("result length = %d, want capped diagnostics", len(result.Output))
 	}
 	if len(events) < 2 || events[0].Kind != agent.EventToolStarted || events[1].Kind != agent.EventToolDone {
 		t.Fatalf("events = %#v, want started then done on prepare error", events)
@@ -1533,6 +1548,9 @@ func TestReadFileStopsAroundByteBudget(t *testing.T) {
 	if !strings.Contains(result.Output, "truncated at 12KB") {
 		t.Fatalf("read = %q, want byte budget notice", result.Output)
 	}
+	if !strings.Contains(result.Output, "next offset_line=") {
+		t.Fatalf("read = %q, want next offset_line hint", result.Output)
+	}
 	if len(result.Output) > 16*1024 {
 		t.Fatalf("read length = %d, want capped near 12KB", len(result.Output))
 	}
@@ -1621,6 +1639,9 @@ func TestReadFileReportsEndOfFileAndMoreLines(t *testing.T) {
 	if !strings.Contains(partial.Output, "… more lines follow") {
 		t.Fatalf("partial = %q, want more lines", partial.Output)
 	}
+	if !strings.Contains(partial.Output, "next offset_line=2") {
+		t.Fatalf("partial = %q, want next offset_line=2", partial.Output)
+	}
 
 	full := registry.Execute(context.Background(), []agent.ToolCall{
 		toolCall("read", "read_file", map[string]any{
@@ -1632,6 +1653,35 @@ func TestReadFileReportsEndOfFileAndMoreLines(t *testing.T) {
 	}
 	if !strings.Contains(full.Output, "(end of file, 3 lines)") {
 		t.Fatalf("full = %q, want end of file", full.Output)
+	}
+}
+
+func TestSearchFilesReportsResultLimit(t *testing.T) {
+	root := t.TempDir()
+	var content strings.Builder
+	for i := 0; i < 20; i++ {
+		fmt.Fprintf(&content, "hit line %d\n", i)
+	}
+	writeTestFile(t, root, "hits.txt", content.String())
+	registry := newTestRegistry(t, root, &staticApprover{}, tools.Options{
+		MaxResultBytes:  4096,
+		MaxSearchResult: 5,
+		ParallelReads:   1,
+		CommandTimeout:  time.Second,
+	})
+	result := registry.Execute(context.Background(), []agent.ToolCall{
+		toolCall("search", "search_files", map[string]any{
+			"query": "hit", "path": nil, "glob": nil, "max_results": nil, "case_sensitive": nil,
+		}),
+	}, nil)[0]
+	if result.IsError {
+		t.Fatalf("search failed: %s", result.Output)
+	}
+	if !strings.Contains(result.Output, "… search result limit reached") {
+		t.Fatalf("search = %q, want stable limit notice", result.Output)
+	}
+	if strings.Count(result.Output, "hit line") != 5 {
+		t.Fatalf("search = %q, want exactly 5 matches before the limit notice", result.Output)
 	}
 }
 

@@ -567,13 +567,19 @@ func (r *Registry) readFile(ctx context.Context, raw json.RawMessage) (string, e
 	}
 	body := strings.TrimSuffix(output.String(), "\n")
 	if stoppedEarly {
+		nextOffset := lineNumber
 		if stoppedBytes {
 			if dense {
 				return body + denseFileSuffix(scanner, lineNumber, size), nil
 			}
-			return fmt.Sprintf("%s\n… truncated at %dKB; prefer search_files for more of this file", body, maxReadBytes/1024), nil
+			return fmt.Sprintf(
+				"%s\n… truncated at %dKB; prefer search_files for more of this file; next offset_line=%d",
+				body,
+				maxReadBytes/1024,
+				nextOffset,
+			), nil
 		}
-		return body + "\n… more lines follow", nil
+		return fmt.Sprintf("%s\n… more lines follow; next offset_line=%d", body, nextOffset), nil
 	}
 	return fmt.Sprintf("%s\n(end of file, %d lines)", body, lineNumber), nil
 }

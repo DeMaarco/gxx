@@ -124,6 +124,14 @@ func (p *Provider) SetLastInputTokens(n int64) {
 	p.lastInputTokens = n
 }
 
+func (p *Provider) TokenFactor() float64 {
+	return p.tokenFactor
+}
+
+func (p *Provider) SetTokenFactor(factor float64) {
+	p.tokenFactor = factor
+}
+
 func (p *Provider) SessionUsage() agent.Usage {
 	return p.session
 }

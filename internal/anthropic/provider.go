@@ -58,6 +58,8 @@ type Provider struct {
 	sessionRequests int64
 	rateLimit       agent.RateLimit
 	contextUsage    agent.ContextUsage
+	lastInputTokens int64
+	tokenFactor     float64
 	ecoLevel        int
 	compactNumer    int
 	compactDenom    int
@@ -81,6 +83,7 @@ func New(source TokenSource, model, instructions string, timeout time.Duration) 
 		timeout:       timeout,
 		compactNumer:  2,
 		compactDenom:  3,
+		tokenFactor:   1.0,
 	}
 	provider.refreshContextLocked()
 	return provider
@@ -154,6 +157,8 @@ func (p *Provider) SetAccessToken(token string) {
 	p.session = agent.Usage{}
 	p.sessionRequests = 0
 	p.rateLimit = agent.RateLimit{}
+	p.lastInputTokens = 0
+	p.tokenFactor = 1.0
 	p.refreshContextLocked()
 }
 
@@ -162,6 +167,7 @@ func (p *Provider) Reset() {
 	defer p.mu.Unlock()
 	p.generation++
 	p.history = nil
+	p.lastInputTokens = 0
 	p.refreshContextLocked()
 }
 
@@ -187,6 +193,7 @@ func (p *Provider) ImportHistory(provider string, history json.RawMessage) error
 	if len(history) == 0 {
 		p.generation++
 		p.history = nil
+		p.lastInputTokens = 0
 		p.refreshContextLocked()
 		return nil
 	}
@@ -196,6 +203,7 @@ func (p *Provider) ImportHistory(provider string, history json.RawMessage) error
 	}
 	p.generation++
 	p.history = items
+	p.lastInputTokens = 0
 	p.refreshContextLocked()
 	return nil
 }
@@ -225,28 +233,56 @@ func (p *Provider) Respond(
 				Text: "Closed unanswered tool calls from the previous turn.",
 			})
 		}
+	}
+	// A long tool loop can outgrow the window without the user typing again,
+	// so compaction cannot wait for the next prompt. Dropping whole turns only
+	// ever cuts at a user-text boundary, which never separates tool_use from
+	// its adjacent tool_result.
+	if p.shouldCompact(input.UserText) {
+		p.compactLocked(emit)
+	}
+	// Snapshot before the user append so API failure / overflow / cancel can
+	// roll back only that message. Tool results from this Respond stay.
+	var historyBeforeUser []anthropicsdk.MessageParam
+	if hasUserText {
+		historyBeforeUser = append([]anthropicsdk.MessageParam(nil), p.history...)
 		p.history = append(p.history, anthropicsdk.NewUserMessage(anthropicsdk.NewTextBlock(input.UserText)))
 	}
 	if !hasUserText && len(input.ToolResults) == 0 {
 		p.mu.Unlock()
 		return result, errors.New("model input contains neither a user message nor tool results")
 	}
-	for p.overBudget(p.history) && len(p.history) > 1 {
-		p.compactLocked()
-		agent.Emit(emit, agent.Event{
-			Kind: agent.EventNotice,
-			Text: "Earlier conversation was compacted by gxx to fit the context window.",
-		})
+	p.history = dropOldThinking(p.history)
+
+	staged := slimInput(p.history, p.ecoLevel, p.ecoToolKeep, p.ecoToolClip)
+	if p.overBudget(staged) {
+		staged = emergencyFit(staged, p.contextTokens, p.instructions)
 	}
-	if p.overBudget(p.history) {
+	if p.overBudget(staged) {
+		if hasUserText {
+			p.history = historyBeforeUser
+		}
+		p.refreshContextLocked()
 		p.mu.Unlock()
 		return result, ErrContextOverflow
 	}
 	generation := p.generation
 	timeout := p.timeout
-	params := p.requestParamsLocked(definitions, input.FinalStep)
+	params := p.requestParamsLocked(staged, definitions, input.FinalStep)
 	p.refreshContextLocked()
 	p.mu.Unlock()
+
+	rollbackUserAppend := func() {
+		if !hasUserText {
+			return
+		}
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		if p.generation == generation {
+			p.history = historyBeforeUser
+			p.refreshContextLocked()
+		}
+	}
 
 	client := p.newClient(token)
 	var (
@@ -262,6 +298,7 @@ func (p *Provider) Respond(
 				Text: "Retrying Claude request…",
 			})
 			if err := sleepContext(ctx, delay); err != nil {
+				rollbackUserAppend()
 				return result, err
 			}
 		}
@@ -276,6 +313,7 @@ func (p *Provider) Respond(
 		}
 	}
 	if lastErr != nil {
+		rollbackUserAppend()
 		return result, lastErr
 	}
 
@@ -294,9 +332,13 @@ func (p *Provider) Respond(
 	defer p.mu.Unlock()
 	defer p.refreshContextLocked()
 	if p.generation == generation {
-		p.history = append(p.history, message.ToParam())
+		// Commit the staged (possibly slimmed) request history plus the new
+		// assistant turn. Slim is not durable until this success path.
+		p.history = append(staged, message.ToParam())
 		p.session.Add(result.Usage)
 		p.sessionRequests++
+		p.lastInputTokens = result.Usage.InputTokens
+		p.updateTokenFactorLocked(staged)
 	}
 	return result, nil
 }
@@ -323,6 +365,7 @@ func (p *Provider) resolveToken(ctx context.Context) (string, error) {
 }
 
 func (p *Provider) requestParamsLocked(
+	staged []anthropicsdk.MessageParam,
 	definitions []agent.ToolDefinition,
 	finalStep bool,
 ) anthropicsdk.MessageNewParams {
@@ -331,7 +374,7 @@ func (p *Provider) requestParamsLocked(
 	params := anthropicsdk.MessageNewParams{
 		Model:     anthropicsdk.Model(p.model),
 		MaxTokens: maxTokens,
-		Messages:  p.slimHistoryLocked(),
+		Messages:  staged,
 		System:    systemBlocks(instructions),
 		Tools:     toolParams(definitions, p.ecoLevel),
 		Thinking:  thinking,
@@ -421,10 +464,10 @@ func (p *Provider) refreshContextLocked() {
 func (p *Provider) computeContextLocked() agent.ContextUsage {
 	usage := agent.ContextUsage{
 		WindowTokens:       int64(p.contextTokens),
-		InstructionsTokens: estimateTokens(len(oauthIdentity) + len(p.instructions)),
+		InstructionsTokens: p.calibrate(estimateTokens(len(oauthIdentity) + len(p.instructions))),
 	}
 	for _, message := range p.history {
-		tokens := estimateJSON(message)
+		tokens := p.calibrate(estimateJSON(message))
 		switch message.Role {
 		case anthropicsdk.MessageParamRoleUser:
 			if messageHasToolResult(message) {
@@ -455,7 +498,40 @@ func (p *Provider) overBudget(history []anthropicsdk.MessageParam) bool {
 	if p.contextTokens <= 0 {
 		return len(history) > fallbackHistoryItems
 	}
-	return historyTokens(history, p.instructions) > int64(p.contextTokens)
+	return p.calibrate(historyTokens(history, p.instructions)) > int64(p.contextTokens)
+}
+
+func (p *Provider) overTarget(history []anthropicsdk.MessageParam) bool {
+	if p.contextTokens <= 0 {
+		return len(history) > fallbackHistoryItems
+	}
+	return p.calibrate(historyTokens(history, p.instructions)) > p.compactTarget()
+}
+
+func (p *Provider) calibrate(tokens int64) int64 {
+	factor := p.tokenFactor
+	if factor <= 0 {
+		factor = 1.0
+	}
+	return int64(float64(tokens) * factor)
+}
+
+func (p *Provider) updateTokenFactorLocked(staged []anthropicsdk.MessageParam) {
+	est := historyTokens(staged, p.instructions)
+	if est <= 0 || p.lastInputTokens <= 0 {
+		return
+	}
+	observed := float64(p.lastInputTokens) / float64(est)
+	if observed < 0.5 {
+		observed = 0.5
+	} else if observed > 2.0 {
+		observed = 2.0
+	}
+	old := p.tokenFactor
+	if old <= 0 {
+		old = 1.0
+	}
+	p.tokenFactor = 0.3*observed + 0.7*old
 }
 
 func messageHasToolResult(message anthropicsdk.MessageParam) bool {

@@ -74,6 +74,7 @@ type Provider struct {
 	rateLimit       agent.RateLimit
 	contextUsage    agent.ContextUsage
 	lastInputTokens int64
+	tokenFactor     float64
 	ecoLevel        int
 	compactNumer    int
 	compactDenom    int
@@ -97,6 +98,7 @@ func New(apiKey, model, instructions string, timeout time.Duration) *Provider {
 		timeout:       timeout,
 		compactNumer:  2,
 		compactDenom:  3,
+		tokenFactor:   1.0,
 		httpClient:    &http.Client{Timeout: usageFetchTimeout},
 		baseURL:       defaultAPIBaseURL,
 		sessionID:     newSessionID(),
@@ -211,7 +213,11 @@ func (p *Provider) Respond(
 	if p.shouldCompact(input.UserText) {
 		p.compactLocked(emit)
 	}
+	// Snapshot before the user append so API failure / overflow / cancel can
+	// roll back only that message. Tool results from this Respond stay.
+	var historyBeforeUser []responses.ResponseInputItemUnionParam
 	if hasUserText {
+		historyBeforeUser = append([]responses.ResponseInputItemUnionParam(nil), p.history...)
 		p.history = append(p.history, responses.ResponseInputItemParamOfMessage(
 			input.UserText,
 			responses.EasyInputMessageRoleUser,
@@ -233,6 +239,10 @@ func (p *Provider) Respond(
 		staged = emergencyFit(staged, p.contextTokens, p.instructions)
 	}
 	if p.overBudget(staged) {
+		if hasUserText {
+			p.history = historyBeforeUser
+		}
+		p.refreshContextLocked()
 		p.mu.Unlock()
 		return result, ErrContextOverflow
 	}
@@ -242,6 +252,18 @@ func (p *Provider) Respond(
 	client := p.client
 	p.refreshContextLocked()
 	p.mu.Unlock()
+
+	rollbackUserAppend := func() {
+		if !hasUserText {
+			return
+		}
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		if p.generation == generation {
+			p.history = historyBeforeUser
+			p.refreshContextLocked()
+		}
+	}
 
 	var (
 		completed *responses.Response
@@ -256,6 +278,7 @@ func (p *Provider) Respond(
 				Text: "Retrying OpenAI request…",
 			})
 			if err := sleepContext(ctx, delay); err != nil {
+				rollbackUserAppend()
 				return result, err
 			}
 		}
@@ -277,6 +300,9 @@ func (p *Provider) Respond(
 		p.rateLimit = parseRateLimit(raw.Header)
 	}
 	if lastErr != nil {
+		if hasUserText && p.generation == generation {
+			p.history = historyBeforeUser
+		}
 		return result, lastErr
 	}
 
@@ -311,6 +337,7 @@ func (p *Provider) Respond(
 		p.session.Add(result.Usage)
 		p.sessionRequests++
 		p.lastInputTokens = result.Usage.InputTokens
+		p.updateTokenFactorLocked(staged)
 	}
 	return result, nil
 }
@@ -411,6 +438,7 @@ func (p *Provider) SetAPIKey(apiKey string) error {
 	p.sessionRequests = 0
 	p.rateLimit = agent.RateLimit{}
 	p.lastInputTokens = 0
+	p.tokenFactor = 1.0
 	p.refreshContextLocked()
 	return nil
 }

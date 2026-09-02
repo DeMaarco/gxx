@@ -24,18 +24,27 @@ import (
 )
 
 var (
-	OAuthIdentity   = oauthIdentity
-	SystemBlocks    = systemBlocks
-	ToolParams      = toolParams
-	ThinkingFor     = thinkingForEffort
-	UnmatchedIDs    = unmatchedToolIDs
-	AssistantText   = assistantText
-	FetchOAuthUsage = fetchOAuthUsage
-	ParseOAuthUsage = parseOAuthUsage
-	OAuthUsageURL   = oauthUsageURL
-	Retryable       = retryable
-	RetryDelay      = retryDelay
-	MaxRetryAfter   = maxRetryAfter
+	OAuthIdentity      = oauthIdentity
+	SystemBlocks       = systemBlocks
+	ToolParams         = toolParams
+	ThinkingFor        = thinkingForEffort
+	UnmatchedIDs       = unmatchedToolIDs
+	AssistantText      = assistantText
+	FetchOAuthUsage    = fetchOAuthUsage
+	ParseOAuthUsage    = parseOAuthUsage
+	OAuthUsageURL      = oauthUsageURL
+	Retryable          = retryable
+	RetryDelay         = retryDelay
+	MaxRetryAfter      = maxRetryAfter
+	SlimInput          = slimInput
+	ClipOldToolOutputs = clipOldToolOutputs
+	DropOldTurns       = dropOldTurns
+	SummarizeDropped   = summarizeDropped
+	EmergencyFit       = emergencyFit
+	DropOldThinking    = dropOldThinking
+	DropAllThinking    = dropAllThinking
+	KeepLatestThinking = keepLatestThinking
+	ToolPairsIntact    = toolPairsIntact
 )
 
 func (p *Provider) SetHistory(items []anthropicsdk.MessageParam) {
@@ -68,6 +77,30 @@ func (p *Provider) RefreshContext() {
 
 func (p *Provider) OverBudget(items []anthropicsdk.MessageParam) bool {
 	return p.overBudget(items)
+}
+
+func (p *Provider) ContextTokens() int {
+	return p.contextTokens
+}
+
+func (p *Provider) SetContextTokens(n int) {
+	p.contextTokens = n
+}
+
+func (p *Provider) SetLastInputTokens(n int64) {
+	p.lastInputTokens = n
+}
+
+func (p *Provider) LastInputTokens() int64 {
+	return p.lastInputTokens
+}
+
+func (p *Provider) TokenFactor() float64 {
+	return p.tokenFactor
+}
+
+func (p *Provider) SetTokenFactor(factor float64) {
+	p.tokenFactor = factor
 }
 
 func StaticToken(token string) TokenSource {

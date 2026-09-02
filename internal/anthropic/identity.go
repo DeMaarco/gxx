@@ -28,7 +28,12 @@ const (
 func systemBlocks(instructions string) []anthropicsdk.TextBlockParam {
 	blocks := []anthropicsdk.TextBlockParam{{Text: oauthIdentity}}
 	if instructions != "" {
-		blocks = append(blocks, anthropicsdk.TextBlockParam{Text: instructions})
+		blocks = append(blocks, anthropicsdk.TextBlockParam{
+			Text:         instructions,
+			CacheControl: anthropicsdk.NewCacheControlEphemeralParam(),
+		})
+	} else {
+		blocks[0].CacheControl = anthropicsdk.NewCacheControlEphemeralParam()
 	}
 	return blocks
 }

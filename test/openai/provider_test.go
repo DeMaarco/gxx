@@ -504,7 +504,7 @@ func TestProviderRetainsToolOutputsAfterFailedFollowUp(t *testing.T) {
 	}
 }
 
-func TestProviderRetainsUserMessageAfterTransportFailure(t *testing.T) {
+func TestProviderRollsBackUserTextOnAPIFailure(t *testing.T) {
 	var requests []map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		body, _ := io.ReadAll(request.Body)
@@ -539,28 +539,43 @@ func TestProviderRetainsUserMessageAfterTransportFailure(t *testing.T) {
 		option.WithBaseURL(server.URL+"/"),
 		option.WithMaxRetries(0),
 	))
+	const userText = "same user prompt"
 	if _, err := provider.Respond(
 		context.Background(),
-		agent.ModelInput{UserText: "original request"},
+		agent.ModelInput{UserText: userText},
 		nil,
 		nil,
 	); err == nil {
 		t.Fatal("first Respond() succeeded, want server error")
 	}
+	if users := countUserMessages(provider.History()); users != 0 {
+		t.Fatalf("history user messages after failure = %d, want 0", users)
+	}
 	if _, err := provider.Respond(
 		context.Background(),
-		agent.ModelInput{UserText: "continue"},
+		agent.ModelInput{UserText: userText},
 		nil,
 		nil,
 	); err != nil {
 		t.Fatalf("second Respond() error = %v", err)
 	}
+	if users := countUserMessages(provider.History()); users != 1 {
+		t.Fatalf("history user messages after retry = %d, want 1", users)
+	}
 	secondInput, _ := json.Marshal(requests[len(requests)-1]["input"])
-	for _, expected := range []string{"original request", "continue"} {
-		if !strings.Contains(string(secondInput), expected) {
-			t.Fatalf("second input = %s, want %q", secondInput, expected)
+	if got := strings.Count(string(secondInput), userText); got != 1 {
+		t.Fatalf("second input mentions user text %d times, want 1: %s", got, secondInput)
+	}
+}
+
+func countUserMessages(history []responses.ResponseInputItemUnionParam) int {
+	n := 0
+	for _, item := range history {
+		if item.OfMessage != nil && item.OfMessage.Role == responses.EasyInputMessageRoleUser {
+			n++
 		}
 	}
+	return n
 }
 
 func TestResponseTextIncludesRefusal(t *testing.T) {
@@ -1058,6 +1073,110 @@ func TestProviderRespondDoesNotHoldLockDuringStream(t *testing.T) {
 	close(release)
 	if err := <-done; err != nil {
 		t.Fatalf("Respond() error = %v", err)
+	}
+}
+
+func TestProviderCancelDuringRespondRollsBackUserText(t *testing.T) {
+	started := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, httpRequest *http.Request) {
+		writer.Header().Set("Content-Type", "text/event-stream")
+		if flusher, ok := writer.(http.Flusher); ok {
+			flusher.Flush()
+		}
+		close(started)
+		<-httpRequest.Context().Done()
+	}))
+	defer server.Close()
+
+	provider := testStreamingProvider(t, server, "inst")
+	provider.SetHistory([]responses.ResponseInputItemUnionParam{
+		responses.ResponseInputItemParamOfMessage("prior", responses.EasyInputMessageRoleUser),
+		responses.ResponseInputItemParamOfMessage("prior answer", responses.EasyInputMessageRoleAssistant),
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, err := provider.Respond(ctx, agent.ModelInput{UserText: "cancel me"}, nil, nil)
+		done <- err
+	}()
+
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("stream did not start")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("Respond() succeeded, want cancel error")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Respond() did not return after cancel")
+	}
+	all, _ := json.Marshal(provider.History())
+	if strings.Contains(string(all), "cancel me") {
+		t.Fatal("canceled user text was committed to history")
+	}
+	if len(provider.History()) != 2 {
+		t.Fatalf("history len = %d, want 2 (no partial assistant commit)", len(provider.History()))
+	}
+}
+
+func TestRespondUpdatesTokenFactorFromUsage(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Content-Type", "text/event-stream")
+		writeSSE(t, writer, map[string]any{
+			"type": "response.completed",
+			"response": map[string]any{
+				"id":     "resp_1",
+				"object": "response",
+				"status": "completed",
+				"output": []any{map[string]any{
+					"id":     "msg_1",
+					"type":   "message",
+					"role":   "assistant",
+					"status": "completed",
+					"content": []any{map[string]any{
+						"type": "output_text", "text": "ok", "annotations": []any{},
+					}},
+				}},
+				"usage": map[string]any{
+					"input_tokens":  400,
+					"output_tokens": 2,
+					"total_tokens":  402,
+					"input_tokens_details": map[string]any{
+						"cached_tokens":      0,
+						"cache_write_tokens": 0,
+					},
+					"output_tokens_details": map[string]any{
+						"reasoning_tokens": 0,
+					},
+				},
+			},
+		})
+		_, _ = fmt.Fprint(writer, "data: [DONE]\n\n")
+	}))
+	defer server.Close()
+
+	provider := testStreamingProvider(t, server, "inst")
+	if provider.TokenFactor() != 1.0 {
+		t.Fatalf("default factor = %v, want 1.0", provider.TokenFactor())
+	}
+	if _, err := provider.Respond(
+		context.Background(),
+		agent.ModelInput{UserText: "hello"},
+		nil,
+		nil,
+	); err != nil {
+		t.Fatalf("Respond() error = %v", err)
+	}
+	if provider.TokenFactor() == 1.0 {
+		t.Fatal("token factor should move after usage observation")
+	}
+	if provider.TokenFactor() < 0.5 || provider.TokenFactor() > 2.0 {
+		t.Fatalf("token factor = %v, want within clamp", provider.TokenFactor())
 	}
 }
 

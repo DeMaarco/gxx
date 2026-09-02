@@ -25,7 +25,11 @@ import (
 
 var ErrMaxSteps = errors.New("agent reached the maximum number of steps")
 
-const repeatedToolNotice = "Repeated call with the same arguments; previous result still applies.\n"
+const (
+	repeatedToolNotice    = "Repeated call with the same arguments; previous result still applies.\n"
+	toolLoopFailThreshold = 3
+	toolLoopNotice        = "Same tool call failed repeatedly with the same error; the previous result still applies — change arguments or approach."
+)
 
 // Loop coordinates model responses and local tool execution.
 type Loop struct {
@@ -68,7 +72,9 @@ func (l *Loop) Run(ctx context.Context, prompt string, emit EmitFunc) (Result, e
 
 	input := ModelInput{UserText: prompt}
 	definitions := l.Executor.Definitions()
+	readOnly := readOnlyToolSet(definitions)
 	cache := make(map[string]ToolResult)
+	var streak failStreak
 
 	for step := 1; step <= l.MaxSteps; step++ {
 		if err := ctx.Err(); err != nil {
@@ -102,7 +108,7 @@ func (l *Loop) Run(ctx context.Context, prompt string, emit EmitFunc) (Result, e
 			Emit(emit, Event{Kind: EventToolCall, ToolCall: &call, Step: step})
 		}
 
-		toolResults := l.executeTools(ctx, response.ToolCalls, emit, cache)
+		toolResults := l.executeTools(ctx, response.ToolCalls, emit, cache, readOnly, &streak)
 		result.ToolResults = append(result.ToolResults, toolResults...)
 		if err := ctx.Err(); err != nil {
 			l.Model.AbsorbToolResults(toolResults)
@@ -119,6 +125,8 @@ func (l *Loop) executeTools(
 	calls []ToolCall,
 	emit EmitFunc,
 	cache map[string]ToolResult,
+	readOnly map[string]bool,
+	streak *failStreak,
 ) []ToolResult {
 	if len(calls) == 0 {
 		return nil
@@ -132,9 +140,11 @@ func (l *Loop) executeTools(
 	for i, call := range calls {
 		key := toolCallKey(call)
 		keys[i] = key
-		if _, ok := cache[key]; ok {
-			cached[i] = true
-			continue
+		if readOnly[call.Name] {
+			if _, ok := cache[key]; ok {
+				cached[i] = true
+				continue
+			}
 		}
 		if seen[key] {
 			continue
@@ -144,6 +154,7 @@ func (l *Loop) executeTools(
 	}
 
 	executedByID := make(map[string]ToolResult, len(unique))
+	batchByKey := make(map[string]ToolResult, len(unique))
 	if len(unique) > 0 {
 		executed := l.Executor.Execute(ctx, unique, emit)
 		for _, result := range executed {
@@ -169,37 +180,100 @@ func (l *Loop) executeTools(
 				}
 			}
 			executedByID[call.ID] = result
-			cache[toolCallKey(call)] = result
+			key := toolCallKey(call)
+			batchByKey[key] = result
+			if readOnly[call.Name] {
+				cache[key] = result
+			}
 		}
 	}
 
 	results := make([]ToolResult, 0, len(calls))
 	for i, call := range calls {
-		if cached[i] {
-			result := reusedToolResult(call, cache[keys[i]])
+		var result ToolResult
+		switch {
+		case cached[i]:
+			result = reusedToolResult(call, cache[keys[i]])
 			emitReusedTool(emit, call, result)
-			results = append(results, result)
-			continue
-		}
-		if result, ok := executedByID[call.ID]; ok {
-			results = append(results, result)
-			continue
-		}
-		if prev, ok := cache[keys[i]]; ok {
-			result := reusedToolResult(call, prev)
-			emitReusedTool(emit, call, result)
-			results = append(results, result)
-			continue
-		}
-		result := ToolResult{
-			CallID:  call.ID,
-			Name:    call.Name,
-			Output:  "error: tool produced no result",
-			IsError: true,
+		default:
+			if got, ok := executedByID[call.ID]; ok {
+				result = got
+			} else if prev, ok := batchByKey[keys[i]]; ok {
+				result = reusedToolResult(call, prev)
+				emitReusedTool(emit, call, result)
+			} else if prev, ok := cache[keys[i]]; ok {
+				result = reusedToolResult(call, prev)
+				emitReusedTool(emit, call, result)
+			} else {
+				result = ToolResult{
+					CallID:  call.ID,
+					Name:    call.Name,
+					Output:  "error: tool produced no result",
+					IsError: true,
+				}
+			}
 		}
 		results = append(results, result)
+		if streak != nil {
+			streak.observe(keys[i], result, emit)
+		}
 	}
 	return results
+}
+
+type failStreak struct {
+	key     string
+	output  string
+	count   int
+	noticed bool
+}
+
+func (s *failStreak) observe(key string, result ToolResult, emit EmitFunc) {
+	if s == nil {
+		return
+	}
+	if !result.IsError {
+		s.key = ""
+		s.output = ""
+		s.count = 0
+		return
+	}
+	out := strings.TrimPrefix(result.Output, repeatedToolNotice)
+	if key == s.key && sameFailOutput(out, s.output) {
+		s.count++
+	} else {
+		s.key = key
+		s.output = out
+		s.count = 1
+	}
+	if s.count >= toolLoopFailThreshold && !s.noticed {
+		s.noticed = true
+		Emit(emit, Event{Kind: EventNotice, Text: toolLoopNotice})
+	}
+}
+
+func sameFailOutput(a, b string) bool {
+	if a == b {
+		return true
+	}
+	const n = 200
+	if len(a) > n {
+		a = a[:n]
+	}
+	if len(b) > n {
+		b = b[:n]
+	}
+	return a == b
+}
+
+func readOnlyToolSet(definitions []ToolDefinition) map[string]bool {
+	out := make(map[string]bool, len(definitions))
+	for _, def := range definitions {
+		if def.ReadOnly {
+			out[def.Name] = true
+		}
+	}
+	return out
 }
 
 func emitReusedTool(emit EmitFunc, call ToolCall, result ToolResult) {
