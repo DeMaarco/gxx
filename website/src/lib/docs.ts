@@ -22,6 +22,7 @@ export const docsNav: Record<DocLocale, DocNavSection[]> = {
 		{
 			label: 'using gxx',
 			items: [
+				{ slug: 'skills', label: 'Skills' },
 				{ slug: 'repl', label: 'REPL' },
 				{ slug: 'permissions', label: 'Permissions' },
 				{ slug: 'privacy', label: 'Privacy' },
@@ -40,6 +41,7 @@ export const docsNav: Record<DocLocale, DocNavSection[]> = {
 		{
 			label: 'usar gxx',
 			items: [
+				{ slug: 'skills', label: 'Skills' },
 				{ slug: 'repl', label: 'REPL' },
 				{ slug: 'permissions', label: 'Permisos' },
 				{ slug: 'privacy', label: 'Privacidad' },

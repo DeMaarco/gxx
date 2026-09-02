@@ -257,6 +257,16 @@ func Path() (string, error) {
 	return unixConfigPath()
 }
 
+// UserSkillsDir returns the personal Agent Skills directory beside config.json
+// (~/.config/gxx/skills, or %APPDATA%\gxx\skills on Windows).
+func UserSkillsDir() (string, error) {
+	path, err := Path()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(filepath.Dir(path), "skills"), nil
+}
+
 func windowsConfigPath() (string, error) {
 	base, err := os.UserConfigDir()
 	if err != nil {

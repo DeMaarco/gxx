@@ -40,8 +40,11 @@ type Loop struct {
 	// user turn so the model does not need to list the root first.
 	Overview func(context.Context) string
 	// ProjectContext, if set, returns AGENTS.md quoted data prepended after
-	// Overview and before the user's text on each turn.
+	// Overview and before SkillsContext / the user's text on each turn.
 	ProjectContext func() string
+	// SkillsContext, if set, returns the skill catalog prepended after
+	// Overview and ProjectContext and before the user's text on each turn.
+	SkillsContext func() string
 }
 
 func (l *Loop) Run(ctx context.Context, prompt string, emit EmitFunc) (Result, error) {
@@ -59,16 +62,24 @@ func (l *Loop) Run(ctx context.Context, prompt string, emit EmitFunc) (Result, e
 	if strings.TrimSpace(prompt) == "" {
 		return result, errors.New("prompt cannot be empty")
 	}
+	parts := make([]string, 0, 4)
 	if l.Overview != nil {
 		if snap := strings.TrimSpace(l.Overview(ctx)); snap != "" {
-			prompt = snap + "\n\n" + prompt
+			parts = append(parts, snap)
 		}
 	}
 	if l.ProjectContext != nil {
 		if project := strings.TrimSpace(l.ProjectContext()); project != "" {
-			prompt = project + "\n\n" + prompt
+			parts = append(parts, project)
 		}
 	}
+	if l.SkillsContext != nil {
+		if catalog := strings.TrimSpace(l.SkillsContext()); catalog != "" {
+			parts = append(parts, catalog)
+		}
+	}
+	parts = append(parts, prompt)
+	prompt = strings.Join(parts, "\n\n")
 
 	input := ModelInput{UserText: prompt}
 	definitions := l.Executor.Definitions()

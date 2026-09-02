@@ -42,6 +42,7 @@ import (
 	"gxx/internal/models"
 	openaiProvider "gxx/internal/openai"
 	"gxx/internal/pricing"
+	"gxx/internal/skills"
 	"gxx/internal/tools"
 	"gxx/internal/ui"
 	"gxx/internal/workspace"
@@ -583,6 +584,13 @@ func newRuntimeFromConfig(
 		ParallelReads:   settings.ParallelReads,
 		CommandTimeout:  settings.CommandTimeout,
 	})
+	registry.SetSkillsCatalog(func() []skills.Skill {
+		userDir, err := config.UserSkillsDir()
+		if err != nil {
+			return skills.Discover(ws, "")
+		}
+		return skills.Discover(ws, userDir)
+	})
 	model, err := newBackend(settings, ws)
 	if err != nil {
 		return nil, err
@@ -610,6 +618,9 @@ func newRuntimeFromConfig(
 	}
 	loop.ProjectContext = func() string {
 		return agent.ProjectContext(ws, rt.eco)
+	}
+	loop.SkillsContext = func() string {
+		return agent.SkillsContext(ws, rt.eco)
 	}
 	if store, err := conversations.NewStore(); err == nil {
 		rt.conversationStore = store
@@ -755,6 +766,22 @@ func replSettings(rt *runtime, stdin io.Reader, stdout io.Writer) ui.REPLSetting
 				return "", fmt.Errorf("conversation menu requires a terminal")
 			}
 			return ui.ReadConversationChoice(ctx, file, writer, entries, ui.ColorEnabled(stdout))
+		},
+		ListSkills: func() []ui.SkillEntry {
+			userDir, err := config.UserSkillsDir()
+			if err != nil {
+				userDir = ""
+			}
+			catalog := skills.Discover(rt.workspace, userDir)
+			entries := make([]ui.SkillEntry, 0, len(catalog))
+			for _, skill := range catalog {
+				entries = append(entries, ui.SkillEntry{
+					Name:        skill.Name,
+					Origin:      skill.Origin,
+					Description: skill.Description,
+				})
+			}
+			return entries
 		},
 	}
 }

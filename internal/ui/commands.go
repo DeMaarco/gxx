@@ -30,6 +30,7 @@ var slashCommands = []slashCommand{
 	{name: "/eco", help: "Caveman input saver: lite, full, ultra"},
 	{name: "/compact", help: "Summarize older turns to free context"},
 	{name: "/mode", help: "Select permission mode for agent: ask, auto-writes, or auto"},
+	{name: "/skills", help: "List discovered Agent Skills"},
 	{name: "/config", help: "Set the OpenAI API key (same as /login api)"},
 	{name: "/login", help: "Connect one account: openai, claude, or api"},
 	{name: "/logout", help: "Clear the connected account"},

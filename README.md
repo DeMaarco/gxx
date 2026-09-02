@@ -154,6 +154,8 @@ model · permission · effort · context size · how full the window is
 
 Drop an `AGENTS.md` in the project root if you want extra project notes loaded every turn. Those notes cannot override gxx safety rules.
 
+Agent Skills (`SKILL.md` under `.agents/skills`, `.gxx/skills`, or `~/.config/gxx/skills`) load as a name+description catalog each turn; `read_skill` fetches the body. See the [Skills](https://demaarco.github.io/gxx/skills/) docs.
+
 ---
 
 ## What makes gxx different
@@ -274,6 +276,7 @@ Prefer `ask` or `auto-writes` until you trust a workflow. Commands are not OS-sa
 | `/context` | How full the window is |
 | `/usage` | Tokens, estimated cost, remaining quota |
 | `/history` | Saved conversations for this workspace |
+| `/skills` | List discovered Agent Skills |
 | `/clear` | Archive this chat and start fresh |
 | `/exit` | Quit |
 
@@ -284,7 +287,7 @@ Inline forms work too: `/model opus`, `/mode auto-writes`, `/eco full`.
 ## Privacy (short version)
 
 - Requests use `store:false` where the API supports it.
-- Only files the tools actually open are sent to the provider.
+- Only files the tools actually open are sent to the provider (plus the Skills catalog each turn, and any `read_skill` bodies).
 - Secret paths stay blocked.
 - Keys and OAuth tokens live in an owner-only `config.json`.
 - Do not point gxx at code you cannot send to that account.

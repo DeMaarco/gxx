@@ -120,6 +120,81 @@ func TestRunREPLHandlesCommandsAndInjectedIO(t *testing.T) {
 	}
 }
 
+func TestRunREPLListsSkills(t *testing.T) {
+	loop := &agent.Loop{Model: &replModel{}, Executor: emptyExecutor{}, MaxSteps: 2}
+	input := bufio.NewReader(strings.NewReader("/skills\n/exit\n"))
+	var output bytes.Buffer
+	err := ui.RunREPL(
+		context.Background(),
+		loop,
+		input,
+		ui.NewRenderer(&output),
+		&output,
+		ui.REPLSettings{
+			Version:          "0.0.1",
+			Model:            "test-model",
+			PermissionMode:   config.PermissionAsk,
+			Effort:           "medium",
+			Workspace:        "/workspace",
+			APIKeyConfigured: true,
+			ListSkills: func() []ui.SkillEntry {
+				return []ui.SkillEntry{
+					{Name: "code-review", Origin: "project", Description: "Review diffs"},
+					{Name: "personal", Origin: "user", Description: "Personal helper"},
+				}
+			},
+		},
+	)
+	if err != nil {
+		t.Fatalf("RunREPL() error = %v", err)
+	}
+	text := output.String()
+	for _, expected := range []string{
+		"code-review",
+		"(project)",
+		"Review diffs",
+		"personal",
+		"(user)",
+		"Personal helper",
+	} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("output = %q, want %q", text, expected)
+		}
+	}
+}
+
+func TestRunREPLSkillsEmptyHint(t *testing.T) {
+	loop := &agent.Loop{Model: &replModel{}, Executor: emptyExecutor{}, MaxSteps: 2}
+	input := bufio.NewReader(strings.NewReader("/skills\n/exit\n"))
+	var output bytes.Buffer
+	err := ui.RunREPL(
+		context.Background(),
+		loop,
+		input,
+		ui.NewRenderer(&output),
+		&output,
+		ui.REPLSettings{
+			Version:          "0.0.1",
+			Model:            "test-model",
+			PermissionMode:   config.PermissionAsk,
+			Effort:           "medium",
+			Workspace:        "/workspace",
+			APIKeyConfigured: true,
+			ListSkills:       func() []ui.SkillEntry { return nil },
+		},
+	)
+	if err != nil {
+		t.Fatalf("RunREPL() error = %v", err)
+	}
+	text := output.String()
+	if !strings.Contains(text, "No skills discovered.") {
+		t.Fatalf("output = %q, want empty hint", text)
+	}
+	if !strings.Contains(text, ".agents/skills") || !strings.Contains(text, "~/.config/gxx/skills") {
+		t.Fatalf("output = %q, want discovery path hints", text)
+	}
+}
+
 func TestRunREPLRefreshesModelsBeforeEachPrompt(t *testing.T) {
 	loop := &agent.Loop{Model: &replModel{}, Executor: emptyExecutor{}, MaxSteps: 2}
 	input := bufio.NewReader(strings.NewReader("/exit\n"))

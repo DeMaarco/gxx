@@ -41,6 +41,7 @@ Las conversaciones se guardan automáticamente tras cada turno en `~/.config/gxx
 | `/context` | Ocupación de la ventana |
 | `/usage` | Tokens de sesión, coste estimado, y cuota restante de suscripción o API |
 | `/history` | Abrir conversaciones guardadas para este workspace |
+| `/skills` | Listar Agent Skills descubiertas |
 | `/clear` | Archivar esta conversación e iniciar una nueva |
 | `/exit` | Salir |
 

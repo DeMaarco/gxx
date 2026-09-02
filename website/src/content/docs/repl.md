@@ -41,6 +41,7 @@ Conversations are saved automatically after each turn to `~/.config/gxx/conversa
 | `/context` | Window occupancy |
 | `/usage` | Session tokens, estimated cost, and remaining subscription or API quota |
 | `/history` | Open saved conversations for this workspace |
+| `/skills` | List discovered Agent Skills |
 | `/clear` | Archive this conversation and start a new one |
 | `/exit` | Quit |
 

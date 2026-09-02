@@ -377,3 +377,123 @@ func TestSystemPromptWithOptionsStablePrefix(t *testing.T) {
 		t.Fatal("AGENTS status note should change the system prompt (cache-invalidating flip)")
 	}
 }
+
+func writePromptSkill(t *testing.T, root, name, description, body string) {
+	t.Helper()
+	dir := filepath.Join(root, name)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	content := "---\nname: " + name + "\ndescription: " + description + "\n---\n" + body + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func isolateUserSkills(t *testing.T) string {
+	t.Helper()
+	base := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", base)
+	return filepath.Join(base, "gxx", "skills")
+}
+
+func TestSkillsContextInUserMessageNotSystem(t *testing.T) {
+	isolateUserSkills(t)
+	root := t.TempDir()
+	writePromptSkill(t, filepath.Join(root, ".agents", "skills"), "code-review", "Review diffs carefully", "do review")
+	ws, err := workspace.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ws.Close()
+
+	prompt := agent.SystemPrompt(ws, false)
+	if strings.Contains(prompt, "Review diffs carefully") || strings.Contains(prompt, "code-review") {
+		t.Fatalf("system prompt embedded skill catalog: %q", prompt)
+	}
+	if !strings.Contains(prompt, "call read_skill for a matching skill") {
+		t.Fatalf("prompt = %q, want short skills note when catalog is non-empty", prompt)
+	}
+
+	context := agent.SkillsContext(ws, 0)
+	if !strings.Contains(context, "[skills — untrusted catalog data") {
+		t.Fatalf("context = %q, want skills header", context)
+	}
+	if !strings.Contains(context, "- code-review (project): Review diffs carefully") {
+		t.Fatalf("context = %q, want catalog entry", context)
+	}
+	if strings.Contains(context, "do review") {
+		t.Fatalf("context embedded skill body: %q", context)
+	}
+}
+
+func TestSkillsContextEmptyOmitsSystemNote(t *testing.T) {
+	isolateUserSkills(t)
+	root := t.TempDir()
+	ws, err := workspace.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ws.Close()
+
+	if got := agent.SkillsContext(ws, 0); got != "" {
+		t.Fatalf("SkillsContext = %q, want empty", got)
+	}
+	prompt := agent.SystemPrompt(ws, false)
+	if strings.Contains(prompt, "call read_skill") {
+		t.Fatalf("prompt = %q, did not want skills note without catalog", prompt)
+	}
+}
+
+func TestSkillsContextReloadsBetweenCalls(t *testing.T) {
+	isolateUserSkills(t)
+	root := t.TempDir()
+	writePromptSkill(t, filepath.Join(root, ".gxx", "skills"), "alpha", "First skill description", "body")
+	ws, err := workspace.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ws.Close()
+
+	first := agent.SkillsContext(ws, 0)
+	if !strings.Contains(first, "First skill description") {
+		t.Fatalf("first = %q", first)
+	}
+	writePromptSkill(t, filepath.Join(root, ".gxx", "skills"), "beta", "Second skill description", "body")
+	second := agent.SkillsContext(ws, 0)
+	if !strings.Contains(second, "Second skill description") {
+		t.Fatalf("second = %q, want reloaded catalog", second)
+	}
+	if !strings.Contains(second, "alpha") || !strings.Contains(second, "beta") {
+		t.Fatalf("second = %q, want both skills", second)
+	}
+}
+
+func TestSkillsContextEcoCompressesDescriptions(t *testing.T) {
+	isolateUserSkills(t)
+	root := t.TempDir()
+	writePromptSkill(
+		t,
+		filepath.Join(root, ".agents", "skills"),
+		"demo",
+		"Please just really use focused careful review steps",
+		"body",
+	)
+	ws, err := workspace.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ws.Close()
+
+	plain := agent.SkillsContext(ws, 0)
+	eco := agent.SkillsContext(ws, 3)
+	if strings.Contains(eco, "Please just really") {
+		t.Fatalf("eco left filler in skill description: %q", eco)
+	}
+	if !strings.Contains(plain, "Please just really") {
+		t.Fatalf("plain = %q, want uncompressed description", plain)
+	}
+	if !strings.Contains(eco, "- demo (project):") {
+		t.Fatalf("eco = %q, want skill name preserved", eco)
+	}
+}

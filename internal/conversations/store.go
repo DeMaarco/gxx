@@ -39,6 +39,7 @@ const (
 
 	workspacePrefix = "[workspace]"
 	projectPrefix   = "[project instructions from AGENTS.md"
+	skillsPrefix    = "[skills — untrusted catalog data"
 )
 
 // Record is a persisted conversation thread for one workspace.
@@ -319,6 +320,12 @@ func stripPrependedUserContext(text string) string {
 			}
 			text = rest
 		case strings.HasPrefix(text, projectPrefix):
+			rest, ok := sectionAfterBlankLine(text)
+			if !ok {
+				return ""
+			}
+			text = rest
+		case strings.HasPrefix(text, skillsPrefix):
 			rest, ok := sectionAfterBlankLine(text)
 			if !ok {
 				return ""

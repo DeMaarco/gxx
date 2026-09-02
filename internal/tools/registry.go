@@ -26,6 +26,7 @@ import (
 
 	"gxx/internal/agent"
 	"gxx/internal/approval"
+	"gxx/internal/skills"
 	"gxx/internal/workspace"
 )
 
@@ -58,6 +59,7 @@ type Registry struct {
 	commandTimeout   time.Duration
 	imageTimeout     time.Duration
 	generateImage    func(context.Context, ImageRequest) (ImageResult, error)
+	skillsCatalog    func() []skills.Skill
 	specs            map[string]toolSpec
 	plan             atomic.Bool
 	ask              atomic.Bool
@@ -79,6 +81,7 @@ func NewRegistry(ws *workspace.Workspace, approver approval.Approver, options Op
 		r.listFilesSpec(),
 		r.searchFilesSpec(),
 		r.readFileSpec(),
+		r.readSkillSpec(),
 		r.gitStatusSpec(),
 		r.gitDiffSpec(),
 		r.gitLogSpec(),
@@ -131,6 +134,7 @@ func (r *Registry) Definitions() []agent.ToolDefinition {
 		"list_files",
 		"search_files",
 		"read_file",
+		"read_skill",
 		"git_status",
 		"git_diff",
 		"git_log",

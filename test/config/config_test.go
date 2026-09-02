@@ -493,6 +493,19 @@ func TestPathUsesAppDataOnWindows(t *testing.T) {
 	}
 }
 
+func TestUserSkillsDirBesideConfig(t *testing.T) {
+	base := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", base)
+	dir, err := config.UserSkillsDir()
+	if err != nil {
+		t.Fatalf("UserSkillsDir() error = %v", err)
+	}
+	want := filepath.Join(base, "gxx", "skills")
+	if dir != want {
+		t.Fatalf("UserSkillsDir() = %q, want %q", dir, want)
+	}
+}
+
 func TestLoadFallsBackToLegacyWindowsConfig(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows legacy config")

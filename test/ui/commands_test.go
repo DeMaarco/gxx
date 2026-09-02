@@ -35,9 +35,11 @@ func TestLookupSlashCommand(t *testing.T) {
 		{line: "/model terra", name: "/model"},
 		{line: "/mode auto", name: "/mode"},
 		{line: "/eco 2", name: "/eco"},
+		{line: "/skills", name: "/skills"},
 		{line: "/foo", wantErr: "unknown command /foo"},
 		{line: "/help extra", wantErr: "unexpected argument for /help"},
 		{line: "/clear now", wantErr: "unexpected argument for /clear"},
+		{line: "/skills list", wantErr: "unexpected argument for /skills"},
 		{line: "/modelxyz", wantErr: "unknown command /modelxyz"},
 	}
 	for _, test := range tests {

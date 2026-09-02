@@ -80,7 +80,15 @@ type REPLSettings struct {
 	ArchiveAndClear     func() error
 	RefreshSession      func(*REPLSettings)
 	ChooseConversation  func(context.Context, io.Writer) (string, error)
+	ListSkills          func() []SkillEntry
 	PendingConversationID string
+}
+
+// SkillEntry is one discovered Agent Skill for /skills.
+type SkillEntry struct {
+	Name        string
+	Origin      string
+	Description string
 }
 
 type Renderer struct {
@@ -643,6 +651,10 @@ func RunREPL(
 				printREPLHelp(writer, settings)
 				writeREPLGap(writer)
 				continue
+			case "/skills":
+				printSkills(writer, settings)
+				writeREPLGap(writer)
+				continue
 			case "/usage":
 				if err := showUsage(sessionCtx, writer, settings); err != nil {
 					fmt.Fprintf(writer, "%s\n", paint(settings.Color, red, "error: "+err.Error()))
@@ -939,6 +951,29 @@ func printREPLHelp(writer io.Writer, settings REPLSettings) {
 		paint(settings.Color, cyan, "Ctrl+O"),
 		paint(settings.Color, dim, "Open saved conversations for this workspace"),
 	)
+}
+
+func printSkills(writer io.Writer, settings REPLSettings) {
+	if settings.ListSkills == nil {
+		fmt.Fprintln(writer, paint(settings.Color, dim, "No skills discovered."))
+		return
+	}
+	entries := settings.ListSkills()
+	if len(entries) == 0 {
+		fmt.Fprintln(writer, paint(settings.Color, dim, "No skills discovered."))
+		fmt.Fprintln(writer, paint(settings.Color, dim, "Project: .agents/skills/<name>/SKILL.md or .gxx/skills/<name>/SKILL.md"))
+		fmt.Fprintln(writer, paint(settings.Color, dim, "Personal: ~/.config/gxx/skills/<name>/SKILL.md"))
+		return
+	}
+	for _, entry := range entries {
+		fmt.Fprintf(
+			writer,
+			"%s %s\n  %s\n",
+			paint(settings.Color, cyan, entry.Name),
+			paint(settings.Color, dim, "("+entry.Origin+")"),
+			entry.Description,
+		)
+	}
 }
 
 func applyCompactCommand(ctx context.Context, writer io.Writer, settings *REPLSettings, args []string) error {
