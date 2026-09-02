@@ -70,6 +70,9 @@ func TestSystemPromptExcludesAgentsBody(t *testing.T) {
 	if !strings.Contains(prompt, "Skip reads when the user forbids tools") {
 		t.Fatalf("prompt = %q, want no-tool respect rule", prompt)
 	}
+	if !strings.Contains(prompt, "Do not call list_files once per child folder") {
+		t.Fatalf("prompt = %q, want inventory tool budget rule", prompt)
+	}
 
 	if err := os.WriteFile(
 		filepath.Join(root, "AGENTS.md"),

@@ -54,9 +54,10 @@ const (
 func (r *Registry) listFilesSpec() toolSpec {
 	return toolSpec{
 		definition: agent.ToolDefinition{
-			Name:        "list_files",
-			Description: "List files and directories under a workspace-relative path. Default dependency directories, .gitignore, .gxxignore patterns, and sensitive paths are skipped.",
-			ReadOnly:    true,
+			Name: "list_files",
+			Description: "List files and directories under a workspace-relative path. Default dependency directories, .gitignore, .gxxignore patterns, and sensitive paths are skipped. " +
+				"For package or folder inventories prefer path set and max_depth=1. Do not deep-list a large tree when names alone answer the question.",
+			ReadOnly: true,
 			Parameters: objectSchema(map[string]any{
 				"path": map[string]any{
 					"type":        []string{"string", "null"},
@@ -64,7 +65,7 @@ func (r *Registry) listFilesSpec() toolSpec {
 				},
 				"max_depth": map[string]any{
 					"type":        []string{"integer", "null"},
-					"description": "Maximum recursion depth from 1 to 12, or null for 4.",
+					"description": "Maximum recursion depth from 1 to 12, or null for 4. Use 1 for top-level names only.",
 				},
 			}, "path", "max_depth"),
 		},

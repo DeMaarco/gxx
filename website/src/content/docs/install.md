@@ -19,7 +19,7 @@ gxx version
 Pin a release or another directory:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/DeMaarco/gxx/main/install.sh | sh -s -- --version v0.0.20
+curl -fsSL https://raw.githubusercontent.com/DeMaarco/gxx/main/install.sh | sh -s -- --version v0.0.21
 curl -fsSL https://raw.githubusercontent.com/DeMaarco/gxx/main/install.sh | sh -s -- --dir /usr/local/bin
 ```
 
@@ -34,7 +34,7 @@ That puts `gxx.exe` in `%LOCALAPPDATA%\gxx` and puts that folder first on your u
 Pin a release or another directory:
 
 ```powershell
-$env:GXX_VERSION = "v0.0.20"
+$env:GXX_VERSION = "v0.0.21"
 irm https://raw.githubusercontent.com/DeMaarco/gxx/main/install.ps1 | iex
 ```
 

@@ -356,7 +356,6 @@ func TestResumeProcessStartsSuspendedProcess(t *testing.T) {
 }
 
 func TestRunCommandTimeoutKillsSpawnedChild(t *testing.T) {
-	ping := filepath.Join(os.Getenv("SystemRoot"), "System32", "ping.exe")
 	root := t.TempDir()
 	registry := newTestRegistry(t, root, &staticApprover{approved: true}, tools.Options{
 		MaxResultBytes:  4096,
@@ -365,7 +364,9 @@ func TestRunCommandTimeoutKillsSpawnedChild(t *testing.T) {
 		CommandTimeout:  800 * time.Millisecond,
 	})
 
-	script := `$psi = New-Object System.Diagnostics.ProcessStartInfo; $psi.FileName = '` + ping + `'; $psi.Arguments = '-n 40 127.0.0.1'; $psi.UseShellExecute = $false; $psi.CreateNoWindow = $true; $p = [Diagnostics.Process]::Start($psi); Set-Content -Path 'child.pid' -Value $p.Id; $p.WaitForExit()`
+	// Resolve ping via PATH — absolute System32 paths are refused by the
+	// command sandbox (same absolute-path rule as on Unix).
+	script := `$psi = New-Object System.Diagnostics.ProcessStartInfo; $psi.FileName = 'ping.exe'; $psi.Arguments = '-n 40 127.0.0.1'; $psi.UseShellExecute = $false; $psi.CreateNoWindow = $true; $p = [Diagnostics.Process]::Start($psi); Set-Content -Path 'child.pid' -Value $p.Id; $p.WaitForExit()`
 	result := registry.Execute(context.Background(), []agent.ToolCall{
 		toolCall("command", "run_command", map[string]any{
 			"command": script, "timeout_seconds": nil,

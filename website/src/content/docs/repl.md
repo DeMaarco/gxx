@@ -4,7 +4,7 @@ description: Keyboard shortcuts, session modes, and slash commands.
 ---
 
 ```text
-◆ gxx  v0.0.20     badge and version
+◆ gxx  v0.0.21     badge and version
 >                 type here  ·  Shift+Tab →  > ask  ·  Shift+Tab →  agent again
 gpt-5.6-sol · auto · medium · 272k · 0%
 ```
