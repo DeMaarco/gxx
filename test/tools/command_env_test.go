@@ -162,6 +162,30 @@ func TestWithMissingCommandHint(t *testing.T) {
 	if strings.Contains(identify, "npx --yes") {
 		t.Fatalf("npx hint added for ImageMagick identify: %q", identify)
 	}
+	mixedSuccess := tools.WithMissingCommandHint(
+		"Resolve-Path fixtures/index.html; which npm; Get-Command npm",
+		`C:\lab\fixtures\index.html
+The term 'which' is not recognized as a name of a cmdlet, function, script file, or executable program.
+CommandType     Name
+ExternalScript  npm.ps1`,
+	)
+	if strings.Contains(mixedSuccess, "npx --yes") {
+		t.Fatalf("npx hint added after a successful script: %q", mixedSuccess)
+	}
+	whichFail := tools.WithMissingCommandHint(
+		"which npm",
+		"exit code 1\nThe term 'which' is not recognized as a name of a cmdlet",
+	)
+	if strings.Contains(whichFail, "npx --yes") {
+		t.Fatalf("npx hint added for unix which: %q", whichFail)
+	}
+	term := tools.WithMissingCommandHint(
+		"Resolve-Path index.html; agent-browser open index.html",
+		"exit code 1\nThe term 'agent-browser' is not recognized as the name of a cmdlet",
+	)
+	if !strings.Contains(term, `npx --yes agent-browser`) {
+		t.Fatalf("hint = %q, want missing name from PowerShell term, not Resolve-Path", term)
+	}
 }
 
 func envValue(env []string, name string) string {

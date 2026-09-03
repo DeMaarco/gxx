@@ -40,6 +40,6 @@ Scripts must pass the provider. `chatgpt` and `codex` are aliases for `openai`.
 gxx version
 ```
 
-Current release: **v0.0.23**
+Current release: **v0.0.24**
 
 See [Updates](../updates/) for what changed in each version.

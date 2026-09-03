@@ -223,6 +223,45 @@ func assertFileContents(t *testing.T, path, expected string) {
 	}
 }
 
+func TestApplyTransactionPrunesEmptyParentsAfterDelete(t *testing.T) {
+	root := t.TempDir()
+	nested := filepath.Join(root, "sites", "relay", "js")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(nested, "app.js")
+	if err := os.WriteFile(path, []byte("gone\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	keep := filepath.Join(root, "sites", "aurora", "index.html")
+	if err := os.MkdirAll(filepath.Dir(keep), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(keep, []byte("keep\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ws, err := workspace.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ws.Close()
+
+	err = ws.ApplyTransaction([]workspace.FileChange{{
+		Path:           "sites/relay/js/app.js",
+		Delete:         true,
+		Expected:       []byte("gone\n"),
+		ExpectedExists: true,
+	}})
+	if err != nil {
+		t.Fatalf("ApplyTransaction() error = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "sites", "relay")); !os.IsNotExist(err) {
+		t.Fatalf("empty deleted tree remained: %v", err)
+	}
+	assertFileContents(t, keep, "keep\n")
+	assertNoTransactionArtifacts(t, root)
+}
+
 func assertNoTransactionArtifacts(t *testing.T, root string) {
 	t.Helper()
 	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {

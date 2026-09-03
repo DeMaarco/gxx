@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -156,7 +157,34 @@ func (w *Workspace) ApplyTransaction(changes []FileChange) error {
 		change.stagePath = ""
 		change.applied = true
 	}
+	w.pruneEmptyParentsOfDeletes(staged)
 	return nil
+}
+
+func (w *Workspace) pruneEmptyParentsOfDeletes(changes []stagedFileChange) {
+	for _, change := range changes {
+		if !change.Delete || !change.applied {
+			continue
+		}
+		for dir := filepath.ToSlash(filepath.Dir(change.cleanPath)); dir != "." && dir != ""; dir = filepath.ToSlash(filepath.Dir(dir)) {
+			if !w.dirEmpty(dir) {
+				break
+			}
+			if err := w.guard.Remove(dir); err != nil {
+				break
+			}
+		}
+	}
+}
+
+func (w *Workspace) dirEmpty(path string) bool {
+	file, err := w.guard.Open(path)
+	if err != nil {
+		return false
+	}
+	defer file.Close()
+	names, err := file.Readdirnames(1)
+	return len(names) == 0 && (err == nil || errors.Is(err, io.EOF))
 }
 
 func (w *Workspace) writeStageFile(parent string, mode os.FileMode, data []byte) (string, error) {

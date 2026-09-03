@@ -294,7 +294,12 @@ func appendMissingCommandHint(command, result string) string {
 	if !looksLikeMissingCommand(result) {
 		return result
 	}
-	name := firstCommandWord(command)
+	// Successful scripts can still print "is not recognized" for a later
+	// statement. Only suggest npx when the command actually failed.
+	if !commandFailed(result) {
+		return result
+	}
+	name := missingCommandName(command, result)
 	if name == "" || skipMissingCommandHint(name) {
 		return result
 	}
@@ -306,6 +311,34 @@ func appendMissingCommandHint(command, result string) string {
 		name,
 		name,
 	)
+}
+
+func commandFailed(result string) bool {
+	return strings.HasPrefix(strings.TrimSpace(result), exitCodeLabel+" ")
+}
+
+func missingCommandName(command, result string) string {
+	if name := unrecognizedCommandName(result); name != "" {
+		return name
+	}
+	return firstCommandWord(command)
+}
+
+func unrecognizedCommandName(result string) string {
+	lower := strings.ToLower(result)
+	for _, prefix := range []string{"the term '", "the term \""} {
+		idx := strings.Index(lower, prefix)
+		if idx < 0 {
+			continue
+		}
+		rest := result[idx+len(prefix):]
+		end := strings.IndexAny(rest, `'"`)
+		if end <= 0 {
+			continue
+		}
+		return strings.ToLower(strings.TrimSpace(rest[:end]))
+	}
+	return ""
 }
 
 func appendDeadChildHint(result string) string {
@@ -330,6 +363,7 @@ func skipMissingCommandHint(name string) bool {
 	switch strings.ToLower(name) {
 	case "npx", "npm", "pnpm", "yarn", "bun", "node", "python", "python3", "py", "pip", "go", "git",
 		"pwsh", "powershell", "cmd", "sh", "bash",
+		"which", "where", "where.exe", "ls", "cat", "pwd", "true", "false",
 		"identify", "convert", "magick", "sips", "file", "exiftool", "ffmpeg", "ffprobe":
 		return true
 	default:

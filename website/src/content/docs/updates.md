@@ -5,6 +5,13 @@ description: What changed in each gxx release.
 
 Newest first. Install a pin with `--version` on the [install](../install/) script, or `gxx version` to see what you have.
 
+## v0.0.24
+
+Cleaner Windows command hints and complete file deletes.
+
+- Failed PowerShell scripts no longer suggest `npx --yes` for the first word of a mixed command; the hint uses the missing term and skips Unix-only names like `which`.
+- Deleting the last files in a folder also removes the empty parent directories.
+
 ## v0.0.23
 
 Sharper tools and Codex quota handling.

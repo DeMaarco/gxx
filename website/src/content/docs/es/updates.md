@@ -5,6 +5,13 @@ description: Qué cambió en cada release de gxx.
 
 Lo más nuevo primero. Fija una versión con `--version` en el script de [instalación](../install/), o `gxx version` para ver la tuya.
 
+## v0.0.24
+
+Hints de comando más limpios en Windows y borrados de archivos completos.
+
+- Un script de PowerShell que falla ya no sugiere `npx --yes` con la primera palabra de un comando mixto; el aviso usa el término que falta y omite nombres solo de Unix como `which`.
+- Borrar los últimos archivos de una carpeta también elimina los directorios padre vacíos.
+
 ## v0.0.23
 
 Herramientas más precisas y manejo de cuota de Codex.
