@@ -99,9 +99,6 @@ var (
 	WindowRange         = windowRange
 )
 
-type ModelCommand = modelCommand
-type ModeCommand = modeCommand
-type EcoCommand = ecoCommand
 type KeyKind = keyKind
 
 type RunningTool struct {
@@ -263,10 +260,6 @@ func catalogModelsForTest(current string) []string {
 		account = config.AccountClaude
 	}
 	return catalogModels(current, account, nil)
-}
-
-func Catalog(current, account string, live []string) []string {
-	return catalogModels(current, account, live)
 }
 
 func (s *InputState) SetSession(model, contextValue, effort, permission string) {
