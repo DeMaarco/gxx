@@ -15,6 +15,7 @@
 package ui
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -61,11 +62,20 @@ const (
 	keyCtrlW
 	keyCtrlL
 	keyCtrlO
+	keyBreak
+	keyPasteStart
+	keyPasteEnd
 )
 
 type keyEvent struct {
 	kind keyKind
 	char rune
+}
+
+type keyDecoder struct {
+	paste      bool
+	pasteChars int
+	push       *byte
 }
 
 type inputState struct {
@@ -165,6 +175,19 @@ func (s *inputState) afterEdit() {
 	if s.suggest >= len(matches) {
 		s.suggest = len(matches) - 1
 	}
+}
+
+func (s *inputState) insertBreak() {
+	if s.picker != pickerClosed {
+		return
+	}
+	if s.cursor > 0 && s.buffer[s.cursor-1] == ' ' {
+		return
+	}
+	if s.cursor < len(s.buffer) && s.buffer[s.cursor] == ' ' {
+		return
+	}
+	s.insert(' ')
 }
 
 func (s *inputState) insert(char rune) {
@@ -709,6 +732,8 @@ func (s *inputState) apply(event keyEvent) (submitted string, eof bool, handled 
 	switch event.kind {
 	case keyRune:
 		s.insert(event.char)
+	case keyBreak:
+		s.insertBreak()
 	case keyEnter:
 		return s.submit(), false, true
 	case keyTab:
@@ -813,8 +838,8 @@ func (e *lineEditor) Read(ctx context.Context, settings *REPLSettings) (string, 
 		defer osutil.EnableConsoleVT(file)()
 	}
 
-	_, _ = io.WriteString(e.out, wrapOff)
-	defer func() { _, _ = io.WriteString(e.out, wrapOn) }()
+	_, _ = io.WriteString(e.out, wrapOff+pasteModeOn)
+	defer func() { _, _ = io.WriteString(e.out, pasteModeOff+wrapOn) }()
 
 	e.state.buffer = nil
 	e.state.cursor = 0
@@ -841,6 +866,7 @@ func (e *lineEditor) Read(ctx context.Context, settings *REPLSettings) (string, 
 		event keyEvent
 		err   error
 	}
+	keys := &keyDecoder{}
 	for {
 		if err := ctx.Err(); err != nil {
 			e.finish(*settings, "")
@@ -848,7 +874,7 @@ func (e *lineEditor) Read(ctx context.Context, settings *REPLSettings) (string, 
 		}
 		read := make(chan result, 1)
 		go func() {
-			event, err := readKey(e.in)
+			event, err := keys.read(e.in)
 			read <- result{event: event, err: err}
 		}()
 		var event keyEvent
@@ -1404,19 +1430,47 @@ func finishPromptFrame(out io.Writer, settings REPLSettings, text string, width,
 }
 
 const (
-	eraseDown = "\x1b[J"
-	wrapOff   = "\x1b[?7l"
-	wrapOn    = "\x1b[?7h"
+	eraseDown    = "\x1b[J"
+	wrapOff      = "\x1b[?7l"
+	wrapOn       = "\x1b[?7h"
+	pasteModeOn  = "\x1b[?2004h"
+	pasteModeOff = "\x1b[?2004l"
 )
 
 func readKey(reader io.Reader) (keyEvent, error) {
-	first, err := readByte(reader)
+	return new(keyDecoder).read(reader)
+}
+
+func (d *keyDecoder) read(reader io.Reader) (keyEvent, error) {
+	for {
+		event, err := d.readOne(reader)
+		if err != nil {
+			return event, err
+		}
+		switch event.kind {
+		case keyPasteStart:
+			d.paste = true
+			d.pasteChars = 0
+		case keyPasteEnd:
+			d.paste = false
+		case keyNone:
+		default:
+			if d.paste && event.kind == keyRune {
+				d.pasteChars++
+			}
+			return event, nil
+		}
+	}
+}
+
+func (d *keyDecoder) readOne(reader io.Reader) (keyEvent, error) {
+	first, err := d.readByte(reader)
 	if err != nil {
 		return keyEvent{}, err
 	}
 	switch first {
 	case 0x0d, 0x0a:
-		return keyEvent{kind: keyEnter}, nil
+		return d.lineBreak(reader, first)
 	case 0x09:
 		return keyEvent{kind: keyTab}, nil
 	case 0x7f, 0x08:
@@ -1450,6 +1504,92 @@ func readKey(reader io.Reader) (keyEvent, error) {
 	default:
 		return readRuneEvent(reader, first)
 	}
+}
+
+func (d *keyDecoder) lineBreak(reader io.Reader, first byte) (keyEvent, error) {
+	if first == 0x0d {
+		if next, ok := d.peekByte(reader); ok && next == 0x0a {
+			_, _ = d.readByte(reader)
+		}
+	}
+	if d.hasMore(reader) {
+		return keyEvent{kind: keyBreak}, nil
+	}
+	if d.paste && d.pasteChars > 0 {
+		return keyEvent{kind: keyBreak}, nil
+	}
+	return keyEvent{kind: keyEnter}, nil
+}
+
+func (d *keyDecoder) readByte(reader io.Reader) (byte, error) {
+	if d != nil && d.push != nil {
+		b := *d.push
+		d.push = nil
+		return b, nil
+	}
+	return readByte(reader)
+}
+
+func (d *keyDecoder) peekByte(reader io.Reader) (byte, bool) {
+	if d != nil && d.push != nil {
+		return *d.push, true
+	}
+	if u, ok := reader.(interface {
+		ReadByte() (byte, error)
+		UnreadByte() error
+	}); ok {
+		b, err := u.ReadByte()
+		if err != nil {
+			return 0, false
+		}
+		_ = u.UnreadByte()
+		return b, true
+	}
+	return 0, false
+}
+
+func (d *keyDecoder) hasMore(reader io.Reader) bool {
+	if d != nil && d.push != nil {
+		return true
+	}
+	n, ok := readerLen(reader)
+	if !ok || n == 0 {
+		return false
+	}
+	return !onlyPasteEndRemaining(reader, n)
+}
+
+func onlyPasteEndRemaining(reader io.Reader, n int) bool {
+	seeker, ok := reader.(io.Seeker)
+	if !ok || n <= 0 {
+		return false
+	}
+	pos, err := seeker.Seek(0, io.SeekCurrent)
+	if err != nil {
+		return false
+	}
+	buf := make([]byte, n)
+	_, err = io.ReadFull(reader, buf)
+	_, _ = seeker.Seek(pos, io.SeekStart)
+	if err != nil {
+		return false
+	}
+	const marker = "\x1b[201~"
+	for len(buf) > 0 {
+		if !bytes.HasPrefix(buf, []byte(marker)) {
+			return false
+		}
+		buf = buf[len(marker):]
+	}
+	return true
+}
+
+func readerLen(reader io.Reader) (int, bool) {
+	n, ok := reader.(interface{ Len() int })
+	if !ok {
+		return 0, false
+	}
+	return n.Len(), true
 }
 
 func readEscape(reader io.Reader) (keyEvent, error) {
@@ -1487,6 +1627,10 @@ func readEscape(reader io.Reader) (keyEvent, error) {
 		return keyEvent{kind: keyDelete}, nil
 	case "27;2;9~":
 		return keyEvent{kind: keyShiftTab}, nil
+	case "200~":
+		return keyEvent{kind: keyPasteStart}, nil
+	case "201~":
+		return keyEvent{kind: keyPasteEnd}, nil
 	default:
 		return keyEvent{kind: keyNone}, nil
 	}

@@ -21,18 +21,25 @@ const (
 )
 
 var (
-	CompactDiff            = compactDiff
-	SanitizedEnvironment   = sanitizedEnvironment
-	DefaultGoCache         = defaultGoCache
-	CommandRiskNotes       = commandRiskNotes
-	PathInsideWorkspace    = pathInsideWorkspace
-	IsSensitivePath        = isSensitivePath
-	HasSensitivePathToken  = hasSensitivePathToken
-	HasAbsolutePathToken   = hasAbsolutePathToken
-	HasParentDirectoryPath = hasParentDirectoryPath
-	PipesToShell           = pipesToShell
-	WalkDepth              = walkDepth
-	FilterGitNameStatus    = filterGitNameStatus
+	CompactDiff                           = compactDiff
+	SanitizedEnvironment                  = sanitizedEnvironment
+	WithMissingCommandHint                = withMissingCommandHint
+	DefaultGoCache                        = defaultGoCache
+	CommandRiskNotes                      = commandRiskNotes
+	PathInsideWorkspace                   = pathInsideWorkspace
+	IsSensitivePath                       = isSensitivePath
+	HasSensitivePathToken                 = hasSensitivePathToken
+	HasAbsolutePathToken                  = hasAbsolutePathToken
+	HasParentDirectoryPath                = hasParentDirectoryPath
+	HasEscapingFileURL                    = hasEscapingFileURL
+	HasEscapingAbsolutePath               = hasEscapingAbsolutePath
+	RewriteLocalBrowserOpen               = rewriteLocalBrowserOpen
+	RewriteLocalBrowserScreenshot         = rewriteLocalBrowserScreenshot
+	LooksLikeBrowserScreenshotWithoutPath = looksLikeBrowserScreenshotWithoutPath
+	WorkspaceFileURL                      = workspaceFileURL
+	PipesToShell                          = pipesToShell
+	WalkDepth                             = walkDepth
+	FilterGitNameStatus                   = filterGitNameStatus
 )
 
 type IgnoreMatcher = ignoreMatcher

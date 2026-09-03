@@ -72,7 +72,7 @@ func (r *Registry) runCommand(ctx context.Context, raw json.RawMessage) (string,
 		if !errors.As(err, &exitError) {
 			return text, fmt.Errorf("command failed: %w", err)
 		}
-		return reportExit(exitError, text), nil
+		return withMissingCommandHint(args.Command, reportExit(exitError, text)), nil
 	case <-commandContext.Done():
 		_ = syscall.Kill(-command.Process.Pid, syscall.SIGKILL)
 		<-waited

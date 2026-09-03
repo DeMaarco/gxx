@@ -61,7 +61,8 @@ Pass changes as an array of objects:
 - action add: create a new file; content is the full file; fails if the path exists.
 - action update: edit an existing file in place. Prefer old_text/new_text for a unique span. Pass content to rewrite the whole file. Never delete a file and add it again to edit it.
 - action delete: remove an existing file that should stay gone.
-Multiple updates to the same path apply in order. Prefer one apply_patch call for related files.`,
+Multiple updates to the same path apply in order. Prefer one apply_patch call for related files.
+Created and updated files are reviewed automatically; read the review before treating the write as done.`,
 			ReadOnly: false,
 			Parameters: objectSchema(map[string]any{
 				"changes": map[string]any{
@@ -173,11 +174,11 @@ func (r *Registry) prepareApplyPatch(
 		if err := r.workspace.ApplyTransaction(fileChanges); err != nil {
 			return "", err
 		}
-		return fmt.Sprintf(
+		return appendPatchReviews(fmt.Sprintf(
 			"Applied patch to %d file(s): %s",
 			len(paths),
 			strings.Join(paths, ", "),
-		), nil
+		), works), nil
 	}
 	return action, run, nil
 }

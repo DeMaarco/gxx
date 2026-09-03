@@ -15,6 +15,7 @@
 package tools_test
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -94,4 +95,74 @@ func TestSanitizedEnvironmentUsesUserProfileWhenHomeMissing(t *testing.T) {
 	if !strings.Contains(joined, wantMod) || !strings.Contains(joined, wantCache) {
 		t.Fatalf("env = %q, want %s and %s", env, wantMod, wantCache)
 	}
+}
+
+func TestSanitizedEnvironmentPrependsExistingSkillBins(t *testing.T) {
+	home := t.TempDir()
+	npm := filepath.Join(home, "npm")
+	cargo := filepath.Join(home, ".cargo", "bin")
+	if err := os.MkdirAll(npm, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(cargo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	env := tools.SanitizedEnvironment([]string{
+		"HOME=" + home,
+		"USERPROFILE=" + home,
+		"APPDATA=" + home,
+		"PATH=/usr/bin",
+	})
+	path := envValue(env, "PATH")
+	if !strings.Contains(path, npm) || !strings.Contains(path, cargo) {
+		t.Fatalf("PATH = %q, want skill bins %s and %s", path, npm, cargo)
+	}
+	if !strings.Contains(path, "/usr/bin") {
+		t.Fatalf("PATH = %q, lost original entries", path)
+	}
+	if strings.Index(path, npm) > strings.Index(path, "/usr/bin") {
+		t.Fatalf("PATH = %q, want skill bins before original PATH", path)
+	}
+}
+
+func TestWithMissingCommandHint(t *testing.T) {
+	got := tools.WithMissingCommandHint(
+		"agent-browser skills get core",
+		"exit code 1\nThe term 'agent-browser' is not recognized as the name of a cmdlet",
+	)
+	if !strings.Contains(got, `npx --yes agent-browser`) {
+		t.Fatalf("hint = %q, want npx retry", got)
+	}
+	plain := tools.WithMissingCommandHint("go test ./...", "exit code 1\nFAIL")
+	if strings.Contains(plain, "npx --yes") {
+		t.Fatalf("hint added for a normal failure: %q", plain)
+	}
+	refused := tools.WithMissingCommandHint(
+		"agent-browser open http://127.0.0.1:8000",
+		"exit code 1\nnet::ERR_CONNECTION_REFUSED",
+	)
+	if !strings.Contains(refused, "do not stay running") {
+		t.Fatalf("hint = %q, want dead-child follow-up", refused)
+	}
+	shot := tools.WithMissingCommandHint(
+		"agent-browser screenshot",
+		"saved /tmp/agent-browser-abc.png",
+	)
+	if !strings.Contains(shot, "workspace-relative name") {
+		t.Fatalf("hint = %q, want screenshot path follow-up", shot)
+	}
+	named := tools.WithMissingCommandHint("agent-browser screenshot hero.png", "saved hero.png")
+	if strings.Contains(named, "workspace-relative name") {
+		t.Fatalf("hint added for a named screenshot: %q", named)
+	}
+}
+
+func envValue(env []string, name string) string {
+	for _, entry := range env {
+		key, value, found := strings.Cut(entry, "=")
+		if found && strings.EqualFold(key, name) {
+			return value
+		}
+	}
+	return ""
 }

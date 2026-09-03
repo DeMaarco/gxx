@@ -11,7 +11,7 @@ export const buildSizes = [
 
 export function landingContent(locale: LandingLocale) {
 	const shared = {
-		version: 'v0.0.21',
+		version: 'v0.0.22',
 		installCmd: 'curl -fsSL https://raw.githubusercontent.com/DeMaarco/gxx/main/install.sh | sh',
 	};
 

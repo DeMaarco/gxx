@@ -59,11 +59,20 @@ func isPathBoundary(b byte) bool {
 }
 
 func hasAbsolutePathToken(command string) bool {
+	return hasEscapingAbsolutePath("", command)
+}
+
+func hasEscapingAbsolutePath(root, command string) bool {
 	for _, candidate := range []string{command, stripShellQuotes(command)} {
 		for _, token := range sensitivePathTokens(candidate) {
-			if isAbsolutePathToken(strings.Trim(token, `"'`)) {
-				return true
+			abs := strings.Trim(token, `"'`)
+			if !isAbsolutePathToken(abs) {
+				continue
 			}
+			if root != "" && pathInsideWorkspace(root, abs) {
+				continue
+			}
+			return true
 		}
 	}
 	return false

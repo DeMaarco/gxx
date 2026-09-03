@@ -22,10 +22,10 @@ gxx does not scan `.cursor/skills` or `.claude/skills`, and there is no marketpl
 ## Progressive disclosure
 
 1. A compact catalog (name, origin, description) is prepended to each **user** message — not the system prompt.
-2. When a listed skill matches the task, the model calls `read_skill` before acting on it.
+2. When a listed skill matches the task, the model calls `read_skill` before any other tool, then follows that skill's process.
 3. Optional `path` loads another file under that skill’s root (references, assets). Default is `SKILL.md` (body only, frontmatter stripped).
 
-`read_skill` is read-only and available in ask and plan as well as agent.
+`read_skill` is read-only and available in ask and plan as well as agent. If a skill's CLI is missing from PATH, gxx tells the model to retry with `npx --yes <name>`.
 
 ## Scripts
 
@@ -48,7 +48,7 @@ Instructions go here.
 
 ## REPL
 
-`/skills` lists discovered skills (name, origin, description). No arguments. `gxx ask` uses the same discovery and `read_skill`; no extra flag.
+`/skills` lists discovered skills (name, origin, description). Invoke one with `/<name> <request>`, or several: `/frontend-design y /agent-browser <request>`. `gxx ask` uses the same discovery and `read_skill`.
 
 ## Privacy
 

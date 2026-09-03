@@ -163,6 +163,78 @@ func TestRunREPLListsSkills(t *testing.T) {
 	}
 }
 
+func TestRunREPLSkillCommandRewritesPrompt(t *testing.T) {
+	model := &replModel{reply: "ok"}
+	loop := &agent.Loop{Model: model, Executor: emptyExecutor{}, MaxSteps: 2}
+	input := bufio.NewReader(strings.NewReader("/fronted-design diseña una página\n/exit\n"))
+	var output bytes.Buffer
+	err := ui.RunREPL(
+		context.Background(),
+		loop,
+		input,
+		ui.NewRenderer(&output),
+		&output,
+		ui.REPLSettings{
+			Version:          "0.0.1",
+			Model:            "test-model",
+			PermissionMode:   config.PermissionAsk,
+			Effort:           "medium",
+			Workspace:        "/workspace",
+			APIKeyConfigured: true,
+			ListSkills: func() []ui.SkillEntry {
+				return []ui.SkillEntry{{Name: "frontend-design", Origin: "project", Description: "Design UI"}}
+			},
+		},
+	)
+	if err != nil {
+		t.Fatalf("RunREPL() error = %v", err)
+	}
+	if len(model.prompts) != 1 {
+		t.Fatalf("prompts = %#v, want one rewritten request", model.prompts)
+	}
+	if !strings.Contains(model.prompts[0], `Call read_skill for "frontend-design" before any other tool`) {
+		t.Fatalf("prompt = %q, want skill-first rewrite", model.prompts[0])
+	}
+	if !strings.Contains(model.prompts[0], "diseña una página") {
+		t.Fatalf("prompt = %q, want original request", model.prompts[0])
+	}
+}
+
+func TestRunREPLUnknownSkillSlashHints(t *testing.T) {
+	model := &countingReplModel{}
+	loop := &agent.Loop{Model: model, Executor: emptyExecutor{}, MaxSteps: 2}
+	input := bufio.NewReader(strings.NewReader("/frontend-design\n/exit\n"))
+	var output bytes.Buffer
+	err := ui.RunREPL(
+		context.Background(),
+		loop,
+		input,
+		ui.NewRenderer(&output),
+		&output,
+		ui.REPLSettings{
+			Version:          "0.0.1",
+			Model:            "test-model",
+			PermissionMode:   config.PermissionAsk,
+			Effort:           "medium",
+			Workspace:        "/workspace",
+			APIKeyConfigured: true,
+			ListSkills: func() []ui.SkillEntry {
+				return []ui.SkillEntry{{Name: "frontend-design", Origin: "project", Description: "Design UI"}}
+			},
+		},
+	)
+	if err != nil {
+		t.Fatalf("RunREPL() error = %v", err)
+	}
+	text := output.String()
+	if !strings.Contains(text, "usage: /frontend-design <request>") {
+		t.Fatalf("output = %q, want usage hint", text)
+	}
+	if model.calls != 0 {
+		t.Fatalf("model calls = %d, want 0", model.calls)
+	}
+}
+
 func TestRunREPLSkillsEmptyHint(t *testing.T) {
 	loop := &agent.Loop{Model: &replModel{}, Executor: emptyExecutor{}, MaxSteps: 2}
 	input := bufio.NewReader(strings.NewReader("/skills\n/exit\n"))

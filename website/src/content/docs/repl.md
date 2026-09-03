@@ -4,7 +4,7 @@ description: Keyboard shortcuts, session modes, and slash commands.
 ---
 
 ```text
-◆ gxx  v0.0.21     badge and version
+◆ gxx  v0.0.22     badge and version
 >                 type here  ·  Shift+Tab →  > ask  ·  Shift+Tab →  agent again
 gpt-5.6-sol · auto · medium · 272k · 0%
 ```
@@ -17,6 +17,8 @@ gpt-5.6-sol · auto · medium · 272k · 0%
 | `Ctrl+O` | Open saved conversations for this workspace |
 | `Ctrl+C` | Clear, cancel, or confirm exit |
 | `Ctrl+D` | Exit |
+
+Pasting a multi-line prompt joins the lines into one request. Enter still sends.
 
 `gxx` starts in agent, so `/mode` (`ask`, `auto-writes`, `auto`) applies. Ask and plan are separate session modes on `Shift+Tab`. They never overlap. One press from ask or plan returns to agent. Both are read-only: only file reads and git inspect, with no approval prompt. They are session-only and not saved to config.
 
@@ -42,6 +44,7 @@ Conversations are saved automatically after each turn to `~/.config/gxx/conversa
 | `/usage` | Session tokens, estimated cost, and remaining subscription or API quota |
 | `/history` | Open saved conversations for this workspace |
 | `/skills` | List discovered Agent Skills |
+| `/<skill>` | Use that Agent Skill, then the request |
 | `/clear` | Archive this conversation and start a new one |
 | `/exit` | Quit |
 

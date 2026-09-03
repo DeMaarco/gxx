@@ -16,6 +16,7 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"io"
 	"time"
 
@@ -42,6 +43,7 @@ const (
 	KeyEsc        = keyEsc
 	KeyCtrlC      = keyCtrlC
 	KeyCtrlO      = keyCtrlO
+	KeyBreak      = keyBreak
 	PickerClosed  = int(pickerClosed)
 	PickerModels  = int(pickerModels)
 	PickerOptions = int(pickerOptions)
@@ -78,6 +80,9 @@ var (
 	EncodeModeCommand   = encodeModeCommand
 	MatchingCommands    = matchingCommands
 	LookupSlashCommand  = lookupSlashCommand
+	UnknownSlashHint    = unknownSlashHint
+	RewriteSkillPrompt  = rewriteSkillPrompt
+	MatchSkillName      = matchSkillName
 	TogglePlan          = cycleSession
 	CycleSession        = cycleSession
 	ImplementPlanPrompt = implementPlanPrompt
@@ -208,6 +213,21 @@ func compactRunningLabelForTest(color bool, tools []RunningTool) string {
 func readKeyForTest(reader io.Reader) (KeyEvent, error) {
 	event, err := readKey(reader)
 	return KeyEvent{Kind: event.kind, Char: event.char}, err
+}
+
+func ReadKeyStream(reader io.Reader) ([]KeyEvent, error) {
+	var decoder keyDecoder
+	var events []KeyEvent
+	for {
+		event, err := decoder.read(reader)
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return events, nil
+			}
+			return events, err
+		}
+		events = append(events, KeyEvent{Kind: event.kind, Char: event.char})
+	}
 }
 
 func (s *InputState) Insert(char rune) { s.inner.insert(char) }

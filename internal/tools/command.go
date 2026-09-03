@@ -41,7 +41,10 @@ func (r *Registry) runCommandSpec() toolSpec {
 			Description: "Run a shell command in the workspace with a finite timeout and sanitized environment. Requires user approval. " +
 				"Commands that name sensitive paths such as .env, keys, or credentials are refused. " +
 				"Commands that leave the workspace with .. or an absolute path, or that pipe a download into a shell, are refused. " +
-				"A command that exits non-zero is a normal result, returned as \"exit code N\" followed by its output; only a command that could not be started or that timed out is a tool error. " +
+				"The process and its children are killed when the command returns, so a background server does not survive the next tool call. " +
+				"A workspace-relative path after agent-browser open is rewritten to a file:// URL of that workspace file. " +
+				"A workspace-relative path after agent-browser screenshot is rewritten to that file in the workspace. " +
+				"A command that exits non-zero is a failed command, returned as \"exit code N\" followed by its output; only a command that could not be started or that timed out is a tool error. " +
 				commandShellDescription(),
 			ReadOnly: false,
 			Parameters: objectSchema(map[string]any{
@@ -109,7 +112,15 @@ func (r *Registry) parseCommandArgs(raw json.RawMessage) (runCommandArgs, time.D
 	if hasParentDirectoryPath(args.Command) {
 		return args, 0, errors.New("refusing to run command that leaves the workspace (..)")
 	}
-	if hasAbsolutePathToken(args.Command) {
+	args.Command = rewriteLocalBrowserCommand(r.workspace, args.Command)
+	root := ""
+	if r.workspace != nil {
+		root = r.workspace.Root()
+	}
+	if root != "" && hasEscapingFileURL(root, args.Command) {
+		return args, 0, errors.New("refusing to run command with a file:// URL outside the workspace")
+	}
+	if hasEscapingAbsolutePath(root, args.Command) {
 		return args, 0, errors.New("refusing to run command with an absolute path; stay inside the workspace")
 	}
 	if pipesToShell(args.Command) {
@@ -165,7 +176,179 @@ func sanitizedEnvironment(environment []string) []string {
 	if !present["GIT_TERMINAL_PROMPT"] {
 		filtered = append(filtered, "GIT_TERMINAL_PROMPT=0")
 	}
-	return filtered
+	return augmentSkillPath(filtered)
+}
+
+// augmentSkillPath prepends user-local bin dirs (npm, cargo, go, gxx) when
+// they exist, so skill CLIs installed outside a PowerShell profile stay on PATH.
+func augmentSkillPath(env []string) []string {
+	extras := existingSkillBins(env)
+	if len(extras) == 0 {
+		return env
+	}
+	key, value, index := lookupEnv(env, "PATH")
+	merged := prependUniquePath(value, extras)
+	if index >= 0 {
+		env[index] = key + "=" + merged
+		return env
+	}
+	return append(env, "PATH="+merged)
+}
+
+func existingSkillBins(env []string) []string {
+	_, home, _ := lookupEnv(env, "HOME")
+	_, profile, _ := lookupEnv(env, "USERPROFILE")
+	_, appdata, _ := lookupEnv(env, "APPDATA")
+	_, local, _ := lookupEnv(env, "LOCALAPPDATA")
+	var candidates []string
+	for _, root := range []string{home, profile} {
+		if strings.TrimSpace(root) == "" {
+			continue
+		}
+		candidates = append(candidates,
+			filepath.Join(root, ".local", "bin"),
+			filepath.Join(root, ".cargo", "bin"),
+			filepath.Join(root, "go", "bin"),
+		)
+	}
+	if appdata != "" {
+		candidates = append(candidates, filepath.Join(appdata, "npm"))
+	}
+	if local != "" {
+		candidates = append(candidates, filepath.Join(local, "npm"), filepath.Join(local, "gxx"))
+	}
+	seen := make(map[string]bool, len(candidates))
+	out := make([]string, 0, len(candidates))
+	for _, dir := range candidates {
+		if dir == "" || seen[dir] {
+			continue
+		}
+		info, err := os.Stat(dir)
+		if err != nil || !info.IsDir() {
+			continue
+		}
+		seen[dir] = true
+		out = append(out, dir)
+	}
+	return out
+}
+
+func lookupEnv(env []string, name string) (key, value string, index int) {
+	index = -1
+	for i, entry := range env {
+		k, v, found := strings.Cut(entry, "=")
+		if !found || !strings.EqualFold(k, name) {
+			continue
+		}
+		return k, v, i
+	}
+	return name, "", -1
+}
+
+func prependUniquePath(path string, extras []string) string {
+	parts := splitPathList(path)
+	have := make(map[string]bool, len(parts)+len(extras))
+	for _, part := range parts {
+		have[pathKey(part)] = true
+	}
+	prefix := make([]string, 0, len(extras))
+	for _, extra := range extras {
+		key := pathKey(extra)
+		if extra == "" || have[key] {
+			continue
+		}
+		have[key] = true
+		prefix = append(prefix, extra)
+	}
+	if len(prefix) == 0 {
+		return path
+	}
+	if strings.TrimSpace(path) == "" {
+		return strings.Join(prefix, string(os.PathListSeparator))
+	}
+	return strings.Join(prefix, string(os.PathListSeparator)) + string(os.PathListSeparator) + path
+}
+
+func splitPathList(path string) []string {
+	if strings.TrimSpace(path) == "" {
+		return nil
+	}
+	return strings.Split(path, string(os.PathListSeparator))
+}
+
+func pathKey(value string) string {
+	cleaned := strings.TrimRight(strings.TrimSpace(value), `/\`)
+	if runtime.GOOS == "windows" {
+		return strings.ToLower(cleaned)
+	}
+	return cleaned
+}
+
+func withMissingCommandHint(command, result string) string {
+	result = appendMissingCommandHint(command, result)
+	result = appendDeadChildHint(result)
+	return appendScreenshotPathHint(command, result)
+}
+
+func appendMissingCommandHint(command, result string) string {
+	if !looksLikeMissingCommand(result) {
+		return result
+	}
+	name := firstCommandWord(command)
+	if name == "" || skipMissingCommandHint(name) {
+		return result
+	}
+	if strings.Contains(result, "npx --yes ") {
+		return result
+	}
+	return result + "\n" + fmt.Sprintf(
+		"Command %q was not found on PATH. If this is an npm CLI named by a skill, retry with: npx --yes %s <same arguments>",
+		name,
+		name,
+	)
+}
+
+func appendDeadChildHint(result string) string {
+	if !looksLikeConnectionRefused(result) {
+		return result
+	}
+	const hint = "Local servers from a previous run_command do not stay running; that command's process tree is killed when it returns. Open a workspace-relative path (for example: agent-browser open index.html) or start the server and browse in the same command."
+	if strings.Contains(result, hint) {
+		return result
+	}
+	return result + "\n" + hint
+}
+
+func looksLikeConnectionRefused(text string) bool {
+	lower := strings.ToLower(text)
+	return strings.Contains(lower, "err_connection_refused") ||
+		strings.Contains(lower, "connection refused") ||
+		strings.Contains(lower, "econnrefused")
+}
+
+func skipMissingCommandHint(name string) bool {
+	switch strings.ToLower(name) {
+	case "npx", "npm", "pnpm", "yarn", "bun", "node", "python", "py", "pip", "go", "git",
+		"pwsh", "powershell", "cmd", "sh", "bash":
+		return true
+	default:
+		return false
+	}
+}
+
+func looksLikeMissingCommand(text string) bool {
+	lower := strings.ToLower(text)
+	if strings.Contains(lower, "is not recognized") ||
+		strings.Contains(lower, "command not found") ||
+		strings.Contains(lower, "commandnotfoundexception") {
+		return true
+	}
+	for _, line := range strings.Split(lower, "\n") {
+		if strings.HasSuffix(strings.TrimSpace(line), ": not found") {
+			return true
+		}
+	}
+	return false
 }
 
 func defaultGoCache(home string) string {
@@ -207,9 +390,9 @@ func isSensitiveEnvironmentName(name string) bool {
 }
 
 // reportExit describes a process that ran to completion but exited non-zero.
-// That is an answer, not a tool failure. Reporting it as an error tells the
-// model the same thing a crashed tool would, and leaves the exit code behind
-// the first line of output where the renderer drops it.
+// That is still a tool result, not a crashed tool: reporting it as IsError
+// looks the same as a start/timeout failure. The first line is "exit code N"
+// so the UI can mark the command as failed.
 func reportExit(exitError *exec.ExitError, text string) string {
 	header := fmt.Sprintf("%s %d", exitCodeLabel, exitError.ExitCode())
 	if extra := signaledExitLabel(exitError); extra != "" {

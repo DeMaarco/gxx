@@ -53,6 +53,10 @@ func toolVerb(name string) string {
 		return "searching"
 	case "read_file":
 		return "reading"
+	case "read_skill":
+		return "reading skill"
+	case "review_file":
+		return "reviewing"
 	case "git_status":
 		return "git status"
 	case "git_diff":
@@ -224,14 +228,48 @@ func resultDetailLines(result *agent.ToolResult) []activityLine {
 	}
 }
 
-// commandDetailLines surfaces the exit code that internal/tools puts on the
-// first line of a command that ran but did not succeed.
+func commandExitedNonZero(result *agent.ToolResult) bool {
+	if result == nil || result.IsError {
+		return false
+	}
+	if strings.TrimSpace(result.Name) != "run_command" {
+		return false
+	}
+	header, _, _ := strings.Cut(strings.TrimSpace(result.Output), "\n")
+	return strings.HasPrefix(header, exitCodeLabel+" ")
+}
+
+// commandDetailLines surfaces a short failure snippet under a non-zero command.
+// The exit-code header itself is shown on the tool line.
 func commandDetailLines(output string) []activityLine {
-	header, _, _ := strings.Cut(strings.TrimSpace(output), "\n")
+	header, rest, _ := strings.Cut(strings.TrimSpace(output), "\n")
 	if !strings.HasPrefix(header, exitCodeLabel+" ") {
 		return nil
 	}
-	return []activityLine{{kind: activityContext, text: strings.TrimSpace(header)}}
+	if snippet := commandFailureSnippet(rest); snippet != "" {
+		return []activityLine{{kind: activityContext, text: snippet}}
+	}
+	return nil
+}
+
+func commandFailureSnippet(rest string) string {
+	for _, raw := range strings.Split(rest, "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" {
+			continue
+		}
+		lower := strings.ToLower(line)
+		if strings.Contains(lower, "not found on path") ||
+			strings.Contains(lower, "is not recognized") ||
+			strings.Contains(lower, "command not found") ||
+			strings.Contains(lower, "commandnotfound") ||
+			strings.Contains(lower, "err_connection_refused") ||
+			strings.Contains(lower, "connection refused") ||
+			strings.Contains(lower, "econnrefused") {
+			return truncateRunes(line, maxDetailRunes)
+		}
+	}
+	return ""
 }
 
 func searchDetailLines(output string) []activityLine {

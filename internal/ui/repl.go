@@ -38,49 +38,49 @@ import (
 const maxPromptBytes = 1024 * 1024
 
 type REPLSettings struct {
-	Version             string
-	Model               string
-	PermissionMode      string
-	Effort              string
-	Context             string
-	Fast                bool
-	Ask                 bool
-	Plan                bool
-	LastSession         string
-	Workspace           string
-	Color               bool
-	Stdin               *os.File
-	APIKeyConfigured    bool
-	OpenAIConfigured    bool
-	ClaudeConfigured    bool
-	ActiveAccount       string
-	Models              []string
-	RefreshAuth         func(*REPLSettings)
-	RefreshModels       func(*REPLSettings)
-	ReadAPIKey          func(context.Context) (string, error)
-	SaveAPIKey          func(string) (string, error)
-	Login               func(context.Context, io.Writer, []string) (string, error)
-	Logout              func([]string) (string, error)
-	FetchUsage          func(context.Context) (agent.UsageReport, error)
-	FetchContext        func() agent.ContextUsage
-	RefreshInstructions func()
-	RefreshPricing      func(context.Context)
-	QuoteCost           func(agent.Usage) (float64, bool)
-	SyncSession         func(REPLSettings) error
-	SetAsk              func(bool) error
-	SetPlan             func(bool) error
-	SetEco              func(int) error
-	Eco                 int
-	EcoLast             int
-	Compact             func(context.Context, string) error
-	ChoosePlan          func(context.Context) (PlanChoice, error)
-	ListConversations   func() ([]ConversationEntry, error)
-	LoadConversation    func(id string) error
-	SaveConversation    func() error
-	ArchiveAndClear     func() error
-	RefreshSession      func(*REPLSettings)
-	ChooseConversation  func(context.Context, io.Writer) (string, error)
-	ListSkills          func() []SkillEntry
+	Version               string
+	Model                 string
+	PermissionMode        string
+	Effort                string
+	Context               string
+	Fast                  bool
+	Ask                   bool
+	Plan                  bool
+	LastSession           string
+	Workspace             string
+	Color                 bool
+	Stdin                 *os.File
+	APIKeyConfigured      bool
+	OpenAIConfigured      bool
+	ClaudeConfigured      bool
+	ActiveAccount         string
+	Models                []string
+	RefreshAuth           func(*REPLSettings)
+	RefreshModels         func(*REPLSettings)
+	ReadAPIKey            func(context.Context) (string, error)
+	SaveAPIKey            func(string) (string, error)
+	Login                 func(context.Context, io.Writer, []string) (string, error)
+	Logout                func([]string) (string, error)
+	FetchUsage            func(context.Context) (agent.UsageReport, error)
+	FetchContext          func() agent.ContextUsage
+	RefreshInstructions   func()
+	RefreshPricing        func(context.Context)
+	QuoteCost             func(agent.Usage) (float64, bool)
+	SyncSession           func(REPLSettings) error
+	SetAsk                func(bool) error
+	SetPlan               func(bool) error
+	SetEco                func(int) error
+	Eco                   int
+	EcoLast               int
+	Compact               func(context.Context, string) error
+	ChoosePlan            func(context.Context) (PlanChoice, error)
+	ListConversations     func() ([]ConversationEntry, error)
+	LoadConversation      func(id string) error
+	SaveConversation      func() error
+	ArchiveAndClear       func() error
+	RefreshSession        func(*REPLSettings)
+	ChooseConversation    func(context.Context, io.Writer) (string, error)
+	ListSkills            func() []SkillEntry
 	PendingConversationID string
 }
 
@@ -282,7 +282,7 @@ func (r *Renderer) noteToolDoneLocked(result *agent.ToolResult, tool runningTool
 	}
 	extra := doneExtraLines(result, tool)
 	stats := formatLineCounts(r.color, "", tool.added, tool.deleted, tool.removed)
-	if result.IsError {
+	if result.IsError || commandExitedNonZero(result) {
 		r.flushPendingDoneLocked()
 		r.writeToolDoneLocked(doneLine{
 			name:      result.Name,
@@ -293,6 +293,7 @@ func (r *Renderer) noteToolDoneLocked(result *agent.ToolResult, tool runningTool
 			failed:    true,
 			detail:    firstLine(result.Output),
 		})
+		r.writeExtraLinesLocked(extra)
 		return
 	}
 	if len(extra) > 0 || stats != "" {
@@ -597,106 +598,117 @@ func RunREPL(
 		if strings.HasPrefix(prompt, "/") {
 			name, slashArgs, slashErr := lookupSlashCommand(prompt)
 			if slashErr != nil {
-				fmt.Fprintf(writer, "%s\n", paint(settings.Color, red, "error: "+slashErr.Error()))
-				writeREPLGap(writer)
-				continue
-			}
-			switch name {
-			case "/exit":
-				return nil
-			case "/clear":
-				if settings.ArchiveAndClear != nil {
-					if err := settings.ArchiveAndClear(); err != nil {
-						fmt.Fprintf(writer, "%s\n", paint(settings.Color, red, "error: "+err.Error()))
-						fmt.Fprintln(writer)
-						continue
+				if !strings.Contains(slashErr.Error(), "unknown command") {
+					fmt.Fprintf(writer, "%s\n", paint(settings.Color, red, "error: "+slashErr.Error()))
+					writeREPLGap(writer)
+					continue
+				}
+				rewritten, err := rewriteSkillPrompt(prompt, skillNames(settings))
+				if err != nil {
+					hint := unknownSlashHint(err, strings.Fields(prompt)[0], skillNames(settings))
+					fmt.Fprintf(writer, "%s\n", paint(settings.Color, red, "error: "+hint))
+					writeREPLGap(writer)
+					continue
+				}
+				prompt = rewritten
+			} else {
+				switch name {
+				case "/exit":
+					return nil
+				case "/clear":
+					if settings.ArchiveAndClear != nil {
+						if err := settings.ArchiveAndClear(); err != nil {
+							fmt.Fprintf(writer, "%s\n", paint(settings.Color, red, "error: "+err.Error()))
+							fmt.Fprintln(writer)
+							continue
+						}
+					} else if settings.RefreshInstructions != nil {
+						settings.RefreshInstructions()
+						loop.Reset()
+					} else {
+						loop.Reset()
 					}
-				} else if settings.RefreshInstructions != nil {
-					settings.RefreshInstructions()
-					loop.Reset()
-				} else {
-					loop.Reset()
-				}
-				if settings.RefreshInstructions != nil {
-					settings.RefreshInstructions()
-				}
-				fmt.Fprintln(writer, paint(settings.Color, dim, "Conversation cleared."))
-				writeREPLGap(writer)
-				continue
-			case "/history":
-				if err := openConversationMenu(sessionCtx, writer, &settings); err != nil {
-					fmt.Fprintf(writer, "%s\n", paint(settings.Color, red, "error: "+err.Error()))
-				}
-				writeREPLGap(writer)
-				continue
-			case "/config":
-				if err := configureAPIKey(sessionCtx, loop, writer, &settings); err != nil {
-					fmt.Fprintf(writer, "%s\n", paint(settings.Color, red, "error: "+err.Error()))
-				}
-				writeREPLGap(writer)
-				continue
-			case "/login":
-				if err := loginAccount(sessionCtx, loop, writer, reader, &settings, slashArgs); err != nil {
-					fmt.Fprintf(writer, "%s\n", paint(settings.Color, red, "error: "+err.Error()))
-				}
-				writeREPLGap(writer)
-				continue
-			case "/logout":
-				if err := logoutAccount(loop, writer, reader, &settings, slashArgs); err != nil {
-					fmt.Fprintf(writer, "%s\n", paint(settings.Color, red, "error: "+err.Error()))
-				}
-				writeREPLGap(writer)
-				continue
-			case "/help":
-				printREPLHelp(writer, settings)
-				writeREPLGap(writer)
-				continue
-			case "/skills":
-				printSkills(writer, settings)
-				writeREPLGap(writer)
-				continue
-			case "/usage":
-				if err := showUsage(sessionCtx, writer, settings); err != nil {
-					fmt.Fprintf(writer, "%s\n", paint(settings.Color, red, "error: "+err.Error()))
-				}
-				writeREPLGap(writer)
-				continue
-			case "/context":
-				printContext(writer, settings.Color, settings.contextUsage())
-				writeREPLGap(writer)
-				continue
-			case "/model":
-				changedModel, err := applyModelCommand(writer, &settings, prompt)
-				if err != nil {
-					fmt.Fprintf(writer, "%s\n", paint(settings.Color, red, "error: "+err.Error()))
-				} else if changedModel {
-					loop.Reset()
+					if settings.RefreshInstructions != nil {
+						settings.RefreshInstructions()
+					}
 					fmt.Fprintln(writer, paint(settings.Color, dim, "Conversation cleared."))
+					writeREPLGap(writer)
+					continue
+				case "/history":
+					if err := openConversationMenu(sessionCtx, writer, &settings); err != nil {
+						fmt.Fprintf(writer, "%s\n", paint(settings.Color, red, "error: "+err.Error()))
+					}
+					writeREPLGap(writer)
+					continue
+				case "/config":
+					if err := configureAPIKey(sessionCtx, loop, writer, &settings); err != nil {
+						fmt.Fprintf(writer, "%s\n", paint(settings.Color, red, "error: "+err.Error()))
+					}
+					writeREPLGap(writer)
+					continue
+				case "/login":
+					if err := loginAccount(sessionCtx, loop, writer, reader, &settings, slashArgs); err != nil {
+						fmt.Fprintf(writer, "%s\n", paint(settings.Color, red, "error: "+err.Error()))
+					}
+					writeREPLGap(writer)
+					continue
+				case "/logout":
+					if err := logoutAccount(loop, writer, reader, &settings, slashArgs); err != nil {
+						fmt.Fprintf(writer, "%s\n", paint(settings.Color, red, "error: "+err.Error()))
+					}
+					writeREPLGap(writer)
+					continue
+				case "/help":
+					printREPLHelp(writer, settings)
+					writeREPLGap(writer)
+					continue
+				case "/skills":
+					printSkills(writer, settings)
+					writeREPLGap(writer)
+					continue
+				case "/usage":
+					if err := showUsage(sessionCtx, writer, settings); err != nil {
+						fmt.Fprintf(writer, "%s\n", paint(settings.Color, red, "error: "+err.Error()))
+					}
+					writeREPLGap(writer)
+					continue
+				case "/context":
+					printContext(writer, settings.Color, settings.contextUsage())
+					writeREPLGap(writer)
+					continue
+				case "/model":
+					changedModel, err := applyModelCommand(writer, &settings, prompt)
+					if err != nil {
+						fmt.Fprintf(writer, "%s\n", paint(settings.Color, red, "error: "+err.Error()))
+					} else if changedModel {
+						loop.Reset()
+						fmt.Fprintln(writer, paint(settings.Color, dim, "Conversation cleared."))
+					}
+					writeREPLGap(writer)
+					continue
+				case "/mode":
+					if err := applyModeCommand(writer, &settings, prompt); err != nil {
+						fmt.Fprintf(writer, "%s\n", paint(settings.Color, red, "error: "+err.Error()))
+					}
+					writeREPLGap(writer)
+					continue
+				case "/eco":
+					changedModel, err := applyEcoCommand(writer, &settings, prompt)
+					if err != nil {
+						fmt.Fprintf(writer, "%s\n", paint(settings.Color, red, "error: "+err.Error()))
+					} else if changedModel {
+						loop.Reset()
+						fmt.Fprintln(writer, paint(settings.Color, dim, "Conversation cleared."))
+					}
+					writeREPLGap(writer)
+					continue
+				case "/compact":
+					if err := applyCompactCommand(sessionCtx, writer, &settings, slashArgs); err != nil {
+						fmt.Fprintf(writer, "%s\n", paint(settings.Color, red, "error: "+err.Error()))
+					}
+					writeREPLGap(writer)
+					continue
 				}
-				writeREPLGap(writer)
-				continue
-			case "/mode":
-				if err := applyModeCommand(writer, &settings, prompt); err != nil {
-					fmt.Fprintf(writer, "%s\n", paint(settings.Color, red, "error: "+err.Error()))
-				}
-				writeREPLGap(writer)
-				continue
-			case "/eco":
-				changedModel, err := applyEcoCommand(writer, &settings, prompt)
-				if err != nil {
-					fmt.Fprintf(writer, "%s\n", paint(settings.Color, red, "error: "+err.Error()))
-				} else if changedModel {
-					loop.Reset()
-					fmt.Fprintln(writer, paint(settings.Color, dim, "Conversation cleared."))
-				}
-				writeREPLGap(writer)
-				continue
-			case "/compact":
-				if err := applyCompactCommand(sessionCtx, writer, &settings, slashArgs); err != nil {
-					fmt.Fprintf(writer, "%s\n", paint(settings.Color, red, "error: "+err.Error()))
-				}
-				writeREPLGap(writer)
-				continue
 			}
 		}
 
@@ -963,17 +975,19 @@ func printSkills(writer io.Writer, settings REPLSettings) {
 		fmt.Fprintln(writer, paint(settings.Color, dim, "No skills discovered."))
 		fmt.Fprintln(writer, paint(settings.Color, dim, "Project: .agents/skills/<name>/SKILL.md or .gxx/skills/<name>/SKILL.md"))
 		fmt.Fprintln(writer, paint(settings.Color, dim, "Personal: ~/.config/gxx/skills/<name>/SKILL.md"))
+		fmt.Fprintln(writer, paint(settings.Color, dim, "Invoke: /<name> <request>"))
 		return
 	}
 	for _, entry := range entries {
 		fmt.Fprintf(
 			writer,
 			"%s %s\n  %s\n",
-			paint(settings.Color, cyan, entry.Name),
+			paint(settings.Color, cyan, "/"+entry.Name),
 			paint(settings.Color, dim, "("+entry.Origin+")"),
 			entry.Description,
 		)
 	}
+	fmt.Fprintln(writer, paint(settings.Color, dim, "Invoke: /<name> <request>"))
 }
 
 func applyCompactCommand(ctx context.Context, writer io.Writer, settings *REPLSettings, args []string) error {

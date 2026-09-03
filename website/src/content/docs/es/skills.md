@@ -22,10 +22,10 @@ gxx no escanea `.cursor/skills` ni `.claude/skills`, y no hay marketplace ni loc
 ## Divulgación progresiva
 
 1. Un catálogo compacto (nombre, origen, description) se antepone a cada mensaje de **usuario** — no al system prompt.
-2. Cuando una skill listada encaja con la tarea, el modelo llama `read_skill` antes de actuar.
+2. Cuando una skill listada encaja con la tarea, el modelo llama `read_skill` antes que cualquier otra herramienta y sigue el proceso de esa skill.
 3. Un `path` opcional carga otro fichero bajo la raíz de esa skill (referencias, assets). El valor por defecto es `SKILL.md` (solo el cuerpo; el frontmatter se quita).
 
-`read_skill` es de solo lectura y está disponible en ask y plan, además de agente.
+`read_skill` es de solo lectura y está disponible en ask y plan, además de agente. Si el CLI de una skill no está en el PATH, gxx pide reintentar con `npx --yes <name>`.
 
 ## Scripts
 
@@ -48,7 +48,7 @@ Las instrucciones van aquí.
 
 ## REPL
 
-`/skills` lista las skills descubiertas (nombre, origen, description). Sin argumentos. `gxx ask` usa el mismo descubrimiento y `read_skill`; no hace falta un flag extra.
+`/skills` lista las skills descubiertas (nombre, origen, description). Invoca una con `/<name> <pedido>`, o varias: `/frontend-design y /agent-browser <pedido>`. `gxx ask` usa el mismo descubrimiento y `read_skill`.
 
 ## Privacidad
 

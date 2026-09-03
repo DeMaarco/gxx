@@ -76,7 +76,11 @@ func (r *Registry) runCommand(ctx context.Context, raw json.RawMessage) (string,
 	select {
 	case err := <-waited:
 		killWindowsCommand(job, command.Process.Pid)
-		return finishWindowsCommand(output.String(), err, command.ProcessState)
+		text, runErr := finishWindowsCommand(output.String(), err, command.ProcessState)
+		if runErr != nil {
+			return text, runErr
+		}
+		return withMissingCommandHint(args.Command, text), nil
 	case <-commandContext.Done():
 		killWindowsCommand(job, command.Process.Pid)
 		<-waited

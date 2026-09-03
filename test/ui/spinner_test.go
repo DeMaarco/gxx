@@ -62,14 +62,73 @@ func TestRendererShowsCommandExitCode(t *testing.T) {
 	})
 	renderer.Finish("")
 	text := output.String()
-	if !strings.Contains(text, "✓ run_command  bun --check app.js  (84ms)") {
-		t.Fatalf("command line = %q, want a successful tool call", text)
+	if !strings.Contains(text, "✗ run_command  bun --check app.js  (84ms): "+tools.ExitCodeLabel+" 1") {
+		t.Fatalf("command line = %q, want a failed command with the exit code", text)
 	}
-	if !strings.Contains(text, tools.ExitCodeLabel+" 1") {
-		t.Fatalf("command line = %q, want the exit code surfaced", text)
+	if strings.Contains(text, "✓ run_command") {
+		t.Fatalf("command line = %q, did not want a success mark", text)
 	}
 	if strings.Contains(text, "document.documentElement") {
 		t.Fatalf("command line = %q, want the code not the output body", text)
+	}
+}
+
+func TestRendererShowsMissingCommandHint(t *testing.T) {
+	var output bytes.Buffer
+	renderer := ui.NewRenderer(&output)
+	renderer.SetLive(true)
+	renderer.SetSpinEvery(0)
+
+	renderer.StartTurn()
+	renderer.Event(agent.Event{
+		Kind:     agent.EventToolStarted,
+		ToolCall: &agent.ToolCall{ID: "c1", Name: "run_command", Arguments: []byte(`{"command":"agent-browser skills get core"}`)},
+	})
+	renderer.Event(agent.Event{
+		Kind: agent.EventToolDone,
+		Result: &agent.ToolResult{
+			CallID: "c1", Name: "run_command", DurationMS: 20,
+			Output: tools.ExitCodeLabel + " 1\nThe term 'agent-browser' is not recognized as the name of a cmdlet\nCommand \"agent-browser\" was not found on PATH. If this is an npm CLI named by a skill, retry with: npx --yes agent-browser <same arguments>",
+		},
+	})
+	renderer.Finish("")
+	text := output.String()
+	if !strings.Contains(text, "✗ run_command") {
+		t.Fatalf("output = %q, want a failed command mark", text)
+	}
+	if !strings.Contains(text, tools.ExitCodeLabel+" 1") {
+		t.Fatalf("output = %q, want exit code", text)
+	}
+	if !strings.Contains(text, "not found on PATH") && !strings.Contains(text, "is not recognized") {
+		t.Fatalf("output = %q, want missing-command snippet", text)
+	}
+}
+
+func TestRendererShowsConnectionRefusedSnippet(t *testing.T) {
+	var output bytes.Buffer
+	renderer := ui.NewRenderer(&output)
+	renderer.SetLive(true)
+	renderer.SetSpinEvery(0)
+
+	renderer.StartTurn()
+	renderer.Event(agent.Event{
+		Kind:     agent.EventToolStarted,
+		ToolCall: &agent.ToolCall{ID: "c1", Name: "run_command", Arguments: []byte(`{"command":"agent-browser open http://127.0.0.1:8000"}`)},
+	})
+	renderer.Event(agent.Event{
+		Kind: agent.EventToolDone,
+		Result: &agent.ToolResult{
+			CallID: "c1", Name: "run_command", DurationMS: 519,
+			Output: tools.ExitCodeLabel + " 1\nnet::ERR_CONNECTION_REFUSED at http://127.0.0.1:8000",
+		},
+	})
+	renderer.Finish("")
+	text := output.String()
+	if !strings.Contains(text, "✗ run_command") {
+		t.Fatalf("output = %q, want a failed command mark", text)
+	}
+	if !strings.Contains(text, "ERR_CONNECTION_REFUSED") {
+		t.Fatalf("output = %q, want connection-refused snippet", text)
 	}
 }
 

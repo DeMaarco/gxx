@@ -36,6 +36,7 @@ func TestLookupSlashCommand(t *testing.T) {
 		{line: "/mode auto", name: "/mode"},
 		{line: "/eco 2", name: "/eco"},
 		{line: "/skills", name: "/skills"},
+		{line: "/skill frontend-design build it", wantErr: "unknown command /skill"},
 		{line: "/foo", wantErr: "unknown command /foo"},
 		{line: "/help extra", wantErr: "unexpected argument for /help"},
 		{line: "/clear now", wantErr: "unexpected argument for /clear"},
@@ -58,3 +59,55 @@ func TestLookupSlashCommand(t *testing.T) {
 		}
 	}
 }
+
+func TestMatchSkillName(t *testing.T) {
+	skills := []string{"frontend-design", "code-review"}
+	if got, ok := ui.MatchSkillName("frontend-design", skills); !ok || got != "frontend-design" {
+		t.Fatalf("exact = %q %v", got, ok)
+	}
+	if got, ok := ui.MatchSkillName("fronted-design", skills); !ok || got != "frontend-design" {
+		t.Fatalf("typo = %q %v, want frontend-design", got, ok)
+	}
+	if _, ok := ui.MatchSkillName("unrelated", skills); ok {
+		t.Fatal("unrelated should not match")
+	}
+}
+
+func TestUnknownSlashHintForSkill(t *testing.T) {
+	err := errorString("unknown command /frontend-design")
+	got := ui.UnknownSlashHint(err, "/frontend-design", []string{"frontend-design"})
+	if !strings.Contains(got, "usage: /frontend-design <request>") {
+		t.Fatalf("hint = %q", got)
+	}
+	typo := ui.UnknownSlashHint(errorString("unknown command /fronted-design"), "/fronted-design", []string{"frontend-design"})
+	if !strings.Contains(typo, "Did you mean /frontend-design <request>?") {
+		t.Fatalf("typo hint = %q", typo)
+	}
+}
+
+func TestRewriteSkillPrompt(t *testing.T) {
+	got, err := ui.RewriteSkillPrompt("/fronted-design diseña una página", []string{"frontend-design"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, `Call read_skill for "frontend-design" before any other tool`) {
+		t.Fatalf("rewritten = %q, want skill-first instruction", got)
+	}
+	if !strings.Contains(got, "diseña una página") {
+		t.Fatalf("rewritten = %q, want request", got)
+	}
+	if _, err := ui.RewriteSkillPrompt("/frontend-design", []string{"frontend-design"}); err == nil {
+		t.Fatal("expected usage error without request")
+	}
+	both, err := ui.RewriteSkillPrompt("/frontend-design y /agent-browser diseña una página", []string{"frontend-design", "agent-browser"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(both, `"frontend-design"`) || !strings.Contains(both, `"agent-browser"`) {
+		t.Fatalf("rewritten = %q, want both skills", both)
+	}
+}
+
+type errorString string
+
+func (e errorString) Error() string { return string(e) }

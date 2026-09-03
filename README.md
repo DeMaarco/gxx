@@ -154,7 +154,7 @@ model · permission · effort · context size · how full the window is
 
 Drop an `AGENTS.md` in the project root if you want extra project notes loaded every turn. Those notes cannot override gxx safety rules.
 
-Agent Skills (`SKILL.md` under `.agents/skills`, `.gxx/skills`, or `~/.config/gxx/skills`) load as a name+description catalog each turn; `read_skill` fetches the body. See the [Skills](https://demaarco.github.io/gxx/skills/) docs.
+Agent Skills (`SKILL.md` under `.agents/skills`, `.gxx/skills`, or `~/.config/gxx/skills`) load as a name+description catalog each turn; `read_skill` fetches the body first when a skill matches. `/<name> <request>` forces that. After each write, `review_file` checks the file. See the [Skills](https://demaarco.github.io/gxx/skills/) docs.
 
 ---
 
@@ -190,7 +190,7 @@ gxx version
 Pin a version or install path:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/DeMaarco/gxx/main/install.sh | sh -s -- --version v0.0.21
+curl -fsSL https://raw.githubusercontent.com/DeMaarco/gxx/main/install.sh | sh -s -- --version v0.0.22
 curl -fsSL https://raw.githubusercontent.com/DeMaarco/gxx/main/install.sh | sh -s -- --dir /usr/local/bin
 ```
 
@@ -200,7 +200,7 @@ curl -fsSL https://raw.githubusercontent.com/DeMaarco/gxx/main/install.sh | sh -
 irm https://raw.githubusercontent.com/DeMaarco/gxx/main/install.ps1 | iex
 ```
 
-Installs to `%LOCALAPPDATA%\gxx` and puts that folder on your PATH. Pin a version with `$env:GXX_VERSION = "v0.0.21"` before running the installer.
+Installs to `%LOCALAPPDATA%\gxx` and puts that folder on your PATH. Pin a version with `$env:GXX_VERSION = "v0.0.22"` before running the installer.
 
 `run_command` uses PowerShell. Git tools need [Git for Windows](https://git-scm.com/download/win). Config lives in `%APPDATA%\gxx\config.json`.
 

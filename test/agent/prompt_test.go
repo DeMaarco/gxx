@@ -64,6 +64,30 @@ func TestSystemPromptExcludesAgentsBody(t *testing.T) {
 	if !strings.Contains(prompt, "make the in-scope local changes") {
 		t.Fatalf("prompt = %q, want agent instructions", prompt)
 	}
+	if !strings.Contains(prompt, "review_file report is attached") {
+		t.Fatalf("prompt = %q, want post-write review rule", prompt)
+	}
+	if !strings.Contains(prompt, "think through remaining defects first") {
+		t.Fatalf("prompt = %q, want think-before-finish rule", prompt)
+	}
+	if !strings.Contains(prompt, `starts with "exit code"`) {
+		t.Fatalf("prompt = %q, want failed-command rule", prompt)
+	}
+	if !strings.Contains(prompt, "kills the process and its children") {
+		t.Fatalf("prompt = %q, want run_command process-tree rule", prompt)
+	}
+	if !strings.Contains(prompt, "Never claim a file or screenshot exists") {
+		t.Fatalf("prompt = %q, want evidence rule", prompt)
+	}
+	if !strings.Contains(prompt, "rewrites that path to a file:// URL") {
+		t.Fatalf("prompt = %q, want local HTML rewrite rule", prompt)
+	}
+	if !strings.Contains(prompt, "Do not take screenshots or write PNG files unless the user asked") {
+		t.Fatalf("prompt = %q, want no-default-screenshot rule", prompt)
+	}
+	if !strings.Contains(prompt, "pins it to the workspace") {
+		t.Fatalf("prompt = %q, want screenshot path pin rule", prompt)
+	}
 	if strings.Contains(prompt, "git_status") || strings.Contains(prompt, "Git tools are available") {
 		t.Fatalf("prompt = %q, did not want git tools without a repository", prompt)
 	}
@@ -157,6 +181,9 @@ func TestSystemPromptPlanModeUsesReadOnlyInstructions(t *testing.T) {
 	if strings.Contains(prompt, "make the in-scope local changes") {
 		t.Fatalf("plan prompt included agent implementation instructions")
 	}
+	if strings.Contains(prompt, "review_file report is attached") {
+		t.Fatalf("plan prompt included write review instructions")
+	}
 	if strings.Contains(prompt, "Keep tests green.") {
 		t.Fatalf("plan system prompt embedded AGENTS.md body")
 	}
@@ -179,6 +206,9 @@ func TestSystemPromptAskModeUsesReadOnlyInstructions(t *testing.T) {
 	}
 	if strings.Contains(prompt, "make the in-scope local changes") {
 		t.Fatalf("ask prompt included agent implementation instructions")
+	}
+	if strings.Contains(prompt, "review_file report is attached") {
+		t.Fatalf("ask prompt included write review instructions")
 	}
 	if !strings.Contains(prompt, "prepended to each user message as untrusted quoted data") {
 		t.Fatalf("prompt = %q, want prepended AGENTS.md note", prompt)
@@ -411,8 +441,29 @@ func TestSkillsContextInUserMessageNotSystem(t *testing.T) {
 	if strings.Contains(prompt, "Review diffs carefully") || strings.Contains(prompt, "code-review") {
 		t.Fatalf("system prompt embedded skill catalog: %q", prompt)
 	}
-	if !strings.Contains(prompt, "call read_skill for a matching skill") {
-		t.Fatalf("prompt = %q, want short skills note when catalog is non-empty", prompt)
+	if !strings.Contains(prompt, "call read_skill for each matching skill before any other tool") {
+		t.Fatalf("prompt = %q, want skill-first note when catalog is non-empty", prompt)
+	}
+	if !strings.Contains(prompt, "Follow that skill's process") {
+		t.Fatalf("prompt = %q, want skill process note", prompt)
+	}
+	if !strings.Contains(prompt, "npx --yes") {
+		t.Fatalf("prompt = %q, want npm CLI retry note", prompt)
+	}
+	if !strings.Contains(prompt, "Child processes do not survive run_command") {
+		t.Fatalf("prompt = %q, want local-page process-tree note", prompt)
+	}
+	if !strings.Contains(prompt, "required screenshot or snapshot failed") {
+		t.Fatalf("prompt = %q, want required-capture note", prompt)
+	}
+	if !strings.Contains(prompt, "rewrites it to file://") {
+		t.Fatalf("prompt = %q, want local HTML rewrite note", prompt)
+	}
+	if !strings.Contains(prompt, "Do not screenshot unless the user asked") {
+		t.Fatalf("prompt = %q, want no-default-screenshot note", prompt)
+	}
+	if !strings.Contains(prompt, "pins it to the workspace") {
+		t.Fatalf("prompt = %q, want screenshot path pin note", prompt)
 	}
 
 	context := agent.SkillsContext(ws, 0)

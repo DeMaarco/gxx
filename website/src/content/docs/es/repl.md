@@ -4,7 +4,7 @@ description: Atajos de teclado, modos de sesión y comandos slash.
 ---
 
 ```text
-◆ gxx  v0.0.21     badge y versión
+◆ gxx  v0.0.22     badge y versión
 >                 escribe aquí  ·  Shift+Tab →  > ask  ·  Shift+Tab →  agente otra vez
 gpt-5.6-sol · auto · medium · 272k · 0%
 ```
@@ -17,6 +17,8 @@ gpt-5.6-sol · auto · medium · 272k · 0%
 | `Ctrl+O` | Abrir conversaciones guardadas para este workspace |
 | `Ctrl+C` | Limpiar, cancelar, o confirmar salida |
 | `Ctrl+D` | Salir |
+
+Pegar un prompt con saltos de línea lo junta en una sola petición. Enter sigue enviando.
 
 `gxx` inicia en agente, así que `/mode` (`ask`, `auto-writes`, `auto`) aplica. Ask y plan son modos de sesión separados con `Shift+Tab`. Nunca se solapan. Una pulsación desde ask o plan vuelve a agente. Ambos son de solo lectura: solo lecturas de archivos e inspección git, sin prompt de aprobación. Son solo de sesión y no se guardan en config.
 
@@ -42,6 +44,7 @@ Las conversaciones se guardan automáticamente tras cada turno en `~/.config/gxx
 | `/usage` | Tokens de sesión, coste estimado, y cuota restante de suscripción o API |
 | `/history` | Abrir conversaciones guardadas para este workspace |
 | `/skills` | Listar Agent Skills descubiertas |
+| `/<skill>` | Usar esa Agent Skill, luego el pedido |
 | `/clear` | Archivar esta conversación e iniciar una nueva |
 | `/exit` | Salir |
 

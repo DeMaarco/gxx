@@ -114,6 +114,71 @@ func TestReadKeyParsesArrowsAndRunes(t *testing.T) {
 	}
 }
 
+func TestReadKeyKeepsPastedNewlinesInOnePrompt(t *testing.T) {
+	events, err := ui.ReadKeyStream(bytes.NewReader([]byte("ab\ncd\n")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []ui.KeyKind{ui.KeyRune, ui.KeyRune, ui.KeyBreak, ui.KeyRune, ui.KeyRune, ui.KeyEnter}
+	if len(events) != len(want) {
+		t.Fatalf("events = %#v, want %d keys", events, len(want))
+	}
+	for i, kind := range want {
+		if events[i].Kind != kind {
+			t.Fatalf("events[%d] = %+v, want kind %v in %#v", i, events[i], kind, events)
+		}
+	}
+
+	crlf, err := ui.ReadKeyStream(bytes.NewReader([]byte("a\r\nb\r")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(crlf) != 4 || crlf[1].Kind != ui.KeyBreak || crlf[3].Kind != ui.KeyEnter {
+		t.Fatalf("crlf = %#v, want a, break, b, enter", crlf)
+	}
+
+	pasted, err := ui.ReadKeyStream(bytes.NewReader([]byte("\x1b[200~one\ntwo\x1b[201~\r")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pasted) != 8 || pasted[3].Kind != ui.KeyBreak || pasted[7].Kind != ui.KeyEnter {
+		t.Fatalf("bracketed paste = %#v, want one, break, two, enter", pasted)
+	}
+
+	enter, err := ui.ReadKey(bytes.NewReader([]byte{0x0d}))
+	if err != nil || enter.Kind != ui.KeyEnter {
+		t.Fatalf("bare CR = %+v, %v, want Enter", enter, err)
+	}
+	crlfEnter, err := ui.ReadKey(bytes.NewReader([]byte{0x0d, 0x0a}))
+	if err != nil || crlfEnter.Kind != ui.KeyEnter {
+		t.Fatalf("CRLF = %+v, %v, want Enter", crlfEnter, err)
+	}
+
+	wrapped, err := ui.ReadKeyStream(bytes.NewReader([]byte("\x1b[200~\r\x1b[201~")))
+	if err != nil || len(wrapped) != 1 || wrapped[0].Kind != ui.KeyEnter {
+		t.Fatalf("wrapped CR = %#v, %v, want Enter", wrapped, err)
+	}
+	wrappedCRLF, err := ui.ReadKeyStream(bytes.NewReader([]byte("\x1b[200~\r\n\x1b[201~")))
+	if err != nil || len(wrappedCRLF) != 1 || wrappedCRLF[0].Kind != ui.KeyEnter {
+		t.Fatalf("wrapped CRLF = %#v, %v, want Enter", wrappedCRLF, err)
+	}
+}
+
+func TestInputStatePasteBreakJoinsLines(t *testing.T) {
+	var state ui.InputState
+	for _, char := range "/frontend-design" {
+		state.Insert(char)
+	}
+	state.Apply(ui.KeyBreak)
+	for _, char := range "y /agent-browser diseña" {
+		state.Insert(char)
+	}
+	line, _, submitted := state.Apply(ui.KeyEnter)
+	if !submitted || line != "/frontend-design y /agent-browser diseña" {
+		t.Fatalf("joined = %q submitted=%v", line, submitted)
+	}
+}
+
 func TestFinishPromptFrameEndsAtColumnZero(t *testing.T) {
 	settings := ui.REPLSettings{
 		Model:          "gpt-5.6-luna",
