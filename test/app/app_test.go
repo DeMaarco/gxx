@@ -46,6 +46,9 @@ func TestRunHelpDoesNotRequireConfiguration(t *testing.T) {
 	if !strings.Contains(stdout.String(), "--permission") {
 		t.Fatalf("stdout = %q, want permission flag", stdout.String())
 	}
+	if !strings.Contains(stdout.String(), "--max-steps int         Maximum model steps (default: 24)") {
+		t.Fatalf("stdout = %q, want max-steps default 24", stdout.String())
+	}
 }
 
 func TestRunVersionPrintsRelease(t *testing.T) {

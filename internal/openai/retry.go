@@ -38,8 +38,13 @@ func retryDelay(attempt int, raw *http.Response) time.Duration {
 	return budget.RetryDelay(attempt, raw)
 }
 
+const usageLimitMessage = "ChatGPT Codex usage limit reached"
+
 func retryable(err error, ctx context.Context, raw *http.Response) bool {
 	if err == nil || ctx.Err() != nil {
+		return false
+	}
+	if quotaLimitReached(err) {
 		return false
 	}
 	var apiErr *openaisdk.Error
@@ -49,6 +54,40 @@ func retryable(err error, ctx context.Context, raw *http.Response) bool {
 	return budget.Retryable(err, ctx, raw)
 }
 
+func quotaLimitReached(err error) bool {
+	if err == nil {
+		return false
+	}
+	for _, text := range quotaErrorTexts(err) {
+		lower := strings.ToLower(text)
+		if strings.Contains(lower, "usage limit has been reached") || strings.Contains(lower, strings.ToLower(usageLimitMessage)) {
+			return true
+		}
+	}
+	return false
+}
+
+func quotaErrorTexts(err error) []string {
+	var apiErr *openaisdk.Error
+	if !errors.As(err, &apiErr) {
+		return []string{err.Error()}
+	}
+	var texts []string
+	if msg := strings.TrimSpace(apiErr.Message); msg != "" {
+		texts = append(texts, msg)
+	}
+	if raw := apiErr.RawJSON(); raw != "" {
+		texts = append(texts, raw)
+		if parsed := parseAPIError([]byte(raw)); parsed != "" {
+			texts = append(texts, parsed)
+		}
+	}
+	if apiErr.Request != nil && apiErr.Response != nil {
+		texts = append(texts, err.Error())
+	}
+	return texts
+}
+
 func sleepContext(ctx context.Context, delay time.Duration) error {
 	return budget.SleepContext(ctx, delay)
 }
@@ -56,6 +95,9 @@ func sleepContext(ctx context.Context, delay time.Duration) error {
 func formatResponsesError(err error) error {
 	if err == nil {
 		return nil
+	}
+	if quotaLimitReached(err) {
+		return errors.New(usageLimitMessage)
 	}
 	var apiErr *openaisdk.Error
 	if !errors.As(err, &apiErr) {

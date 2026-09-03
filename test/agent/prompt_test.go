@@ -37,6 +37,18 @@ func TestSystemPromptExcludesAgentsBody(t *testing.T) {
 	defer ws.Close()
 
 	prompt := agent.SystemPrompt(ws, false)
+	if !strings.Contains(prompt, "Prefer search_files for symbols") {
+		t.Fatalf("prompt = %q, want search-first inspection", prompt)
+	}
+	if !strings.Contains(prompt, "at most 4 reads") {
+		t.Fatalf("prompt = %q, want overview read budget", prompt)
+	}
+	if !strings.Contains(prompt, "sensitive paths omitted") {
+		t.Fatalf("prompt = %q, want omitted-secret notice", prompt)
+	}
+	if !strings.Contains(prompt, "Do not list_files the workspace root") {
+		t.Fatalf("prompt = %q, want no root list_files", prompt)
+	}
 	if strings.Contains(prompt, "Use focused tests.") {
 		t.Fatalf("system prompt embedded AGENTS.md body: %q", prompt)
 	}
@@ -63,6 +75,9 @@ func TestSystemPromptExcludesAgentsBody(t *testing.T) {
 	}
 	if !strings.Contains(prompt, "make the in-scope local changes") {
 		t.Fatalf("prompt = %q, want agent instructions", prompt)
+	}
+	if !strings.Contains(prompt, "run that command first") {
+		t.Fatalf("prompt = %q, want failing-command-first rule", prompt)
 	}
 	if !strings.Contains(prompt, "review_file report is attached") {
 		t.Fatalf("prompt = %q, want post-write review rule", prompt)

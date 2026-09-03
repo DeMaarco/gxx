@@ -25,6 +25,12 @@ import (
 	"gxx/internal/config"
 )
 
+func TestDefaultMaxStepsIsTwentyFour(t *testing.T) {
+	if config.DefaultMaxSteps != 24 {
+		t.Fatalf("DefaultMaxSteps = %d, want 24", config.DefaultMaxSteps)
+	}
+}
+
 func TestLoadAndValidate(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("OPENAI_API_KEY", "test-key")

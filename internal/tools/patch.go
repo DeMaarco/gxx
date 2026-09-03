@@ -62,7 +62,7 @@ Pass changes as an array of objects:
 - action update: edit an existing file in place. Prefer old_text/new_text for a unique span. Pass content to rewrite the whole file. Never delete a file and add it again to edit it.
 - action delete: remove an existing file that should stay gone.
 Multiple updates to the same path apply in order. Prefer one apply_patch call for related files.
-Created and updated files are reviewed automatically; read the review before treating the write as done.`,
+Created and updated files are reviewed automatically; read the review before treating the write as done. No-op updates are ignored so a mixed patch can still apply.`,
 			ReadOnly: false,
 			Parameters: objectSchema(map[string]any{
 				"changes": map[string]any{
@@ -133,10 +133,12 @@ func (r *Registry) prepareApplyPatch(
 
 	fileChanges := make([]workspace.FileChange, 0, len(works))
 	paths := make([]string, 0, len(works))
+	var skipped []string
 	var preview strings.Builder
 	for _, work := range works {
 		if work.action == "update" && bytes.Equal(work.before, work.after) {
-			return approval.Action{}, nil, fmt.Errorf("patch does not change %s", work.path)
+			skipped = append(skipped, work.path)
+			continue
 		}
 		change := workspace.FileChange{Path: work.path}
 		switch work.action {
@@ -158,6 +160,12 @@ func (r *Registry) prepareApplyPatch(
 		fileChanges = append(fileChanges, change)
 		paths = append(paths, work.path)
 	}
+	if len(fileChanges) == 0 {
+		if len(skipped) == 1 {
+			return approval.Action{}, nil, fmt.Errorf("patch does not change %s", skipped[0])
+		}
+		return approval.Action{}, nil, fmt.Errorf("patch does not change %s", strings.Join(skipped, ", "))
+	}
 
 	action := approval.Action{
 		Title:   fmt.Sprintf("Apply patch to %d file(s)", len(fileChanges)),
@@ -175,12 +183,37 @@ func (r *Registry) prepareApplyPatch(
 			return "", err
 		}
 		return appendPatchReviews(fmt.Sprintf(
-			"Applied patch to %d file(s): %s",
+			"Applied patch to %d file(s): %s%s",
 			len(paths),
 			strings.Join(paths, ", "),
-		), works), nil
+			noopPatchNote(skipped),
+		), appliedWorks(works, paths)), nil
 	}
 	return action, run, nil
+}
+
+func noopPatchNote(skipped []string) string {
+	if len(skipped) == 0 {
+		return ""
+	}
+	return "; ignored no-op update(s): " + strings.Join(skipped, ", ")
+}
+
+func appliedWorks(works []*patchFileWork, paths []string) []*patchFileWork {
+	if len(paths) == 0 || len(works) == 0 {
+		return nil
+	}
+	keep := make(map[string]bool, len(paths))
+	for _, path := range paths {
+		keep[path] = true
+	}
+	out := make([]*patchFileWork, 0, len(paths))
+	for _, work := range works {
+		if work != nil && keep[work.path] {
+			out = append(out, work)
+		}
+	}
+	return out
 }
 
 func rejectLegacyPatchDocument(raw json.RawMessage) error {

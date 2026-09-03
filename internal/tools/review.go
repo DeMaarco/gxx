@@ -40,6 +40,8 @@ var (
 	zIndexNegativeRe = regexp.MustCompile(`(?i)z-index\s*:\s*(-\d+)`)
 	htmlHrefHashRe   = regexp.MustCompile(`(?i)href\s*=\s*["']#([^"']+)["']`)
 	htmlIDRe         = regexp.MustCompile(`(?i)\bid\s*=\s*["']([^"']+)["']`)
+	htmlTitleRe      = regexp.MustCompile(`(?i)<title\b`)
+	htmlViewportRe   = regexp.MustCompile(`(?i)<meta\b[^>]*\bname\s*=\s*["']viewport["']`)
 )
 
 type reviewFileArgs struct {
@@ -128,6 +130,7 @@ func reviewFindings(path, content string) []string {
 	var findings []string
 	findings = appendZIndexFindings(findings, content)
 	findings = appendHTMLLinkFindings(findings, content)
+	findings = appendHTMLDocumentFindings(findings, path, content)
 	if len(findings) > maxReviewFindings {
 		omitted := len(findings) - maxReviewFindings
 		findings = findings[:maxReviewFindings]
@@ -162,6 +165,29 @@ func appendZIndexFindings(findings []string, content string) []string {
 		if len(findings) >= maxReviewFindings {
 			break
 		}
+	}
+	return findings
+}
+
+func looksLikeHTMLDocument(content string) bool {
+	lower := strings.ToLower(content)
+	return strings.Contains(lower, "<html") || strings.Contains(lower, "<!doctype html")
+}
+
+func appendHTMLDocumentFindings(findings []string, path, content string) []string {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".html", ".htm":
+	default:
+		return findings
+	}
+	if !looksLikeHTMLDocument(content) {
+		return findings
+	}
+	if !htmlTitleRe.MatchString(content) {
+		findings = append(findings, "HTML document is missing a <title>")
+	}
+	if !htmlViewportRe.MatchString(content) {
+		findings = append(findings, "HTML document is missing a viewport meta tag")
 	}
 	return findings
 }

@@ -64,6 +64,56 @@ func TestReviewFileFlagsHTMLDefects(t *testing.T) {
 	}
 }
 
+func TestReviewFileFlagsMissingTitleAndViewport(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, root, "landing.html", `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+</head>
+<body>
+  <h1>Shop</h1>
+</body>
+</html>
+`)
+	writeTestFile(t, root, "ok.html", `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Shop</title>
+</head>
+<body>
+  <h1>Shop</h1>
+</body>
+</html>
+`)
+	registry := newTestRegistry(t, root, &staticApprover{approved: true}, tools.Options{
+		MaxResultBytes:  4096,
+		MaxSearchResult: 10,
+		ParallelReads:   1,
+		CommandTimeout:  time.Second,
+	})
+	missing := registry.Execute(context.Background(), []agent.ToolCall{
+		toolCall("r", "review_file", map[string]any{"path": "landing.html"}),
+	}, nil)[0]
+	if missing.IsError {
+		t.Fatalf("review failed: %s", missing.Output)
+	}
+	if !strings.Contains(missing.Output, "missing a <title>") {
+		t.Fatalf("review = %q, want missing title", missing.Output)
+	}
+	if !strings.Contains(missing.Output, "missing a viewport meta tag") {
+		t.Fatalf("review = %q, want missing viewport", missing.Output)
+	}
+	ok := registry.Execute(context.Background(), []agent.ToolCall{
+		toolCall("r", "review_file", map[string]any{"path": "ok.html"}),
+	}, nil)[0]
+	if ok.IsError || !strings.Contains(ok.Output, "findings: none") {
+		t.Fatalf("complete document review = %q, want no findings", ok.Output)
+	}
+}
+
 func TestReviewFileCleanGoFileHasNoFindings(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "main.go", "package main\n\nfunc main() {}\n")

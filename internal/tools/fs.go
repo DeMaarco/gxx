@@ -27,6 +27,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -56,7 +57,8 @@ func (r *Registry) listFilesSpec() toolSpec {
 		definition: agent.ToolDefinition{
 			Name: "list_files",
 			Description: "List files and directories under a workspace-relative path. Default dependency directories, .gitignore, .gxxignore patterns, and sensitive paths are skipped. " +
-				"For package or folder inventories prefer path set and max_depth=1. Do not deep-list a large tree when names alone answer the question.",
+				"The workspace listing is already in the user message — do not list the workspace root. For a truncated listing, pass a subdirectory with max_depth=1. " +
+				"Do not deep-list a large tree when names alone answer the question.",
 			ReadOnly: true,
 			Parameters: objectSchema(map[string]any{
 				"path": map[string]any{
@@ -77,7 +79,7 @@ func (r *Registry) searchFilesSpec() toolSpec {
 	return toolSpec{
 		definition: agent.ToolDefinition{
 			Name:        "search_files",
-			Description: "Search regular text files and return matching lines as path:line:text. query is a RE2 regular expression; if it does not compile, it is searched as a literal string. A bare identifier is matched as a whole word (CamelCase prefixes also match longer symbols, so ContextSizes matches ContextSizesForModel). ALL-CAPS tokens such as TODO or FIXME are case-sensitive unless case_sensitive is false. Matching is otherwise case-insensitive unless case_sensitive is true. Leave max_results null for the configured default; small caps hide useful hits. Optional glob limits files (gitignore style, for example *.go or **/*_test.go). Default dependency directories, .gitignore, and .gxxignore patterns are skipped.",
+			Description: "Search regular text files and return matching lines as path:line:text, sorted by path then line number. query is a RE2 regular expression; if it does not compile, it is searched as a literal string. A bare identifier is matched as a whole word (CamelCase prefixes also match longer symbols, so ContextSizes matches ContextSizesForModel). Dotted selectors such as Loop.Run match the literal selector and same-line type/method definitions (func (l *Loop) Run). ALL-CAPS tokens such as TODO or FIXME are case-sensitive unless case_sensitive is false. Matching is otherwise case-insensitive unless case_sensitive is true. Leave max_results null for the configured default; small caps hide useful hits. Optional glob limits files (gitignore style, for example *.go or **/*_test.go). Default dependency directories, .gitignore, and .gxxignore patterns are skipped.",
 			ReadOnly:    true,
 			Parameters: objectSchema(map[string]any{
 				"query": map[string]any{
@@ -209,7 +211,7 @@ func (r *Registry) WorkspaceOverview(ctx context.Context) string {
 	if err != nil || !info.IsDir() {
 		return builder.String()
 	}
-	entries, _, err := r.walkListedEntries(ctx, root, overviewListDepth, overviewMaxEntries, false, true)
+	entries, err := r.overviewEntries(ctx)
 	if err != nil {
 		return builder.String()
 	}
@@ -233,6 +235,102 @@ func (r *Registry) WorkspaceOverview(ctx context.Context) string {
 		builder.WriteString(strings.Join(ignored, ", "))
 	}
 	return builder.String()
+}
+
+func (r *Registry) overviewEntries(ctx context.Context) ([]string, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	matcher := r.ignoreForWalk(".")
+	type queued struct {
+		path  string
+		depth int
+	}
+	queue := []queued{{path: ".", depth: 0}}
+	entries := make([]string, 0, overviewMaxEntries)
+	for len(queue) > 0 && len(entries) < overviewMaxEntries {
+		if err := ctx.Err(); err != nil {
+			return entries, err
+		}
+		cur := queue[0]
+		queue = queue[1:]
+		if cur.path != "." {
+			r.addIgnoreFiles(matcher, cur.path)
+		}
+		dirents, err := iofs.ReadDir(r.workspace.FS(), cur.path)
+		if err != nil {
+			if cur.path == "." {
+				return nil, workspace.Describe(cur.path, err)
+			}
+			continue
+		}
+		sortOverviewDirents(dirents)
+		var children []queued
+		for _, entry := range dirents {
+			if len(entries) >= overviewMaxEntries {
+				break
+			}
+			name := entry.Name()
+			if name == "." || name == ".." {
+				continue
+			}
+			path := slashJoin(cur.path, name)
+			depth := cur.depth + 1
+			if depth > overviewListDepth {
+				continue
+			}
+			isDir := entry.IsDir()
+			if matcher.ignores(path, isDir) {
+				continue
+			}
+			if isSensitivePath(path) {
+				continue
+			}
+			if entry.Type()&os.ModeSymlink != 0 {
+				if _, err := r.workspace.Stat(path); err != nil {
+					continue
+				}
+			}
+			if r.skipGeneratedOverview(path, isDir) {
+				continue
+			}
+			display := path
+			if isDir {
+				display += "/"
+			} else {
+				display = r.overviewDisplay(path)
+			}
+			entries = append(entries, display)
+			if isDir && depth < overviewListDepth && !overviewSkipDescend(name) {
+				children = append(children, queued{path: path, depth: depth})
+			}
+		}
+		queue = append(queue, children...)
+	}
+	return entries, nil
+}
+
+func sortOverviewDirents(entries []iofs.DirEntry) {
+	sort.Slice(entries, func(i, j int) bool {
+		left, right := entries[i].Name(), entries[j].Name()
+		leftHidden, rightHidden := strings.HasPrefix(left, "."), strings.HasPrefix(right, ".")
+		if leftHidden != rightHidden {
+			return !leftHidden
+		}
+		return left < right
+	})
+}
+
+func overviewSkipDescend(name string) bool {
+	if strings.HasPrefix(name, ".") {
+		return true
+	}
+	switch name {
+	case "dist", "build", "coverage", "vendor", "out", "target", "bin":
+		return true
+	default:
+		return false
+	}
 }
 
 func (r *Registry) topLevelIgnored() []string {
@@ -401,8 +499,13 @@ func (r *Registry) searchFiles(ctx context.Context, raw json.RawMessage) (string
 	matcher := r.ignoreForWalk(target)
 	reportProgressNow(ctx, target)
 	var matches []string
+	omitted := 0
 	searchOne := func(file string) error {
-		if isSensitivePath(file) || matcher.ignores(file, false) || !matchPathGlob(glob, file) {
+		if isSensitivePath(file) {
+			omitted++
+			return nil
+		}
+		if matcher.ignores(file, false) || !matchPathGlob(glob, file) {
 			return nil
 		}
 		reportProgress(ctx, file)
@@ -418,10 +521,10 @@ func (r *Registry) searchFiles(ctx context.Context, raw json.RawMessage) (string
 	if err != nil {
 		return "", err
 	}
+	if isSensitivePath(target) {
+		return "", refuseSensitive("search", path)
+	}
 	if info.Mode().IsRegular() {
-		if isSensitivePath(target) {
-			return "", refuseSensitive("search", path)
-		}
 		if matcher.ignores(target, false) {
 			return "No matches found.", nil
 		}
@@ -444,12 +547,20 @@ func (r *Registry) searchFiles(ctx context.Context, raw json.RawMessage) (string
 				if current != target && matcher.ignores(current, true) && !matcher.hasNegation {
 					return iofs.SkipDir
 				}
+				if current != target && isSensitivePath(current) {
+					omitted++
+					return iofs.SkipDir
+				}
 				return nil
 			}
 			if len(matches) >= limit {
 				return errStopWalk
 			}
-			if isSensitivePath(current) || matcher.ignores(current, false) || !matchPathGlob(glob, current) {
+			if matcher.ignores(current, false) || !matchPathGlob(glob, current) {
+				return nil
+			}
+			if isSensitivePath(current) {
+				omitted++
 				return nil
 			}
 			fileInfo, err := r.workspace.Stat(current)
@@ -466,11 +577,17 @@ func (r *Registry) searchFiles(ctx context.Context, raw json.RawMessage) (string
 	}
 
 	if len(matches) == 0 {
+		if omitted > 0 {
+			return "No matches found.\n" + omittedSensitiveNotice(omitted), nil
+		}
 		return "No matches found.", nil
 	}
-	sort.Strings(matches)
+	sortSearchMatches(matches)
 	if len(matches) >= limit {
 		matches = append(matches, "… search result limit reached")
+	}
+	if omitted > 0 {
+		matches = append(matches, omittedSensitiveNotice(omitted))
 	}
 	return strings.Join(matches, "\n"), nil
 }
@@ -740,6 +857,9 @@ func searchPattern(query string, caseSensitive, explicitCase bool) (string, bool
 	if isScreamingToken(query) && !explicitCase {
 		caseSensitive = true
 	}
+	if isQualifiedIdentifier(query) {
+		return qualifiedSearchPattern(query, caseSensitive), caseSensitive
+	}
 	if isBareIdentifier(query) {
 		escaped := regexp.QuoteMeta(query)
 		// Exact symbol, or CamelCase continuation (Foo → FooBar / ContextSizes → ContextSizesForModel).
@@ -769,6 +889,37 @@ func hasCamelContinuation(query string) bool {
 		}
 	}
 	return false
+}
+
+func isQualifiedIdentifier(query string) bool {
+	parts := strings.Split(query, ".")
+	if len(parts) < 2 {
+		return false
+	}
+	for _, part := range parts {
+		if !isBareIdentifier(part) {
+			return false
+		}
+	}
+	return true
+}
+
+func qualifiedSearchPattern(query string, caseSensitive bool) string {
+	parts := strings.Split(query, ".")
+	var sameLine strings.Builder
+	for i, part := range parts {
+		if i > 0 {
+			sameLine.WriteString(`.*`)
+		}
+		sameLine.WriteString(`\b`)
+		sameLine.WriteString(regexp.QuoteMeta(part))
+		sameLine.WriteString(`\b`)
+	}
+	pattern := `(?:` + regexp.QuoteMeta(query) + `|` + sameLine.String() + `)`
+	if !caseSensitive {
+		return "(?i)" + pattern
+	}
+	return pattern
 }
 
 func isBareIdentifier(query string) bool {
@@ -855,6 +1006,41 @@ func (r *Registry) searchTextFile(
 		}
 	}
 	return matches, scanner.Err()
+}
+
+func sortSearchMatches(matches []string) {
+	sort.SliceStable(matches, func(i, j int) bool {
+		left, right := matches[i], matches[j]
+		leftNotice, rightNotice := strings.HasPrefix(left, "…"), strings.HasPrefix(right, "…")
+		if leftNotice != rightNotice {
+			return !leftNotice
+		}
+		if leftNotice {
+			return false
+		}
+		leftPath, leftLine := searchMatchKey(left)
+		rightPath, rightLine := searchMatchKey(right)
+		if leftPath != rightPath {
+			return leftPath < rightPath
+		}
+		return leftLine < rightLine
+	})
+}
+
+func searchMatchKey(item string) (string, int) {
+	path, rest, ok := strings.Cut(item, ":")
+	if !ok {
+		return item, 0
+	}
+	lineText, _, ok := strings.Cut(rest, ":")
+	if !ok {
+		return path, 0
+	}
+	line, err := strconv.Atoi(lineText)
+	if err != nil {
+		return path, 0
+	}
+	return path, line
 }
 
 func isBinary(file *os.File) (bool, error) {

@@ -229,6 +229,9 @@ func (l *Loop) executeTools(
 			streak.observe(keys[i], result, emit)
 		}
 	}
+	if mutatedWorkspace(unique, readOnly) {
+		clear(cache)
+	}
 	return results
 }
 
@@ -285,6 +288,15 @@ func readOnlyToolSet(definitions []ToolDefinition) map[string]bool {
 		}
 	}
 	return out
+}
+
+func mutatedWorkspace(calls []ToolCall, readOnly map[string]bool) bool {
+	for _, call := range calls {
+		if !readOnly[call.Name] {
+			return true
+		}
+	}
+	return false
 }
 
 func emitReusedTool(emit EmitFunc, call ToolCall, result ToolResult) {

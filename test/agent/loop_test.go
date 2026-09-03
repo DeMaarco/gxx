@@ -451,6 +451,46 @@ func TestLoopAbsorbsToolResultsWhenCancelledAfterExecute(t *testing.T) {
 	}
 }
 
+func TestLoopInvalidatesReadCacheAfterMutation(t *testing.T) {
+	diffArgs := json.RawMessage(`{}`)
+	patchArgs := json.RawMessage(`{"changes":[{"path":"a.txt","action":"add","content":"hi"}]}`)
+	model := &fakeModel{responses: []agent.ModelResponse{
+		{ToolCalls: []agent.ToolCall{{ID: "d1", Name: "git_diff", Arguments: diffArgs}}},
+		{ToolCalls: []agent.ToolCall{{ID: "p1", Name: "apply_patch", Arguments: patchArgs}}},
+		{ToolCalls: []agent.ToolCall{{ID: "d2", Name: "git_diff", Arguments: diffArgs}}},
+		{Text: "Done."},
+	}}
+	executor := &countingExecutor{
+		definitions: []agent.ToolDefinition{
+			{Name: "git_diff", ReadOnly: true},
+			{Name: "apply_patch", ReadOnly: false},
+		},
+	}
+	loop := &agent.Loop{Model: model, Executor: executor, MaxSteps: 5}
+
+	result, err := loop.Run(context.Background(), "edit then diff", nil)
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if result.Answer != "Done." {
+		t.Fatalf("Answer = %q", result.Answer)
+	}
+	var diffs int
+	for _, batch := range executor.calls {
+		for _, call := range batch {
+			if call.Name == "git_diff" {
+				diffs++
+			}
+		}
+	}
+	if diffs != 2 {
+		t.Fatalf("git_diff executions = %d in %#v, want 2 after the patch", diffs, executor.calls)
+	}
+	if strings.HasPrefix(result.ToolResults[len(result.ToolResults)-1].Output, "Repeated call") {
+		t.Fatalf("post-patch git_diff was served from cache: %q", result.ToolResults[len(result.ToolResults)-1].Output)
+	}
+}
+
 func TestLoopDoesNotCacheMutatingToolsAcrossSteps(t *testing.T) {
 	args := json.RawMessage(`{"changes":[{"path":"a.txt","action":"update","old_text":"x","new_text":"y"}]}`)
 	model := &fakeModel{responses: []agent.ModelResponse{

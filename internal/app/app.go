@@ -1274,7 +1274,7 @@ func printCommonFlags(writer io.Writer) {
 	fmt.Fprintln(writer, "                          ask confirms writes and commands; auto-writes applies files; auto applies files and commands")
 	fmt.Fprintln(writer, "                          Ask/plan session modes only read files and ignore this flag")
 	fmt.Fprintln(writer, "  --fast                  Use the provider fast service tier when available")
-	fmt.Fprintln(writer, "  --max-steps int         Maximum model steps (default: 12)")
+	fmt.Fprintln(writer, "  --max-steps int         Maximum model steps (default: 24)")
 	fmt.Fprintln(writer, "  --command-timeout dur   Maximum command duration (default: 2m)")
 	fmt.Fprintln(writer, "  --api-timeout dur       Timeout per model response (default: 10m)")
 }

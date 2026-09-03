@@ -240,7 +240,12 @@ func TestRunCommandPreviewRewritesLocalBrowserOpen(t *testing.T) {
 	if len(approver.actions) != 1 {
 		t.Fatalf("preview actions = %#v", approver.actions)
 	}
-	wantURL := tools.WorkspaceFileURL(filepath.Join(root, "index.html"))
+	ws, err := workspace.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ws.Close()
+	wantURL := tools.WorkspaceFileURL(filepath.Join(ws.Root(), "index.html"))
 	if !strings.Contains(approver.actions[0].Preview, wantURL) {
 		t.Fatalf("preview = %q, want file URL %s", approver.actions[0].Preview, wantURL)
 	}

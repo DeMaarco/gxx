@@ -155,6 +155,13 @@ func TestWithMissingCommandHint(t *testing.T) {
 	if strings.Contains(named, "workspace-relative name") {
 		t.Fatalf("hint added for a named screenshot: %q", named)
 	}
+	identify := tools.WithMissingCommandHint(
+		"identify img/ridge.jpg",
+		"exit code 127\n/bin/sh: identify: command not found",
+	)
+	if strings.Contains(identify, "npx --yes") {
+		t.Fatalf("npx hint added for ImageMagick identify: %q", identify)
+	}
 }
 
 func envValue(env []string, name string) string {

@@ -328,8 +328,9 @@ func looksLikeConnectionRefused(text string) bool {
 
 func skipMissingCommandHint(name string) bool {
 	switch strings.ToLower(name) {
-	case "npx", "npm", "pnpm", "yarn", "bun", "node", "python", "py", "pip", "go", "git",
-		"pwsh", "powershell", "cmd", "sh", "bash":
+	case "npx", "npm", "pnpm", "yarn", "bun", "node", "python", "python3", "py", "pip", "go", "git",
+		"pwsh", "powershell", "cmd", "sh", "bash",
+		"identify", "convert", "magick", "sips", "file", "exiftool", "ffmpeg", "ffprobe":
 		return true
 	default:
 		return false

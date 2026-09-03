@@ -28,6 +28,7 @@ import (
 	"gxx/internal/openai"
 
 	openaisdk "github.com/openai/openai-go/v3"
+	"github.com/openai/openai-go/v3/option"
 
 	"gxx/internal/agent"
 )
@@ -98,11 +99,50 @@ func TestProviderDoesNotRetryClientErrors(t *testing.T) {
 	}
 }
 
+func TestProviderDoesNotRetryUsageLimit429(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		writer.Header().Set("Retry-After", "0")
+		writer.Header().Set("Content-Type", "application/json")
+		writer.WriteHeader(http.StatusTooManyRequests)
+		_, _ = writer.Write([]byte(`{"message":"The usage limit has been reached","type":"invalid_request_error"}`))
+	}))
+	defer server.Close()
+
+	provider := openai.New("test-key", "gpt-5.6", "instructions", time.Second)
+	provider.SetClient(openaisdk.NewClient(
+		option.WithAPIKey("test-key"),
+		option.WithBaseURL(server.URL+"/"),
+		option.WithMaxRetries(0),
+		option.WithMiddleware(openai.SanitizeCodexRequest),
+	))
+	_, err := provider.Respond(
+		context.Background(),
+		agent.ModelInput{UserText: "hello"},
+		nil,
+		nil,
+	)
+	if err == nil {
+		t.Fatal("Respond() error = nil, want usage limit")
+	}
+	if !strings.Contains(err.Error(), "usage limit reached") {
+		t.Fatalf("error = %v, want usage limit message", err)
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("calls = %d, want 1 (quota 429 is not a retryable rate limit)", calls.Load())
+	}
+}
+
 func TestRetryableClassifiesStatusCodes(t *testing.T) {
 	ctx := context.Background()
 	rateLimited := &openaisdk.Error{StatusCode: http.StatusTooManyRequests}
 	if !openai.Retryable(rateLimited, ctx, nil) {
 		t.Fatal("429 should be retryable")
+	}
+	quota := &openaisdk.Error{StatusCode: http.StatusTooManyRequests, Message: "The usage limit has been reached"}
+	if openai.Retryable(quota, ctx, nil) {
+		t.Fatal("usage-limit 429 should not be retryable")
 	}
 	server := &openaisdk.Error{StatusCode: http.StatusBadGateway}
 	if !openai.Retryable(server, ctx, nil) {

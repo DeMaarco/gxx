@@ -32,9 +32,11 @@ import (
 )
 
 const (
-	defaultGitLogCount = 20
-	maxGitLogCount     = 50
-	maxGitTimeout      = 30 * time.Second
+	defaultGitLogCount     = 20
+	maxGitLogCount         = 50
+	maxGitTimeout          = 30 * time.Second
+	maxUntrackedGitFiles   = 20
+	maxUntrackedDiffBytes  = 32 * 1024
 )
 
 func (r *Registry) gitStatusSpec() toolSpec {
@@ -58,7 +60,7 @@ func (r *Registry) gitDiffSpec() toolSpec {
 	return toolSpec{
 		definition: agent.ToolDefinition{
 			Name:        "git_diff",
-			Description: "Show git diff for the workspace repository. Optional path limits the diff. staged true uses the index. Read-only. Use when you need the patch; not on every turn. Sensitive paths are omitted.",
+			Description: "Show git diff for the workspace repository, including untracked files. Optional path limits the diff. staged true uses the index and omits untracked files. Read-only. Use when you need the patch; not on every turn. Sensitive paths are omitted.",
 			ReadOnly:    true,
 			Parameters: objectSchema(map[string]any{
 				"path": map[string]any{
@@ -139,23 +141,50 @@ func (r *Registry) gitDiff(ctx context.Context, raw json.RawMessage) (string, er
 	if err != nil {
 		return "", err
 	}
-	if len(kept) == 0 {
+	var untracked []string
+	if !staged {
+		var extra int
+		untracked, extra, err = r.untrackedGitPaths(ctx, clean)
+		if err != nil {
+			return "", err
+		}
+		omitted += extra
+	}
+	if len(kept) == 0 && len(untracked) == 0 {
 		if omitted > 0 {
 			return omittedSensitiveNotice(omitted), nil
 		}
 		return "No diff.", nil
 	}
-	command := []string{"diff"}
-	if staged {
-		command = append(command, "--cached")
+	var builder strings.Builder
+	if len(kept) > 0 {
+		command := []string{"diff"}
+		if staged {
+			command = append(command, "--cached")
+		}
+		command = append(command, "--")
+		command = append(command, kept...)
+		output, err := r.runGit(ctx, command...)
+		if err != nil {
+			return "", err
+		}
+		builder.WriteString(output)
 	}
-	command = append(command, "--")
-	command = append(command, kept...)
-	output, err := r.runGit(ctx, command...)
-	if err != nil {
-		return "", err
+	for _, path := range untracked {
+		diff, skip, err := r.untrackedFileDiff(path)
+		if err != nil {
+			return "", err
+		}
+		if skip {
+			continue
+		}
+		if builder.Len() > 0 {
+			builder.WriteByte('\n')
+		}
+		builder.WriteString(diff)
 	}
-	if strings.TrimSpace(output) == "" {
+	output := strings.TrimSpace(builder.String())
+	if output == "" {
 		if omitted > 0 {
 			return omittedSensitiveNotice(omitted), nil
 		}
@@ -181,6 +210,53 @@ func (r *Registry) gitDiffNames(ctx context.Context, staged bool, path string) (
 	}
 	kept, omitted := filterGitNameStatus(output)
 	return kept, omitted, nil
+}
+
+func (r *Registry) untrackedGitPaths(ctx context.Context, scope string) ([]string, int, error) {
+	output, err := r.runGit(ctx, "ls-files", "--others", "--exclude-standard", "-z")
+	if err != nil {
+		return nil, 0, err
+	}
+	omitted := 0
+	var kept []string
+	for _, path := range splitGitNull(output) {
+		if path == "" {
+			continue
+		}
+		if isSensitivePath(path) {
+			omitted++
+			continue
+		}
+		if !pathInGitScope(path, scope) {
+			continue
+		}
+		kept = append(kept, path)
+		if len(kept) >= maxUntrackedGitFiles {
+			break
+		}
+	}
+	return kept, omitted, nil
+}
+
+func (r *Registry) untrackedFileDiff(path string) (string, bool, error) {
+	if r == nil || r.workspace == nil {
+		return "", true, nil
+	}
+	data, err := r.workspace.ReadRegularFile(path, maxUntrackedDiffBytes)
+	if err != nil || bytes.IndexByte(data, 0) >= 0 {
+		return "", true, nil
+	}
+	return compactDiff(path, "", string(data)), false, nil
+}
+
+func pathInGitScope(path, scope string) bool {
+	path = filepath.ToSlash(path)
+	scope = filepath.ToSlash(strings.TrimSpace(scope))
+	if scope == "" || scope == "." {
+		return true
+	}
+	scope = strings.TrimSuffix(scope, "/")
+	return path == scope || strings.HasPrefix(path, scope+"/")
 }
 
 type gitLogArgs struct {

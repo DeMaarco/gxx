@@ -650,6 +650,56 @@ func TestApplyPatchUpdatesMultipleFilesTransactionally(t *testing.T) {
 	}
 }
 
+func TestApplyPatchSkipsNoopUpdatesInMixedPatch(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, root, "keep.txt", "same\n")
+	writeTestFile(t, root, "edit.txt", "before\n")
+	approver := &staticApprover{approved: true}
+	registry := newTestRegistry(t, root, approver, tools.Options{
+		MaxResultBytes:  4096,
+		MaxSearchResult: 10,
+		ParallelReads:   1,
+		CommandTimeout:  time.Second,
+	})
+	result := registry.Execute(context.Background(), []agent.ToolCall{
+		toolCall("patch", "apply_patch", map[string]any{
+			"changes": []map[string]any{
+				{"path": "keep.txt", "action": "update", "old_text": "same\n", "new_text": "same\n"},
+				{"path": "edit.txt", "action": "update", "old_text": "before\n", "new_text": "after\n"},
+			},
+		}),
+	}, nil)[0]
+	if result.IsError {
+		t.Fatalf("apply_patch failed: %s", result.Output)
+	}
+	if !strings.Contains(result.Output, "edit.txt") || !strings.Contains(result.Output, "ignored no-op") {
+		t.Fatalf("output = %q, want applied edit and ignored no-op", result.Output)
+	}
+	assertToolFileContents(t, filepath.Join(root, "keep.txt"), "same\n")
+	assertToolFileContents(t, filepath.Join(root, "edit.txt"), "after\n")
+}
+
+func TestApplyPatchRejectsWhenEveryUpdateIsNoop(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, root, "keep.txt", "same\n")
+	registry := newTestRegistry(t, root, &staticApprover{approved: true}, tools.Options{
+		MaxResultBytes:  4096,
+		MaxSearchResult: 10,
+		ParallelReads:   1,
+		CommandTimeout:  time.Second,
+	})
+	result := registry.Execute(context.Background(), []agent.ToolCall{
+		toolCall("patch", "apply_patch", map[string]any{
+			"changes": []map[string]any{
+				{"path": "keep.txt", "action": "update", "old_text": "same\n", "new_text": "same\n"},
+			},
+		}),
+	}, nil)[0]
+	if !result.IsError || !strings.Contains(result.Output, "does not change keep.txt") {
+		t.Fatalf("result = %#v, want no-op error", result)
+	}
+}
+
 func TestApplyPatchDenialChangesNothing(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "file.txt", "before\n")
@@ -960,6 +1010,32 @@ func TestAskAndPlanCannotBeEnabledTogether(t *testing.T) {
 	}
 }
 
+func TestSearchFilesQualifiedSelectorMatchesMethodDef(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, root, "internal/agent/loop.go", "package agent\n\nfunc (l *Loop) Run(ctx context.Context) error {\n\treturn nil\n}\n")
+	writeTestFile(t, root, "internal/agent/other.go", "package agent\n\nfunc LoopXRun() {}\n")
+	registry := newTestRegistry(t, root, &staticApprover{}, tools.Options{
+		MaxResultBytes:  4096,
+		MaxSearchResult: 20,
+		ParallelReads:   1,
+		CommandTimeout:  time.Second,
+	})
+	result := registry.Execute(context.Background(), []agent.ToolCall{
+		toolCall("search", "search_files", map[string]any{
+			"query": "Loop.Run", "path": nil, "glob": nil, "max_results": nil, "case_sensitive": nil,
+		}),
+	}, nil)[0]
+	if result.IsError {
+		t.Fatalf("search failed: %s", result.Output)
+	}
+	if !strings.Contains(result.Output, "func (l *Loop) Run") {
+		t.Fatalf("search = %q, want method definition", result.Output)
+	}
+	if strings.Contains(result.Output, "LoopXRun") {
+		t.Fatalf("search = %q, should not treat the dot as any-character", result.Output)
+	}
+}
+
 func TestSearchFilesSupportsRegexGlobAndLiteralFallback(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "src/main.go", "package main\n\nfunc main() {}\n")
@@ -1026,6 +1102,32 @@ func TestSearchFilesTruncatesDenseMatches(t *testing.T) {
 	}
 	if len(result.Output) > 6*1024 {
 		t.Fatalf("search length = %d, want capped near 4KB", len(result.Output))
+	}
+}
+
+func TestSearchFilesOmitsSensitiveMatches(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, root, "README.md", "hello\n")
+	writeTestFile(t, root, ".env", "SECRET_KEY=super-secret-value\n")
+	registry := newTestRegistry(t, root, &staticApprover{}, tools.Options{
+		MaxResultBytes:  4096,
+		MaxSearchResult: 20,
+		ParallelReads:   1,
+		CommandTimeout:  time.Second,
+	})
+	result := registry.Execute(context.Background(), []agent.ToolCall{
+		toolCall("search", "search_files", map[string]any{
+			"query": "SECRET_KEY", "path": nil, "glob": nil, "max_results": nil, "case_sensitive": nil,
+		}),
+	}, nil)[0]
+	if result.IsError {
+		t.Fatalf("search failed: %s", result.Output)
+	}
+	if strings.Contains(result.Output, "super-secret-value") || strings.Contains(result.Output, ".env:") {
+		t.Fatalf("search leaked a secret: %q", result.Output)
+	}
+	if !strings.Contains(result.Output, "omitted by gxx") {
+		t.Fatalf("search = %q, want sensitive-path omission notice", result.Output)
 	}
 }
 
@@ -1617,6 +1719,41 @@ func TestReadFileSamplesDenseFilesAndRefusesPaging(t *testing.T) {
 	}
 }
 
+func TestWorkspaceOverviewListsTopLevelBeforeHiddenTrees(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, root, "README.md", "hello\n")
+	writeTestFile(t, root, "src/main.go", "package main\n")
+	writeTestFile(t, root, "src/pkg/nested.go", "package pkg\n")
+	for i := 0; i < 50; i++ {
+		writeTestFile(t, root, filepath.Join(".cursor", "a", "b", fmt.Sprintf("%02d.txt", i)), "x\n")
+	}
+	for i := 0; i < 8; i++ {
+		writeTestFile(t, root, filepath.Join("dist", fmt.Sprintf("bin-%d", i)), "x\n")
+	}
+	registry := newTestRegistry(t, root, &staticApprover{}, tools.Options{
+		MaxResultBytes:  4096,
+		MaxSearchResult: 10,
+		ParallelReads:   1,
+		CommandTimeout:  time.Second,
+	})
+	got := registry.WorkspaceOverview(context.Background())
+	if !strings.Contains(got, "README.md") || !strings.Contains(got, "src/main.go") || !strings.Contains(got, "src/pkg/nested.go") {
+		t.Fatalf("overview = %q, want visible top-level files before hidden trees", got)
+	}
+	if !strings.Contains(got, ".cursor/") {
+		t.Fatalf("overview = %q, want hidden directory listed", got)
+	}
+	if strings.Contains(got, ".cursor/a/") || strings.Contains(got, "00.txt") {
+		t.Fatalf("overview = %q, should not descend into hidden directories", got)
+	}
+	if !strings.Contains(got, "dist/") {
+		t.Fatalf("overview = %q, want dist listed", got)
+	}
+	if strings.Contains(got, "dist/bin-") {
+		t.Fatalf("overview = %q, should not list dist contents", got)
+	}
+}
+
 func TestWorkspaceOverviewTruncatesLargeTrees(t *testing.T) {
 	root := t.TempDir()
 	for i := 0; i < 50; i++ {
@@ -1701,6 +1838,41 @@ func TestSearchFilesReportsResultLimit(t *testing.T) {
 	}
 	if strings.Count(result.Output, "hit line") != 5 {
 		t.Fatalf("search = %q, want exactly 5 matches before the limit notice", result.Output)
+	}
+}
+
+func TestSearchFilesSortsByPathThenLineNumber(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, root, "b.css", ".item-2 {}\n.item-9 {}\n.item-10 {}\n")
+	writeTestFile(t, root, "a.css", strings.Repeat("x\n", 9)+".item-10 {}\n")
+	registry := newTestRegistry(t, root, &staticApprover{}, tools.Options{
+		MaxResultBytes:  4096,
+		MaxSearchResult: 20,
+		ParallelReads:   1,
+		CommandTimeout:  time.Second,
+	})
+	result := registry.Execute(context.Background(), []agent.ToolCall{
+		toolCall("search", "search_files", map[string]any{
+			"query": ".item-", "path": nil, "glob": nil, "max_results": nil, "case_sensitive": nil,
+		}),
+	}, nil)[0]
+	if result.IsError {
+		t.Fatalf("search failed: %s", result.Output)
+	}
+	want := []string{
+		"a.css:10:.item-10 {}",
+		"b.css:1:.item-2 {}",
+		"b.css:2:.item-9 {}",
+		"b.css:3:.item-10 {}",
+	}
+	got := strings.Split(strings.TrimSpace(result.Output), "\n")
+	if len(got) != len(want) {
+		t.Fatalf("search = %q, want %d matches", result.Output, len(want))
+	}
+	for i, line := range want {
+		if got[i] != line {
+			t.Fatalf("search[%d] = %q, want %q\nfull: %q", i, got[i], line, result.Output)
+		}
 	}
 }
 

@@ -370,6 +370,7 @@ func (p *Provider) requestParamsLocked(
 		Model:             shared.ResponsesModel(p.model),
 		Instructions:      openaisdk.String(instructions),
 		Store:             openaisdk.Bool(false),
+		// Responses Lite rejects parallel_tool_calls=true (HTTP 400).
 		ParallelToolCalls: openaisdk.Bool(!lite),
 		PromptCacheKey:    openaisdk.String(promptCacheKey(p.model, instructions)),
 		Reasoning: shared.ReasoningParam{

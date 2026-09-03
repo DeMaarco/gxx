@@ -50,6 +50,7 @@ var (
 	EmergencyFit            = emergencyFit
 	FunctionCallOutputParam = functionCallOutputParam
 	SanitizeCodexPayload    = sanitizeCodexPayload
+	SanitizeCodexRequest    = sanitizeCodexRequest
 )
 
 func ToolParams(definitions []agent.ToolDefinition) []responses.ToolUnionParam {

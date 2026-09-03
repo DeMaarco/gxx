@@ -29,6 +29,53 @@ import (
 	"gxx/internal/agent"
 )
 
+func TestGitDiffIncludesUntrackedFiles(t *testing.T) {
+	requireGit(t)
+	root := t.TempDir()
+	writeTestFile(t, root, "README.md", "hello\n")
+	initGitRepo(t, root)
+	runGit(t, root, "add", "README.md")
+	runGit(t, root, "commit", "-m", "initial")
+	writeTestFile(t, root, "notes.txt", "brand new\n")
+	writeTestFile(t, root, ".env", "SECRET=nope\n")
+
+	registry := newTestRegistry(t, root, &staticApprover{}, tools.Options{
+		MaxResultBytes:  4096,
+		MaxSearchResult: 10,
+		ParallelReads:   1,
+		CommandTimeout:  time.Second,
+	})
+	diff := registry.Execute(context.Background(), []agent.ToolCall{
+		toolCall("diff", "git_diff", map[string]any{"path": nil, "staged": nil}),
+	}, nil)[0]
+	if diff.IsError {
+		t.Fatalf("git_diff failed: %s", diff.Output)
+	}
+	if !strings.Contains(diff.Output, "notes.txt") || !strings.Contains(diff.Output, "brand new") {
+		t.Fatalf("diff = %q, want untracked notes.txt", diff.Output)
+	}
+	if strings.Contains(diff.Output, ".env") || strings.Contains(diff.Output, "SECRET") {
+		t.Fatalf("diff leaked a sensitive untracked file: %q", diff.Output)
+	}
+
+	targeted := registry.Execute(context.Background(), []agent.ToolCall{
+		toolCall("diff", "git_diff", map[string]any{"path": "notes.txt", "staged": nil}),
+	}, nil)[0]
+	if targeted.IsError || !strings.Contains(targeted.Output, "brand new") {
+		t.Fatalf("targeted untracked diff = %+v", targeted)
+	}
+
+	staged := registry.Execute(context.Background(), []agent.ToolCall{
+		toolCall("diff", "git_diff", map[string]any{"path": nil, "staged": true}),
+	}, nil)[0]
+	if staged.IsError {
+		t.Fatalf("staged diff failed: %s", staged.Output)
+	}
+	if strings.Contains(staged.Output, "notes.txt") {
+		t.Fatalf("staged diff = %q, should omit untracked files", staged.Output)
+	}
+}
+
 func TestGitToolsInspectWorkspaceRepo(t *testing.T) {
 	requireGit(t)
 	root := t.TempDir()
