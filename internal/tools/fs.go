@@ -499,15 +499,9 @@ func (r *Registry) searchFiles(ctx context.Context, raw json.RawMessage) (string
 	matcher := r.ignoreForWalk(target)
 	reportProgressNow(ctx, target)
 	var matches []string
-	omitted := 0
-	searchOne := func(file string) error {
-		if isSensitivePath(file) {
-			omitted++
-			return nil
-		}
-		if matcher.ignores(file, false) || !matchPathGlob(glob, file) {
-			return nil
-		}
+	omitted, err := r.forEachSearchFile(ctx, target, path, matcher, glob, func() bool {
+		return len(matches) >= limit
+	}, func(file string) error {
 		reportProgress(ctx, file)
 		found, err := r.searchTextFile(ctx, file, matchLine, limit-len(matches))
 		if err != nil {
@@ -515,65 +509,13 @@ func (r *Registry) searchFiles(ctx context.Context, raw json.RawMessage) (string
 		}
 		matches = append(matches, found...)
 		return nil
-	}
-
-	info, err := r.workspace.Stat(target)
+	})
 	if err != nil {
+		var ignored searchRootIgnoredError
+		if errors.As(err, &ignored) {
+			return ignored.Error(), nil
+		}
 		return "", err
-	}
-	if isSensitivePath(target) {
-		return "", refuseSensitive("search", path)
-	}
-	if info.Mode().IsRegular() {
-		if matcher.ignores(target, false) {
-			return "No matches found.", nil
-		}
-		if err := searchOne(target); err != nil {
-			return "", err
-		}
-	} else if info.IsDir() {
-		if matcher.ignores(target, true) {
-			return fmt.Sprintf("%s is ignored by default ignore, .gitignore, or .gxxignore.", path), nil
-		}
-		err = iofs.WalkDir(r.workspace.FS(), target, func(current string, entry iofs.DirEntry, walkErr error) error {
-			if walkErr != nil {
-				return workspace.Describe(current, walkErr)
-			}
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			if entry.IsDir() {
-				r.loadNestedIgnore(matcher, current, entry, target)
-				if current != target && matcher.ignores(current, true) && !matcher.hasNegation {
-					return iofs.SkipDir
-				}
-				if current != target && isSensitivePath(current) {
-					omitted++
-					return iofs.SkipDir
-				}
-				return nil
-			}
-			if len(matches) >= limit {
-				return errStopWalk
-			}
-			if matcher.ignores(current, false) || !matchPathGlob(glob, current) {
-				return nil
-			}
-			if isSensitivePath(current) {
-				omitted++
-				return nil
-			}
-			fileInfo, err := r.workspace.Stat(current)
-			if err != nil || !fileInfo.Mode().IsRegular() || fileInfo.Size() > maxScannedFile {
-				return nil
-			}
-			return searchOne(current)
-		})
-		if err != nil && !errors.Is(err, errStopWalk) {
-			return "", err
-		}
-	} else {
-		return "", fmt.Errorf("not a regular file or directory: %s", path)
 	}
 
 	if len(matches) == 0 {
@@ -590,6 +532,73 @@ func (r *Registry) searchFiles(ctx context.Context, raw json.RawMessage) (string
 		matches = append(matches, omittedSensitiveNotice(omitted))
 	}
 	return strings.Join(matches, "\n"), nil
+}
+
+func (r *Registry) forEachSearchFile(
+	ctx context.Context,
+	target, displayPath string,
+	matcher *ignoreMatcher,
+	glob *regexp.Regexp,
+	shouldStop func() bool,
+	visit func(file string) error,
+) (omitted int, err error) {
+	info, err := r.workspace.Stat(target)
+	if err != nil {
+		return 0, err
+	}
+	if isSensitivePath(target) {
+		return 0, refuseSensitive("search", displayPath)
+	}
+	if info.Mode().IsRegular() {
+		if matcher.ignores(target, false) || !matchPathGlob(glob, target) {
+			return 0, nil
+		}
+		return 0, visit(target)
+	}
+	if !info.IsDir() {
+		return 0, fmt.Errorf("not a regular file or directory: %s", displayPath)
+	}
+	if matcher.ignores(target, true) {
+		return 0, searchRootIgnoredError{path: displayPath}
+	}
+	err = iofs.WalkDir(r.workspace.FS(), target, func(current string, entry iofs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return workspace.Describe(current, walkErr)
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			r.loadNestedIgnore(matcher, current, entry, target)
+			if current != target && matcher.ignores(current, true) && !matcher.hasNegation {
+				return iofs.SkipDir
+			}
+			if current != target && isSensitivePath(current) {
+				omitted++
+				return iofs.SkipDir
+			}
+			return nil
+		}
+		if shouldStop != nil && shouldStop() {
+			return errStopWalk
+		}
+		if matcher.ignores(current, false) || !matchPathGlob(glob, current) {
+			return nil
+		}
+		if isSensitivePath(current) {
+			omitted++
+			return nil
+		}
+		fileInfo, err := r.workspace.Stat(current)
+		if err != nil || !fileInfo.Mode().IsRegular() || fileInfo.Size() > maxScannedFile {
+			return nil
+		}
+		return visit(current)
+	})
+	if err != nil && !errors.Is(err, errStopWalk) {
+		return omitted, err
+	}
+	return omitted, nil
 }
 
 type readFileArgs struct {
@@ -1105,3 +1114,11 @@ func optionalBool(value *bool, fallback bool) bool {
 }
 
 var errStopWalk = errors.New("stop walking")
+
+type searchRootIgnoredError struct {
+	path string
+}
+
+func (e searchRootIgnoredError) Error() string {
+	return fmt.Sprintf("%s is ignored by default ignore, .gitignore, or .gxxignore.", e.path)
+}
