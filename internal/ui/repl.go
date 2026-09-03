@@ -596,119 +596,14 @@ func RunREPL(
 			continue
 		}
 		if strings.HasPrefix(prompt, "/") {
-			name, slashArgs, slashErr := lookupSlashCommand(prompt)
-			if slashErr != nil {
-				if !strings.Contains(slashErr.Error(), "unknown command") {
-					fmt.Fprintf(writer, "%s\n", paint(settings.Color, red, "error: "+slashErr.Error()))
-					writeREPLGap(writer)
-					continue
-				}
-				rewritten, err := rewriteSkillPrompt(prompt, skillNames(settings))
-				if err != nil {
-					hint := unknownSlashHint(err, strings.Fields(prompt)[0], skillNames(settings))
-					fmt.Fprintf(writer, "%s\n", paint(settings.Color, red, "error: "+hint))
-					writeREPLGap(writer)
-					continue
-				}
+			outcome, rewritten := dispatchSlashCommand(sessionCtx, loop, reader, writer, &settings, prompt)
+			switch outcome {
+			case slashExit:
+				return nil
+			case slashContinue:
+				continue
+			case slashTurn:
 				prompt = rewritten
-			} else {
-				switch name {
-				case "/exit":
-					return nil
-				case "/clear":
-					if settings.ArchiveAndClear != nil {
-						if err := settings.ArchiveAndClear(); err != nil {
-							fmt.Fprintf(writer, "%s\n", paint(settings.Color, red, "error: "+err.Error()))
-							fmt.Fprintln(writer)
-							continue
-						}
-					} else if settings.RefreshInstructions != nil {
-						settings.RefreshInstructions()
-						loop.Reset()
-					} else {
-						loop.Reset()
-					}
-					if settings.RefreshInstructions != nil {
-						settings.RefreshInstructions()
-					}
-					fmt.Fprintln(writer, paint(settings.Color, dim, "Conversation cleared."))
-					writeREPLGap(writer)
-					continue
-				case "/history":
-					if err := openConversationMenu(sessionCtx, writer, &settings); err != nil {
-						fmt.Fprintf(writer, "%s\n", paint(settings.Color, red, "error: "+err.Error()))
-					}
-					writeREPLGap(writer)
-					continue
-				case "/config":
-					if err := configureAPIKey(sessionCtx, loop, writer, &settings); err != nil {
-						fmt.Fprintf(writer, "%s\n", paint(settings.Color, red, "error: "+err.Error()))
-					}
-					writeREPLGap(writer)
-					continue
-				case "/login":
-					if err := loginAccount(sessionCtx, loop, writer, reader, &settings, slashArgs); err != nil {
-						fmt.Fprintf(writer, "%s\n", paint(settings.Color, red, "error: "+err.Error()))
-					}
-					writeREPLGap(writer)
-					continue
-				case "/logout":
-					if err := logoutAccount(loop, writer, reader, &settings, slashArgs); err != nil {
-						fmt.Fprintf(writer, "%s\n", paint(settings.Color, red, "error: "+err.Error()))
-					}
-					writeREPLGap(writer)
-					continue
-				case "/help":
-					printREPLHelp(writer, settings)
-					writeREPLGap(writer)
-					continue
-				case "/skills":
-					printSkills(writer, settings)
-					writeREPLGap(writer)
-					continue
-				case "/usage":
-					if err := showUsage(sessionCtx, writer, settings); err != nil {
-						fmt.Fprintf(writer, "%s\n", paint(settings.Color, red, "error: "+err.Error()))
-					}
-					writeREPLGap(writer)
-					continue
-				case "/context":
-					printContext(writer, settings.Color, settings.contextUsage())
-					writeREPLGap(writer)
-					continue
-				case "/model":
-					changedModel, err := applyModelCommand(writer, &settings, prompt)
-					if err != nil {
-						fmt.Fprintf(writer, "%s\n", paint(settings.Color, red, "error: "+err.Error()))
-					} else if changedModel {
-						loop.Reset()
-						fmt.Fprintln(writer, paint(settings.Color, dim, "Conversation cleared."))
-					}
-					writeREPLGap(writer)
-					continue
-				case "/mode":
-					if err := applyModeCommand(writer, &settings, prompt); err != nil {
-						fmt.Fprintf(writer, "%s\n", paint(settings.Color, red, "error: "+err.Error()))
-					}
-					writeREPLGap(writer)
-					continue
-				case "/eco":
-					changedModel, err := applyEcoCommand(writer, &settings, prompt)
-					if err != nil {
-						fmt.Fprintf(writer, "%s\n", paint(settings.Color, red, "error: "+err.Error()))
-					} else if changedModel {
-						loop.Reset()
-						fmt.Fprintln(writer, paint(settings.Color, dim, "Conversation cleared."))
-					}
-					writeREPLGap(writer)
-					continue
-				case "/compact":
-					if err := applyCompactCommand(sessionCtx, writer, &settings, slashArgs); err != nil {
-						fmt.Fprintf(writer, "%s\n", paint(settings.Color, red, "error: "+err.Error()))
-					}
-					writeREPLGap(writer)
-					continue
-				}
 			}
 		}
 
@@ -728,6 +623,139 @@ func RunREPL(
 			}
 		}
 	}
+}
+
+type slashOutcome int
+
+const (
+	slashExit slashOutcome = iota
+	slashContinue
+	slashTurn
+)
+
+func dispatchSlashCommand(
+	sessionCtx context.Context,
+	loop *agent.Loop,
+	reader *bufio.Reader,
+	writer io.Writer,
+	settings *REPLSettings,
+	prompt string,
+) (slashOutcome, string) {
+	name, slashArgs, slashErr := lookupSlashCommand(prompt)
+	if slashErr != nil {
+		if !strings.Contains(slashErr.Error(), "unknown command") {
+			fmt.Fprintf(writer, "%s\n", paint(settings.Color, red, "error: "+slashErr.Error()))
+			writeREPLGap(writer)
+			return slashContinue, ""
+		}
+		rewritten, err := rewriteSkillPrompt(prompt, skillNames(*settings))
+		if err != nil {
+			hint := unknownSlashHint(err, strings.Fields(prompt)[0], skillNames(*settings))
+			fmt.Fprintf(writer, "%s\n", paint(settings.Color, red, "error: "+hint))
+			writeREPLGap(writer)
+			return slashContinue, ""
+		}
+		return slashTurn, rewritten
+	}
+
+	switch name {
+	case "/exit":
+		return slashExit, ""
+	case "/clear":
+		if settings.ArchiveAndClear != nil {
+			if err := settings.ArchiveAndClear(); err != nil {
+				fmt.Fprintf(writer, "%s\n", paint(settings.Color, red, "error: "+err.Error()))
+				fmt.Fprintln(writer)
+				return slashContinue, ""
+			}
+		} else if settings.RefreshInstructions != nil {
+			settings.RefreshInstructions()
+			loop.Reset()
+		} else {
+			loop.Reset()
+		}
+		if settings.RefreshInstructions != nil {
+			settings.RefreshInstructions()
+		}
+		fmt.Fprintln(writer, paint(settings.Color, dim, "Conversation cleared."))
+		writeREPLGap(writer)
+		return slashContinue, ""
+	case "/history":
+		if err := openConversationMenu(sessionCtx, writer, settings); err != nil {
+			fmt.Fprintf(writer, "%s\n", paint(settings.Color, red, "error: "+err.Error()))
+		}
+		writeREPLGap(writer)
+		return slashContinue, ""
+	case "/config":
+		if err := configureAPIKey(sessionCtx, loop, writer, settings); err != nil {
+			fmt.Fprintf(writer, "%s\n", paint(settings.Color, red, "error: "+err.Error()))
+		}
+		writeREPLGap(writer)
+		return slashContinue, ""
+	case "/login":
+		if err := loginAccount(sessionCtx, loop, writer, reader, settings, slashArgs); err != nil {
+			fmt.Fprintf(writer, "%s\n", paint(settings.Color, red, "error: "+err.Error()))
+		}
+		writeREPLGap(writer)
+		return slashContinue, ""
+	case "/logout":
+		if err := logoutAccount(loop, writer, reader, settings, slashArgs); err != nil {
+			fmt.Fprintf(writer, "%s\n", paint(settings.Color, red, "error: "+err.Error()))
+		}
+		writeREPLGap(writer)
+		return slashContinue, ""
+	case "/help":
+		printREPLHelp(writer, *settings)
+		writeREPLGap(writer)
+		return slashContinue, ""
+	case "/skills":
+		printSkills(writer, *settings)
+		writeREPLGap(writer)
+		return slashContinue, ""
+	case "/usage":
+		if err := showUsage(sessionCtx, writer, *settings); err != nil {
+			fmt.Fprintf(writer, "%s\n", paint(settings.Color, red, "error: "+err.Error()))
+		}
+		writeREPLGap(writer)
+		return slashContinue, ""
+	case "/context":
+		printContext(writer, settings.Color, settings.contextUsage())
+		writeREPLGap(writer)
+		return slashContinue, ""
+	case "/model":
+		changedModel, err := applyModelCommand(writer, settings, prompt)
+		if err != nil {
+			fmt.Fprintf(writer, "%s\n", paint(settings.Color, red, "error: "+err.Error()))
+		} else if changedModel {
+			loop.Reset()
+			fmt.Fprintln(writer, paint(settings.Color, dim, "Conversation cleared."))
+		}
+		writeREPLGap(writer)
+		return slashContinue, ""
+	case "/mode":
+		if err := applyModeCommand(writer, settings, prompt); err != nil {
+			fmt.Fprintf(writer, "%s\n", paint(settings.Color, red, "error: "+err.Error()))
+		}
+		writeREPLGap(writer)
+		return slashContinue, ""
+	case "/eco":
+		changedModel, err := applyEcoCommand(writer, settings, prompt)
+		if err != nil {
+			fmt.Fprintf(writer, "%s\n", paint(settings.Color, red, "error: "+err.Error()))
+		} else if changedModel {
+			loop.Reset()
+			fmt.Fprintln(writer, paint(settings.Color, dim, "Conversation cleared."))
+		}
+		writeREPLGap(writer)
+		return slashContinue, ""
+	case "/compact":
+		if err := applyCompactCommand(sessionCtx, writer, settings, slashArgs); err != nil {
+			fmt.Fprintf(writer, "%s\n", paint(settings.Color, red, "error: "+err.Error()))
+		}
+		writeREPLGap(writer)
+		return slashContinue, ""
+	}
+	return slashTurn, prompt
 }
 
 func runREPLTurn(
