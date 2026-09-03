@@ -862,41 +862,23 @@ func (e *lineEditor) Read(ctx context.Context, settings *REPLSettings) (string, 
 		return "", err
 	}
 
-	type result struct {
-		event keyEvent
-		err   error
-	}
 	keys := &keyDecoder{}
 	for {
 		if err := ctx.Err(); err != nil {
 			e.finish(*settings, "")
 			return "", err
 		}
-		read := make(chan result, 1)
-		go func() {
-			event, err := keys.read(e.in)
-			read <- result{event: event, err: err}
-		}()
-		var event keyEvent
-		select {
-		case <-ctx.Done():
-			osutil.InterruptRead(e.in)
-			select {
-			case <-read:
-			case <-time.After(200 * time.Millisecond):
+		event, err := e.readKeyEvent(ctx, keys)
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				e.finish(*settings, "")
+				return "", io.EOF
 			}
-			osutil.ClearReadDeadline(e.in)
-			e.finish(*settings, "")
-			return "", ctx.Err()
-		case value := <-read:
-			if value.err != nil {
-				if errors.Is(value.err, io.EOF) {
-					e.finish(*settings, "")
-					return "", io.EOF
-				}
-				return "", value.err
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				e.finish(*settings, "")
+				return "", err
 			}
-			event = value.event
+			return "", err
 		}
 		if event.kind == keyShiftTab {
 			e.state.exitArmed = false
@@ -946,6 +928,33 @@ func (e *lineEditor) Read(ctx context.Context, settings *REPLSettings) (string, 
 	}
 }
 
+func (e *lineEditor) readKeyEvent(ctx context.Context, keys *keyDecoder) (keyEvent, error) {
+	type result struct {
+		event keyEvent
+		err   error
+	}
+	read := make(chan result, 1)
+	go func() {
+		event, err := keys.read(e.in)
+		read <- result{event: event, err: err}
+	}()
+	select {
+	case <-ctx.Done():
+		osutil.InterruptRead(e.in)
+		select {
+		case <-read:
+		case <-time.After(200 * time.Millisecond):
+		}
+		osutil.ClearReadDeadline(e.in)
+		return keyEvent{}, ctx.Err()
+	case value := <-read:
+		if value.err != nil {
+			return keyEvent{}, value.err
+		}
+		return value.event, nil
+	}
+}
+
 func (e *lineEditor) render(settings REPLSettings) error {
 	if e.state.picker != pickerClosed {
 		return e.renderPicker(settings)
@@ -980,132 +989,144 @@ func (e *lineEditor) renderPicker(settings REPLSettings) error {
 	}
 	e.state.clampModelIndex()
 	e.state.syncPickContext()
-	var body strings.Builder
+	var body string
 	if e.state.picker == pickerOptions {
-		model := e.state.selectedModel()
-		alias := models.Alias(model)
-		title := model
-		if alias != "" {
-			title = alias
-		}
-		body.WriteString(paint(e.color, bold, title))
-		if alias != "" && alias != model {
-			body.WriteString(paint(e.color, dim, "  "+model))
-		}
-		body.WriteString("\r\n")
-		body.WriteString(paint(e.color, dim, "── adjust ──") + "\r\n")
+		body = e.renderOptionsPicker()
+	} else {
+		body = e.renderModelList(settings)
+	}
+	return e.paintFrame(settings, body, strings.Count(body, "\r\n"), true)
+}
 
-		options := []struct {
+func (e *lineEditor) renderOptionsPicker() string {
+	var body strings.Builder
+	model := e.state.selectedModel()
+	alias := models.Alias(model)
+	title := model
+	if alias != "" {
+		title = alias
+	}
+	body.WriteString(paint(e.color, bold, title))
+	if alias != "" && alias != model {
+		body.WriteString(paint(e.color, dim, "  "+model))
+	}
+	body.WriteString("\r\n")
+	body.WriteString(paint(e.color, dim, "── adjust ──") + "\r\n")
+
+	options := []struct {
+		name  string
+		value string
+	}{
+		{"context", e.state.pickContext},
+		{"effort", e.state.pickEffort},
+	}
+	if optionCountForModel(model) > optionFast {
+		fast := "off"
+		if e.state.pickFast {
+			fast = "on"
+		}
+		options = append(options, struct {
 			name  string
 			value string
-		}{
-			{"context", e.state.pickContext},
-			{"effort", e.state.pickEffort},
-		}
-		if optionCountForModel(model) > optionFast {
-			fast := "off"
-			if e.state.pickFast {
-				fast = "on"
-			}
-			options = append(options, struct {
-				name  string
-				value string
-			}{"fast", fast})
-		}
-		if e.state.optionIndex >= len(options) {
-			e.state.optionIndex = len(options) - 1
-		}
-		nameWidth := 7
-		for index, option := range options {
-			selected := index == e.state.optionIndex
-			marker := "  "
-			name := padRight(option.name, nameWidth)
-			value := option.value
-			if selected {
-				marker = paint(e.color, cyan, "▸ ")
-				name = paint(e.color, bold+cyan, padRight(option.name, nameWidth))
-				if option.name == "context" && len(config.ContextSizesForModel(model)) > 1 {
-					value = paint(e.color, bold+cyan, "‹ "+option.value+" ›")
-				} else if option.name == "effort" {
-					value = paint(e.color, bold+cyan, "‹ "+option.value+" ›")
-				} else if option.name == "fast" {
-					value = paint(e.color, bold+cyan, "‹ "+option.value+" ›")
-				} else {
-					value = paint(e.color, cyan, option.value)
-				}
+		}{"fast", fast})
+	}
+	if e.state.optionIndex >= len(options) {
+		e.state.optionIndex = len(options) - 1
+	}
+	nameWidth := 7
+	for index, option := range options {
+		selected := index == e.state.optionIndex
+		marker := "  "
+		name := padRight(option.name, nameWidth)
+		value := option.value
+		if selected {
+			marker = paint(e.color, cyan, "▸ ")
+			name = paint(e.color, bold+cyan, padRight(option.name, nameWidth))
+			if option.name == "context" && len(config.ContextSizesForModel(model)) > 1 {
+				value = paint(e.color, bold+cyan, "‹ "+option.value+" ›")
+			} else if option.name == "effort" {
+				value = paint(e.color, bold+cyan, "‹ "+option.value+" ›")
+			} else if option.name == "fast" {
+				value = paint(e.color, bold+cyan, "‹ "+option.value+" ›")
 			} else {
-				name = paint(e.color, dim, name)
-				value = paint(e.color, dim, value)
-			}
-			body.WriteString(marker + name + "  " + value + "\r\n")
-		}
-		body.WriteString(paint(e.color, dim, "← → change · ↑ ↓ row · tab models · enter apply") + "\r\n")
-	} else {
-		visible := e.state.visibleModels()
-		if len(visible) == 0 {
-			if e.state.activeAccount == "" && e.state.catalogLocked {
-				body.WriteString(paint(e.color, dim, "  no models — run /login") + "\r\n")
-			} else {
-				body.WriteString(paint(e.color, dim, "  no matching models") + "\r\n")
+				value = paint(e.color, cyan, option.value)
 			}
 		} else {
-			body.WriteString(paint(e.color, dim, "── models ──") + "\r\n")
+			name = paint(e.color, dim, name)
+			value = paint(e.color, dim, value)
 		}
-		width := e.termWidth()
-		start, end := windowRange(len(visible), e.state.modelIndex, e.pickerListLimit(settings, 2))
-		aliasWidth := 0
-		for index := start; index < end; index++ {
-			if a := models.Alias(visible[index]); len(a) > aliasWidth {
-				aliasWidth = len(a)
-			}
-		}
-		if aliasWidth < 4 {
-			aliasWidth = 4
-		}
-		for index := start; index < end; index++ {
-			model := visible[index]
-			alias := models.Alias(model)
-			if alias == "" {
-				alias = model
-			}
-			inUse := model == e.state.sessionModel
-			selected := index == e.state.modelIndex
-			marker := "  "
-			aliasLabel := padRight(alias, aliasWidth)
-			idLabel := model
-			note := ""
-			switch {
-			case inUse && selected:
-				marker = paint(e.color, green, "● ")
-				aliasLabel = paint(e.color, bold+green, aliasLabel)
-				idLabel = paint(e.color, dim, model)
-				note = paint(e.color, dim, "  in use")
-			case inUse:
-				marker = paint(e.color, green, "● ")
-				aliasLabel = paint(e.color, green, aliasLabel)
-				idLabel = paint(e.color, dim, model)
-				note = paint(e.color, dim, "  in use")
-			case selected:
-				marker = paint(e.color, cyan, "▸ ")
-				aliasLabel = paint(e.color, bold+cyan, aliasLabel)
-				idLabel = paint(e.color, dim, model)
-			default:
-				aliasLabel = paint(e.color, dim, aliasLabel)
-				idLabel = paint(e.color, dim, model)
-			}
-			line := marker + aliasLabel + "  " + idLabel + note
-			if width > 4 {
-				line = truncateVisible(line, width-1)
-			}
-			body.WriteString(line + "\r\n")
-		}
-		hint := "tab adjust · enter apply · esc cancel"
-		if end-start < len(visible) {
-			hint = fmt.Sprintf("%s · %d/%d", hint, e.state.modelIndex+1, len(visible))
-		}
-		body.WriteString(paint(e.color, dim, hint) + "\r\n")
+		body.WriteString(marker + name + "  " + value + "\r\n")
 	}
-	return e.paintFrame(settings, body.String(), strings.Count(body.String(), "\r\n"), true)
+	body.WriteString(paint(e.color, dim, "← → change · ↑ ↓ row · tab models · enter apply") + "\r\n")
+	return body.String()
+}
+
+func (e *lineEditor) renderModelList(settings REPLSettings) string {
+	var body strings.Builder
+	visible := e.state.visibleModels()
+	if len(visible) == 0 {
+		if e.state.activeAccount == "" && e.state.catalogLocked {
+			body.WriteString(paint(e.color, dim, "  no models — run /login") + "\r\n")
+		} else {
+			body.WriteString(paint(e.color, dim, "  no matching models") + "\r\n")
+		}
+	} else {
+		body.WriteString(paint(e.color, dim, "── models ──") + "\r\n")
+	}
+	width := e.termWidth()
+	start, end := windowRange(len(visible), e.state.modelIndex, e.pickerListLimit(settings, 2))
+	aliasWidth := 0
+	for index := start; index < end; index++ {
+		if a := models.Alias(visible[index]); len(a) > aliasWidth {
+			aliasWidth = len(a)
+		}
+	}
+	if aliasWidth < 4 {
+		aliasWidth = 4
+	}
+	for index := start; index < end; index++ {
+		model := visible[index]
+		alias := models.Alias(model)
+		if alias == "" {
+			alias = model
+		}
+		inUse := model == e.state.sessionModel
+		selected := index == e.state.modelIndex
+		marker := "  "
+		aliasLabel := padRight(alias, aliasWidth)
+		idLabel := model
+		note := ""
+		switch {
+		case inUse && selected:
+			marker = paint(e.color, green, "● ")
+			aliasLabel = paint(e.color, bold+green, aliasLabel)
+			idLabel = paint(e.color, dim, model)
+			note = paint(e.color, dim, "  in use")
+		case inUse:
+			marker = paint(e.color, green, "● ")
+			aliasLabel = paint(e.color, green, aliasLabel)
+			idLabel = paint(e.color, dim, model)
+			note = paint(e.color, dim, "  in use")
+		case selected:
+			marker = paint(e.color, cyan, "▸ ")
+			aliasLabel = paint(e.color, bold+cyan, aliasLabel)
+			idLabel = paint(e.color, dim, model)
+		default:
+			aliasLabel = paint(e.color, dim, aliasLabel)
+			idLabel = paint(e.color, dim, model)
+		}
+		line := marker + aliasLabel + "  " + idLabel + note
+		if width > 4 {
+			line = truncateVisible(line, width-1)
+		}
+		body.WriteString(line + "\r\n")
+	}
+	hint := "tab adjust · enter apply · esc cancel"
+	if end-start < len(visible) {
+		hint = fmt.Sprintf("%s · %d/%d", hint, e.state.modelIndex+1, len(visible))
+	}
+	body.WriteString(paint(e.color, dim, hint) + "\r\n")
+	return body.String()
 }
 
 func padRight(value string, width int) string {
