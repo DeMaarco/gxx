@@ -19,7 +19,7 @@ gxx version
 Fijar una release u otro directorio:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/DeMaarco/gxx/main/install.sh | sh -s -- --version v0.0.22
+curl -fsSL https://raw.githubusercontent.com/DeMaarco/gxx/main/install.sh | sh -s -- --version v0.0.23
 curl -fsSL https://raw.githubusercontent.com/DeMaarco/gxx/main/install.sh | sh -s -- --dir /usr/local/bin
 ```
 
@@ -34,7 +34,7 @@ Eso instala `gxx.exe` en `%LOCALAPPDATA%\gxx` y pone esa carpeta primero en el P
 Fijar una release u otro directorio:
 
 ```powershell
-$env:GXX_VERSION = "v0.0.22"
+$env:GXX_VERSION = "v0.0.23"
 irm https://raw.githubusercontent.com/DeMaarco/gxx/main/install.ps1 | iex
 ```
 
