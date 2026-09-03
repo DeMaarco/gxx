@@ -236,104 +236,145 @@ func (r *Registry) applyPatchChange(
 	if action != "add" && action != "update" && action != "delete" {
 		return nil, fmt.Errorf("unsupported action %q", change.Action)
 	}
-	path := strings.TrimSpace(change.Path)
-	if path == "" {
-		return nil, errors.New("path cannot be empty")
-	}
-	clean, err := r.workspace.Clean(path)
+	clean, work, seen, err := r.resolvePatchWork(byPath, action, change.Path)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", path, err)
+		return nil, err
 	}
-	if isSensitivePath(clean) {
-		return nil, refuseSensitive("patch", clean)
-	}
-
-	work, seen := byPath[clean]
-	if seen && work.action != action && !(work.action == "delete" && action == "add") {
-		return nil, fmt.Errorf("cannot mix %s and %s on %s", work.action, action, clean)
-	}
-
 	switch action {
 	case "add":
-		if change.Content == nil {
-			return nil, fmt.Errorf("add requires content for %s", clean)
-		}
-		if len(*change.Content) > maxWriteBytes {
-			return nil, fmt.Errorf("content exceeds %d bytes", maxWriteBytes)
-		}
-		if seen && work.action == "delete" {
-			work.action = "update"
-			work.after = []byte(*change.Content)
-			return work, nil
-		}
-		if seen {
-			return nil, fmt.Errorf("duplicate add for %s", clean)
-		}
-		if _, err := r.workspace.Lstat(clean); err == nil {
-			return nil, fmt.Errorf("cannot add existing path %q", clean)
-		} else if !errors.Is(err, os.ErrNotExist) {
-			return nil, fmt.Errorf("inspect %s: %w", clean, err)
-		}
-		work = &patchFileWork{path: clean, action: "add", after: []byte(*change.Content)}
-		byPath[clean] = work
-		*works = append(*works, work)
-
+		return r.patchAdd(byPath, works, clean, work, seen, change)
 	case "update":
-		oldText := ""
-		if change.OldText != nil {
-			oldText = *change.OldText
-		}
-		newText := ""
-		if change.NewText != nil {
-			newText = *change.NewText
-		}
-		if !seen {
-			before, err := r.workspace.ReadRegularFile(clean, maxEditableFile)
-			if err != nil {
-				return nil, err
-			}
-			work = &patchFileWork{path: clean, action: "update", before: before, after: append([]byte(nil), before...)}
-			byPath[clean] = work
-			*works = append(*works, work)
-		}
-		if oldText == "" {
-			if change.Content == nil {
-				return nil, fmt.Errorf("update requires old_text or content for %s", clean)
-			}
-			if len(*change.Content) > maxWriteBytes {
-				return nil, fmt.Errorf("content exceeds %d bytes", maxWriteBytes)
-			}
-			work.after = []byte(*change.Content)
-			break
-		}
-		if len(oldText)+len(newText) > maxEditableFile {
-			return nil, errors.New("edit payload is too large")
-		}
-		count, needle := matchOldText(work.after, []byte(oldText))
-		if count == 0 {
-			return nil, oldTextNotFoundError(clean, work.after, []byte(oldText))
-		}
-		limit := 1
-		if count > 1 {
-			if !replaceEveryCopy(oldText) {
-				return nil, oldTextAmbiguousError(clean, work.after, needle, count)
-			}
-			limit = -1
-		}
-		work.after = bytes.Replace(work.after, needle, alignNewlines(needle, []byte(oldText), []byte(newText)), limit)
-
+		return r.patchUpdate(byPath, works, clean, work, seen, change)
 	case "delete":
-		if seen {
-			return nil, fmt.Errorf("duplicate delete for %s", clean)
-		}
+		return r.patchDelete(byPath, works, clean, seen)
+	}
+	return work, nil
+}
+
+func (r *Registry) resolvePatchWork(
+	byPath map[string]*patchFileWork,
+	action, path string,
+) (clean string, work *patchFileWork, seen bool, err error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return "", nil, false, errors.New("path cannot be empty")
+	}
+	clean, err = r.workspace.Clean(path)
+	if err != nil {
+		return "", nil, false, fmt.Errorf("%s: %w", path, err)
+	}
+	if isSensitivePath(clean) {
+		return "", nil, false, refuseSensitive("patch", clean)
+	}
+	work, seen = byPath[clean]
+	if seen && work.action != action && !(work.action == "delete" && action == "add") {
+		return "", nil, false, fmt.Errorf("cannot mix %s and %s on %s", work.action, action, clean)
+	}
+	return clean, work, seen, nil
+}
+
+func (r *Registry) patchAdd(
+	byPath map[string]*patchFileWork,
+	works *[]*patchFileWork,
+	clean string,
+	work *patchFileWork,
+	seen bool,
+	change patchChange,
+) (*patchFileWork, error) {
+	if change.Content == nil {
+		return nil, fmt.Errorf("add requires content for %s", clean)
+	}
+	if len(*change.Content) > maxWriteBytes {
+		return nil, fmt.Errorf("content exceeds %d bytes", maxWriteBytes)
+	}
+	if seen && work.action == "delete" {
+		work.action = "update"
+		work.after = []byte(*change.Content)
+		return work, nil
+	}
+	if seen {
+		return nil, fmt.Errorf("duplicate add for %s", clean)
+	}
+	if _, err := r.workspace.Lstat(clean); err == nil {
+		return nil, fmt.Errorf("cannot add existing path %q", clean)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("inspect %s: %w", clean, err)
+	}
+	work = &patchFileWork{path: clean, action: "add", after: []byte(*change.Content)}
+	byPath[clean] = work
+	*works = append(*works, work)
+	return work, nil
+}
+
+func (r *Registry) patchUpdate(
+	byPath map[string]*patchFileWork,
+	works *[]*patchFileWork,
+	clean string,
+	work *patchFileWork,
+	seen bool,
+	change patchChange,
+) (*patchFileWork, error) {
+	oldText := ""
+	if change.OldText != nil {
+		oldText = *change.OldText
+	}
+	newText := ""
+	if change.NewText != nil {
+		newText = *change.NewText
+	}
+	if !seen {
 		before, err := r.workspace.ReadRegularFile(clean, maxEditableFile)
 		if err != nil {
 			return nil, err
 		}
-		work = &patchFileWork{path: clean, action: "delete", before: before}
+		work = &patchFileWork{path: clean, action: "update", before: before, after: append([]byte(nil), before...)}
 		byPath[clean] = work
 		*works = append(*works, work)
 	}
+	if oldText == "" {
+		if change.Content == nil {
+			return nil, fmt.Errorf("update requires old_text or content for %s", clean)
+		}
+		if len(*change.Content) > maxWriteBytes {
+			return nil, fmt.Errorf("content exceeds %d bytes", maxWriteBytes)
+		}
+		work.after = []byte(*change.Content)
+		return work, nil
+	}
+	if len(oldText)+len(newText) > maxEditableFile {
+		return nil, errors.New("edit payload is too large")
+	}
+	count, needle := matchOldText(work.after, []byte(oldText))
+	if count == 0 {
+		return nil, oldTextNotFoundError(clean, work.after, []byte(oldText))
+	}
+	limit := 1
+	if count > 1 {
+		if !replaceEveryCopy(oldText) {
+			return nil, oldTextAmbiguousError(clean, work.after, needle, count)
+		}
+		limit = -1
+	}
+	work.after = bytes.Replace(work.after, needle, alignNewlines(needle, []byte(oldText), []byte(newText)), limit)
+	return work, nil
+}
+
+func (r *Registry) patchDelete(
+	byPath map[string]*patchFileWork,
+	works *[]*patchFileWork,
+	clean string,
+	seen bool,
+) (*patchFileWork, error) {
+	if seen {
+		return nil, fmt.Errorf("duplicate delete for %s", clean)
+	}
+	before, err := r.workspace.ReadRegularFile(clean, maxEditableFile)
+	if err != nil {
+		return nil, err
+	}
+	work := &patchFileWork{path: clean, action: "delete", before: before}
+	byPath[clean] = work
+	*works = append(*works, work)
 	return work, nil
 }
 
