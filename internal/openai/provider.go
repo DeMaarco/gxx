@@ -707,60 +707,21 @@ func toolCallFromOutput(item responses.ResponseOutputItemUnion) (agent.ToolCall,
 	args := item.Arguments.OfString
 	switch item.Type {
 	case "function_call":
-		call := item.AsFunctionCall()
-		if name == "" {
-			name = strings.TrimSpace(call.Name)
-		}
-		if id == "" {
-			id = strings.TrimSpace(call.CallID)
-		}
-		if args == "" {
-			args = call.Arguments
-		}
+		name, id, args = functionCallFromOutput(item, name, id, args)
 	case "custom_tool_call":
-		call := item.AsCustomToolCall()
-		if name == "" {
-			name = strings.TrimSpace(call.Name)
-		}
-		if id == "" {
-			id = strings.TrimSpace(call.CallID)
-		}
-		if args == "" {
-			args = call.Input
-		}
-		if args == "" {
-			args = item.Input
-		}
+		name, id, args = customToolCallFromOutput(item, name, id, args)
 	case "shell_call":
-		call := item.AsShellCall()
-		if id == "" {
-			id = strings.TrimSpace(call.CallID)
-		}
-		name = "run_command"
-		command := strings.Join(call.Action.Commands, " && ")
-		if strings.TrimSpace(command) == "" {
+		mappedID, mappedArgs, ok := shellCallArgs(item, id)
+		if !ok {
 			return agent.ToolCall{}, false
 		}
-		encoded, err := json.Marshal(map[string]any{"command": command})
-		if err != nil {
-			return agent.ToolCall{}, false
-		}
-		args = string(encoded)
+		name, id, args = "run_command", mappedID, mappedArgs
 	case "local_shell_call":
-		call := item.AsLocalShellCall()
-		if id == "" {
-			id = strings.TrimSpace(call.CallID)
-		}
-		name = "run_command"
-		command := strings.Join(call.Action.Command, " ")
-		if strings.TrimSpace(command) == "" {
+		mappedID, mappedArgs, ok := localShellCallArgs(item, id)
+		if !ok {
 			return agent.ToolCall{}, false
 		}
-		encoded, err := json.Marshal(map[string]any{"command": command})
-		if err != nil {
-			return agent.ToolCall{}, false
-		}
-		args = string(encoded)
+		name, id, args = "run_command", mappedID, mappedArgs
 	case "apply_patch_call":
 		call := item.AsApplyPatchCall()
 		if id == "" {
@@ -770,11 +731,83 @@ func toolCallFromOutput(item responses.ResponseOutputItemUnion) (agent.ToolCall,
 		if !ok {
 			return agent.ToolCall{}, false
 		}
-		name = "apply_patch"
-		args = mapped
+		name, args = "apply_patch", mapped
 	default:
 		return agent.ToolCall{}, false
 	}
+	return finalizeToolCall(name, id, args)
+}
+
+func functionCallFromOutput(
+	item responses.ResponseOutputItemUnion,
+	name, id, args string,
+) (string, string, string) {
+	call := item.AsFunctionCall()
+	if name == "" {
+		name = strings.TrimSpace(call.Name)
+	}
+	if id == "" {
+		id = strings.TrimSpace(call.CallID)
+	}
+	if args == "" {
+		args = call.Arguments
+	}
+	return name, id, args
+}
+
+func customToolCallFromOutput(
+	item responses.ResponseOutputItemUnion,
+	name, id, args string,
+) (string, string, string) {
+	call := item.AsCustomToolCall()
+	if name == "" {
+		name = strings.TrimSpace(call.Name)
+	}
+	if id == "" {
+		id = strings.TrimSpace(call.CallID)
+	}
+	if args == "" {
+		args = call.Input
+	}
+	if args == "" {
+		args = item.Input
+	}
+	return name, id, args
+}
+
+func shellCallArgs(item responses.ResponseOutputItemUnion, id string) (string, string, bool) {
+	call := item.AsShellCall()
+	if id == "" {
+		id = strings.TrimSpace(call.CallID)
+	}
+	command := strings.Join(call.Action.Commands, " && ")
+	if strings.TrimSpace(command) == "" {
+		return "", "", false
+	}
+	encoded, err := json.Marshal(map[string]any{"command": command})
+	if err != nil {
+		return "", "", false
+	}
+	return id, string(encoded), true
+}
+
+func localShellCallArgs(item responses.ResponseOutputItemUnion, id string) (string, string, bool) {
+	call := item.AsLocalShellCall()
+	if id == "" {
+		id = strings.TrimSpace(call.CallID)
+	}
+	command := strings.Join(call.Action.Command, " ")
+	if strings.TrimSpace(command) == "" {
+		return "", "", false
+	}
+	encoded, err := json.Marshal(map[string]any{"command": command})
+	if err != nil {
+		return "", "", false
+	}
+	return id, string(encoded), true
+}
+
+func finalizeToolCall(name, id, args string) (agent.ToolCall, bool) {
 	if name == "" {
 		return agent.ToolCall{}, false
 	}
