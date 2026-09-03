@@ -41,3 +41,5 @@ gxx version
 ```
 
 Current release: **v0.0.23**
+
+See [Updates](../updates/) for what changed in each version.

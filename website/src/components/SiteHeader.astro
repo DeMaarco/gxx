@@ -20,6 +20,7 @@ const labels = {
 		docs: 'docs',
 		install: 'install',
 		quickStart: 'quick start',
+		updates: 'updates',
 		source: 'source',
 		nav: 'Site',
 		lang: 'Language',
@@ -28,6 +29,7 @@ const labels = {
 		docs: 'docs',
 		install: 'instalar',
 		quickStart: 'inicio rápido',
+		updates: 'actualizaciones',
 		source: 'source',
 		nav: 'Sitio',
 		lang: 'Idioma',
@@ -56,6 +58,9 @@ const home = locale === 'es' ? homeEs : homeEn;
 		</a>
 		<a href={`${docsBase}quick-start/`} class="text-[0.6875rem] uppercase tracking-wider text-muted no-underline hover:text-ink">
 			{t.quickStart}
+		</a>
+		<a href={`${docsBase}updates/`} class="text-[0.6875rem] uppercase tracking-wider text-muted no-underline hover:text-ink">
+			{t.updates}
 		</a>
 		<a
 			href="https://github.com/DeMaarco/gxx"
