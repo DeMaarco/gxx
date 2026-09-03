@@ -7,12 +7,10 @@ Lo más nuevo primero. Fija una versión con `--version` en el script de [instal
 
 ## v0.0.25
 
-Resultados de herramientas más fiables y preview web local funcional.
+Lecturas de archivos y comandos más fiables.
 
-- Las llamadas distintas conservan sus resultados posicionales aunque el proveedor omita call IDs.
-- Las lecturas canceladas emiten eventos de finalización para que el progreso de terminal no quede bloqueado.
-- Astro sirve `/` durante desarrollo y mantiene la base `/gxx/` en los builds de GitHub Pages.
-- Los controles de instalación en español y los enlaces internos quedan localizados y resuelven bajo la base publicada.
+- Cada resultado de herramienta se queda asociado a la petición que lo pidió — ya no se mezclan.
+- Cancelar una lectura ya no deja el terminal colgado.
 
 ## v0.0.24
 

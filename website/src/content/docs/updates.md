@@ -7,12 +7,10 @@ Newest first. Install a pin with `--version` on the [install](../install/) scrip
 
 ## v0.0.25
 
-More reliable tool results and a working local web preview.
+More reliable file reads and commands.
 
-- Distinct tool calls keep their positional results even when a provider omits call IDs.
-- Cancelled reads emit completion events so terminal progress cannot remain stuck.
-- Astro serves `/` during development while release builds keep the `/gxx/` GitHub Pages base.
-- Spanish installation controls and internal documentation links now stay localized and resolve under the published base path.
+- Each tool result stays attached to the request that asked for it — results no longer get mixed up.
+- Cancelling a file read no longer leaves the terminal stuck.
 
 ## v0.0.24
 
