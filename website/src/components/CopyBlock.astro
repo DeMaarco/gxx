@@ -1,9 +1,13 @@
 ---
 interface Props {
 	code: string;
+	locale?: 'en' | 'es';
 }
 
-const { code } = Astro.props;
+const { code, locale = 'en' } = Astro.props;
+const labels = locale === 'es'
+	? { copy: 'copiar', copied: 'copiado', failed: 'error', aria: 'Copiar al portapapeles' }
+	: { copy: 'copy', copied: 'copied', failed: 'failed', aria: 'Copy to clipboard' };
 const id = `copy-${Math.random().toString(36).slice(2, 9)}`;
 ---
 
@@ -12,9 +16,12 @@ const id = `copy-${Math.random().toString(36).slice(2, 9)}`;
 		type="button"
 		class="absolute right-2.5 top-2.5 rounded-md border border-line bg-paper px-2 py-1 text-[0.6875rem] uppercase tracking-wide text-muted hover:border-accent hover:text-accent"
 		data-copy-target={id}
-		aria-label="Copy to clipboard"
+		data-copy-label={labels.copy}
+		data-copied-label={labels.copied}
+		data-failed-label={labels.failed}
+		aria-label={labels.aria}
 	>
-		copy
+		{labels.copy}
 	</button>
 	<pre class="m-0 overflow-x-auto p-4 pr-16 text-[0.8125rem] text-ink"><code id={id} class="block whitespace-pre">{code}</code></pre>
 </div>
@@ -27,14 +34,17 @@ const id = `copy-${Math.random().toString(36).slice(2, 9)}`;
 
 		btn.addEventListener('click', async () => {
 			const text = code.textContent ?? '';
+			const copyLabel = btn.getAttribute('data-copy-label') ?? 'copy';
+			const copiedLabel = btn.getAttribute('data-copied-label') ?? 'copied';
+			const failedLabel = btn.getAttribute('data-failed-label') ?? 'failed';
 			try {
 				await navigator.clipboard.writeText(text);
-				btn.textContent = 'copied';
+				btn.textContent = copiedLabel;
 				setTimeout(() => {
-					btn.textContent = 'copy';
+					btn.textContent = copyLabel;
 				}, 2000);
 			} catch {
-				btn.textContent = 'failed';
+				btn.textContent = failedLabel;
 			}
 		});
 	});

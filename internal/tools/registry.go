@@ -215,6 +215,8 @@ func (r *Registry) executeReadBatch(
 				defer func() { <-limit }()
 			case <-ctx.Done():
 				results[index] = errorResult(calls[index], ctx.Err(), 0)
+				result := results[index]
+				agent.Emit(emit, agent.Event{Kind: agent.EventToolDone, Result: &result})
 				return
 			}
 			results[index] = r.executeOne(ctx, calls[index], emit)

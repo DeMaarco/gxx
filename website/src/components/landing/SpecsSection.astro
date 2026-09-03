@@ -7,8 +7,11 @@ interface Props {
 	version?: string;
 }
 
-const { locale = 'en', version = 'v0.0.24' } = Astro.props;
+const { locale = 'en', version = 'v0.0.25' } = Astro.props;
 const t = landingContent(locale);
+const tableLabels = locale === 'es'
+	? { version: 'Versión', platform: 'Plataforma', arch: 'Arquitectura', size: 'Tamaño' }
+	: { version: 'Version', platform: 'Platform', arch: 'Arch', size: 'Size' };
 ---
 
 <section class="mt-16 border-t border-line pt-16" aria-labelledby="specs-heading">
@@ -27,7 +30,7 @@ const t = landingContent(locale);
 			<dd class="mt-1 font-medium text-ink">{t.specsPlatformsValue}</dd>
 		</div>
 		<div class="rounded-lg border border-line bg-surface/50 p-4">
-			<dt class="text-xs uppercase tracking-wide text-muted">Version</dt>
+			<dt class="text-xs uppercase tracking-wide text-muted">{tableLabels.version}</dt>
 			<dd class="mt-1 font-medium text-ink">{version}</dd>
 		</div>
 		<div class="rounded-lg border border-line bg-surface/50 p-4">
@@ -45,9 +48,9 @@ const t = landingContent(locale);
 		<table class="w-full min-w-[20rem] text-left text-[0.8125rem]">
 			<thead class="border-b border-line bg-surface">
 				<tr>
-					<th scope="col" class="px-4 py-2.5 font-medium text-ink">Platform</th>
-					<th scope="col" class="px-4 py-2.5 font-medium text-ink">Arch</th>
-					<th scope="col" class="px-4 py-2.5 font-medium text-ink">Size</th>
+					<th scope="col" class="px-4 py-2.5 font-medium text-ink">{tableLabels.platform}</th>
+					<th scope="col" class="px-4 py-2.5 font-medium text-ink">{tableLabels.arch}</th>
+					<th scope="col" class="px-4 py-2.5 font-medium text-ink">{tableLabels.size}</th>
 				</tr>
 			</thead>
 			<tbody>

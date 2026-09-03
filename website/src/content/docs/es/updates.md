@@ -5,6 +5,15 @@ description: Qué cambió en cada release de gxx.
 
 Lo más nuevo primero. Fija una versión con `--version` en el script de [instalación](../install/), o `gxx version` para ver la tuya.
 
+## v0.0.25
+
+Resultados de herramientas más fiables y preview web local funcional.
+
+- Las llamadas distintas conservan sus resultados posicionales aunque el proveedor omita call IDs.
+- Las lecturas canceladas emiten eventos de finalización para que el progreso de terminal no quede bloqueado.
+- Astro sirve `/` durante desarrollo y mantiene la base `/gxx/` en los builds de GitHub Pages.
+- Los controles de instalación en español y los enlaces internos quedan localizados y resuelven bajo la base publicada.
+
 ## v0.0.24
 
 Hints de comando más limpios en Windows y borrados de archivos completos.

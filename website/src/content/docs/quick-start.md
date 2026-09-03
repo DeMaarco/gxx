@@ -53,4 +53,4 @@ gxx usage
 
 Drop an `AGENTS.md` in the project root if you want extra instructions loaded into the session. It is re-read at the start of every turn and on `/clear`. Those notes cannot override gxx safety, permission, or plan-mode rules.
 
-For reusable workflows, add Agent Skills (`SKILL.md`) under `.agents/skills`, `.gxx/skills`, or `~/.config/gxx/skills`. gxx sends a compact catalog each turn and loads the body with `read_skill` when it matches. See [Skills](/skills/).
+For reusable workflows, add Agent Skills (`SKILL.md`) under `.agents/skills`, `.gxx/skills`, or `~/.config/gxx/skills`. gxx sends a compact catalog each turn and loads the body with `read_skill` when it matches. See [Skills](../skills/).

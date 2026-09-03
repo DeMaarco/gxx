@@ -6,7 +6,7 @@ interface Props {
 	version?: string;
 }
 
-const { locale = 'en', version = 'v0.0.24' } = Astro.props;
+const { locale = 'en', version = 'v0.0.25' } = Astro.props;
 
 const content = {
 	en: {
@@ -79,23 +79,23 @@ const t = content[locale];
 
 	<div class="tab-panel max-w-3xl" data-panel="0" role="tabpanel">
 		<p class="mb-4 text-secondary">{t.macos.note}</p>
-		<CopyBlock code={t.macos.main} />
+		<CopyBlock code={t.macos.main} locale={locale} />
 		<p class="mb-1 mt-5 text-xs text-muted">{t.pathLabel}</p>
-		<CopyBlock code={t.macos.path} />
+		<CopyBlock code={t.macos.path} locale={locale} />
 		<p class="mb-1 mt-5 text-xs text-muted">{t.pinLabel}</p>
-		<CopyBlock code={t.macos.pin} />
+		<CopyBlock code={t.macos.pin} locale={locale} />
 	</div>
 
 	<div class="tab-panel hidden max-w-3xl" data-panel="1" role="tabpanel" hidden>
 		<p class="mb-4 text-secondary">{t.windows.note}</p>
-		<CopyBlock code={t.windows.main} />
+		<CopyBlock code={t.windows.main} locale={locale} />
 		<p class="mb-1 mt-5 text-xs text-muted">{t.pinLabel}</p>
-		<CopyBlock code={t.windows.pin} />
+		<CopyBlock code={t.windows.pin} locale={locale} />
 	</div>
 
 	<div class="tab-panel hidden max-w-3xl" data-panel="2" role="tabpanel" hidden>
 		<p class="mb-4 text-secondary">{t.source.note}</p>
-		<CopyBlock code={t.source.code} />
+		<CopyBlock code={t.source.code} locale={locale} />
 	</div>
 </section>
 

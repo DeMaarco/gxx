@@ -5,6 +5,15 @@ description: What changed in each gxx release.
 
 Newest first. Install a pin with `--version` on the [install](../install/) script, or `gxx version` to see what you have.
 
+## v0.0.25
+
+More reliable tool results and a working local web preview.
+
+- Distinct tool calls keep their positional results even when a provider omits call IDs.
+- Cancelled reads emit completion events so terminal progress cannot remain stuck.
+- Astro serves `/` during development while release builds keep the `/gxx/` GitHub Pages base.
+- Spanish installation controls and internal documentation links now stay localized and resolve under the published base path.
+
 ## v0.0.24
 
 Cleaner Windows command hints and complete file deletes.

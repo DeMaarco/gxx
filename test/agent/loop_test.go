@@ -222,6 +222,35 @@ func TestLoopExecutesDistinctToolArguments(t *testing.T) {
 	}
 }
 
+func TestLoopPreservesDistinctToolResultsWithoutCallIDs(t *testing.T) {
+	model := &fakeModel{responses: []agent.ModelResponse{
+		{ToolCalls: []agent.ToolCall{
+			{Name: "read_file", Arguments: json.RawMessage(`{"path":"a.go"}`)},
+			{Name: "read_file", Arguments: json.RawMessage(`{"path":"b.go"}`)},
+		}},
+		{Text: "Done."},
+	}}
+	executor := &fakeExecutor{
+		definitions: []agent.ToolDefinition{{Name: "read_file", ReadOnly: true}},
+		results: []agent.ToolResult{
+			{Output: "contents-a"},
+			{Output: "contents-b"},
+		},
+	}
+	loop := &agent.Loop{Model: model, Executor: executor, MaxSteps: 3}
+
+	result, err := loop.Run(context.Background(), "read both", nil)
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if len(result.ToolResults) != 2 {
+		t.Fatalf("tool results = %#v, want 2", result.ToolResults)
+	}
+	if result.ToolResults[0].Output != "contents-a" || result.ToolResults[1].Output != "contents-b" {
+		t.Fatalf("tool results = %#v, want positional results preserved", result.ToolResults)
+	}
+}
+
 func TestLoopPrependsWorkspaceOverview(t *testing.T) {
 	model := &fakeModel{responses: []agent.ModelResponse{{Text: "ok"}}}
 	loop := &agent.Loop{

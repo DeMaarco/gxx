@@ -52,4 +52,4 @@ Instructions go here.
 
 ## Privacy
 
-The catalog on every turn, and any skill body or file loaded via `read_skill`, go to the active provider. See [Privacy](/privacy/).
+The catalog on every turn, and any skill body or file loaded via `read_skill`, go to the active provider. See [Privacy](../privacy/).

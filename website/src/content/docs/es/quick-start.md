@@ -53,4 +53,4 @@ gxx usage
 
 Coloca un `AGENTS.md` en la raíz del proyecto si quieres instrucciones extra cargadas en la sesión. Se re-lee al inicio de cada turno y en `/clear`. Esas notas no pueden anular las reglas de seguridad, permisos o plan-mode de gxx.
 
-Para flujos reutilizables, añade Agent Skills (`SKILL.md`) bajo `.agents/skills`, `.gxx/skills`, o `~/.config/gxx/skills`. gxx envía un catálogo compacto cada turno y carga el cuerpo con `read_skill` cuando encaja. Ver [Skills](/es/skills/).
+Para flujos reutilizables, añade Agent Skills (`SKILL.md`) bajo `.agents/skills`, `.gxx/skills`, o `~/.config/gxx/skills`. gxx envía un catálogo compacto cada turno y carga el cuerpo con `read_skill` cuando encaja. Ver [Skills](../skills/).

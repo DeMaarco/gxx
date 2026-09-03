@@ -52,4 +52,4 @@ Las instrucciones van aquí.
 
 ## Privacidad
 
-El catálogo en cada turno, y cualquier cuerpo o fichero de skill cargado con `read_skill`, van al proveedor activo. Ver [Privacidad](/es/privacy/).
+El catálogo en cada turno, y cualquier cuerpo o fichero de skill cargado con `read_skill`, van al proveedor activo. Ver [Privacidad](../privacy/).

@@ -190,7 +190,7 @@ gxx version
 Pin a version or install path:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/DeMaarco/gxx/main/install.sh | sh -s -- --version v0.0.24
+curl -fsSL https://raw.githubusercontent.com/DeMaarco/gxx/main/install.sh | sh -s -- --version v0.0.25
 curl -fsSL https://raw.githubusercontent.com/DeMaarco/gxx/main/install.sh | sh -s -- --dir /usr/local/bin
 ```
 
@@ -200,7 +200,7 @@ curl -fsSL https://raw.githubusercontent.com/DeMaarco/gxx/main/install.sh | sh -
 irm https://raw.githubusercontent.com/DeMaarco/gxx/main/install.ps1 | iex
 ```
 
-Installs to `%LOCALAPPDATA%\gxx` and puts that folder on your PATH. Pin a version with `$env:GXX_VERSION = "v0.0.24"` before running the installer.
+Installs to `%LOCALAPPDATA%\gxx` and puts that folder on your PATH. Pin a version with `$env:GXX_VERSION = "v0.0.25"` before running the installer.
 
 `run_command` uses PowerShell. Git tools need [Git for Windows](https://git-scm.com/download/win). Config lives in `%APPDATA%\gxx\config.json`.
 

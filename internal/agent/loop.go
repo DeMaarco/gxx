@@ -174,7 +174,11 @@ func (l *Loop) executeTools(
 			}
 		}
 		for i, call := range unique {
-			result, ok := executedByID[call.ID]
+			var result ToolResult
+			var ok bool
+			if call.ID != "" {
+				result, ok = executedByID[call.ID]
+			}
 			if !ok && i < len(executed) {
 				result = executed[i]
 				if result.CallID == "" {
@@ -190,7 +194,9 @@ func (l *Loop) executeTools(
 					IsError: true,
 				}
 			}
-			executedByID[call.ID] = result
+			if call.ID != "" {
+				executedByID[call.ID] = result
+			}
 			key := toolCallKey(call)
 			batchByKey[key] = result
 			if readOnly[call.Name] {
@@ -200,6 +206,7 @@ func (l *Loop) executeTools(
 	}
 
 	results := make([]ToolResult, 0, len(calls))
+	usedBatchKey := make(map[string]bool, len(batchByKey))
 	for i, call := range calls {
 		var result ToolResult
 		switch {
@@ -210,8 +217,13 @@ func (l *Loop) executeTools(
 			if got, ok := executedByID[call.ID]; ok {
 				result = got
 			} else if prev, ok := batchByKey[keys[i]]; ok {
-				result = reusedToolResult(call, prev)
-				emitReusedTool(emit, call, result)
+				if call.ID == "" && !usedBatchKey[keys[i]] {
+					result = prev
+					usedBatchKey[keys[i]] = true
+				} else {
+					result = reusedToolResult(call, prev)
+					emitReusedTool(emit, call, result)
+				}
 			} else if prev, ok := cache[keys[i]]; ok {
 				result = reusedToolResult(call, prev)
 				emitReusedTool(emit, call, result)
