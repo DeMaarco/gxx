@@ -68,6 +68,8 @@ func TestHasSensitivePathTokenCatchesQuotedAndEmbeddedPaths(t *testing.T) {
 		`Get-Content (Join-Path . '.env')`,
 		"sh -c 'cat secrets.json'",
 		"cat id_rsa",
+		"cat ~/.ssh/id_rsa",
+		"cat ~/.env",
 	}
 	for _, command := range blocked {
 		if !tools.HasSensitivePathToken(command) {
@@ -166,6 +168,25 @@ func TestHasEscapingFileURL(t *testing.T) {
 	}
 	if !tools.HasEscapingFileURL(root, "agent-browser open "+outside) {
 		t.Fatalf("HasEscapingFileURL(%q) = false, want true", outside)
+	}
+}
+
+func TestHasEscapingFileURLKeepsWindowsShortName(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "RUNNER~1")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(dir, "index.html")
+	if err := os.WriteFile(file, []byte("<html></html>\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	inside := tools.WorkspaceFileURL(file)
+	if !strings.Contains(inside, "RUNNER~1") {
+		t.Fatalf("expected 8.3-style component in URL, got %q", inside)
+	}
+	if tools.HasEscapingFileURL(root, "agent-browser open "+inside) {
+		t.Fatalf("workspace file URL %q was treated as an escape", inside)
 	}
 }
 
@@ -271,7 +292,12 @@ func TestRunCommandPreviewRewritesLocalBrowserScreenshot(t *testing.T) {
 	if len(approver.actions) != 1 {
 		t.Fatalf("preview actions = %#v result=%+v", approver.actions, result)
 	}
-	want := filepath.Join(root, "hero.png")
+	ws, err := workspace.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ws.Close()
+	want := filepath.Join(ws.Root(), "hero.png")
 	if !strings.Contains(approver.actions[0].Preview, want) && !strings.Contains(approver.actions[0].Preview, filepath.ToSlash(want)) {
 		t.Fatalf("preview = %q, want workspace path %s", approver.actions[0].Preview, want)
 	}
