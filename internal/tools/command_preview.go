@@ -170,9 +170,11 @@ func sensitivePathTokens(command string) []string {
 		if unicode.IsSpace(character) {
 			return true
 		}
+		// Do not split on '~': Windows 8.3 names (RUNNER~1) and ~/ paths
+		// must stay a single token.
 		switch character {
 		case ';', '|', '&', '<', '>', '(', ')', '\'', '"', '`',
-			'$', '{', '}', '[', ']', ',', '=', '+', '!', '~':
+			'$', '{', '}', '[', ']', ',', '=', '+', '!':
 			return true
 		default:
 			return false

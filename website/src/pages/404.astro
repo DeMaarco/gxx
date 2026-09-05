@@ -1,0 +1,12 @@
+---
+import ErrorScreen from '../components/ErrorScreen.astro';
+
+export const prerender = true;
+---
+
+<ErrorScreen
+	status={404}
+	title="Page not found"
+	description="That path does not exist. Head home or open the docs. / Esa ruta no existe. Vuelve al inicio o abre la documentación."
+	homeLabel="Back to home / Volver al inicio"
+/>

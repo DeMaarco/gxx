@@ -1,0 +1,45 @@
+---
+import SiteHeader from './SiteHeader.astro';
+import '../styles/app.css';
+import '../styles/global.css';
+
+interface Props {
+	locale?: 'en' | 'es';
+	status: number;
+	title: string;
+	description: string;
+	homeLabel: string;
+}
+
+const { locale = 'en', status, title, description, homeLabel } = Astro.props;
+const base = import.meta.env.BASE_URL;
+const home = locale === 'es' ? `${base}es/` : base;
+---
+
+<!doctype html>
+<html lang={locale}>
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<meta name="robots" content="noindex" />
+		<title>{title} | gxx</title>
+		<link rel="icon" type="image/svg+xml" href={`${base}favicon.svg`} />
+		<link rel="preconnect" href="https://fonts.googleapis.com" />
+		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+		<link
+			href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap"
+			rel="stylesheet"
+		/>
+	</head>
+	<body>
+		<SiteHeader locale={locale} />
+		<main id="main-content" class="mx-auto max-w-4xl px-6 py-20">
+			<p class="text-xs uppercase tracking-wider text-muted">{status}</p>
+			<h1 class="mt-3 text-base font-semibold tracking-tight text-ink">{title}</h1>
+			<p class="mt-3 max-w-xl text-secondary">{description}</p>
+			<p class="mt-8">
+				<a href={home} class="text-accent no-underline hover:underline">{homeLabel}</a>
+			</p>
+		</main>
+	</body>
+</html>

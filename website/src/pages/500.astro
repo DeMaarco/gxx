@@ -1,0 +1,12 @@
+---
+import ErrorScreen from '../components/ErrorScreen.astro';
+
+export const prerender = true;
+---
+
+<ErrorScreen
+	status={500}
+	title="Server error"
+	description="Something went wrong while rendering this page. Reload or head home. / Algo falló al generar esta página. Prueba a recargar o vuelve al inicio."
+	homeLabel="Back to home / Volver al inicio"
+/>

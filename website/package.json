@@ -6,7 +6,9 @@
     "dev": "astro dev",
     "start": "astro dev",
     "build": "astro build",
+    "build:cf": "BASE_PATH=/ astro build",
     "preview": "astro preview",
+    "deploy": "npm run build:cf && npx wrangler deploy",
     "astro": "astro"
   },
   "dependencies": {
