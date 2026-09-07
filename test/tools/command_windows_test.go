@@ -37,6 +37,10 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+// Allow for cold PowerShell startup on shared CI runners. Timeout tests below
+// keep their own short deadlines to exercise cancellation.
+const windowsCommandTestTimeout = 10 * time.Second
+
 func TestRunCommandScrubsProviderCredential(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "super-secret")
 	root := t.TempDir()
@@ -44,7 +48,7 @@ func TestRunCommandScrubsProviderCredential(t *testing.T) {
 		MaxResultBytes:  4096,
 		MaxSearchResult: 10,
 		ParallelReads:   1,
-		CommandTimeout:  time.Second,
+		CommandTimeout:  windowsCommandTestTimeout,
 	})
 
 	result := registry.Execute(context.Background(), []agent.ToolCall{
@@ -70,7 +74,7 @@ func TestRunCommandKeepsMarkerAndScrubsSecrets(t *testing.T) {
 		MaxResultBytes:  4096,
 		MaxSearchResult: 10,
 		ParallelReads:   1,
-		CommandTimeout:  time.Second,
+		CommandTimeout:  windowsCommandTestTimeout,
 	})
 
 	result := registry.Execute(context.Background(), []agent.ToolCall{
@@ -93,7 +97,7 @@ func TestRunCommandReportsNonZeroExitAsResult(t *testing.T) {
 		MaxResultBytes:  4096,
 		MaxSearchResult: 10,
 		ParallelReads:   1,
-		CommandTimeout:  time.Second,
+		CommandTimeout:  windowsCommandTestTimeout,
 	})
 
 	result := registry.Execute(context.Background(), []agent.ToolCall{
@@ -120,7 +124,7 @@ func TestRunCommandKeepsExitCodeWhenCommandIsSilent(t *testing.T) {
 		MaxResultBytes:  4096,
 		MaxSearchResult: 10,
 		ParallelReads:   1,
-		CommandTimeout:  time.Second,
+		CommandTimeout:  windowsCommandTestTimeout,
 	})
 
 	result := registry.Execute(context.Background(), []agent.ToolCall{
@@ -204,7 +208,7 @@ func TestRunCommandReportsCommandKind(t *testing.T) {
 		MaxResultBytes:  4096,
 		MaxSearchResult: 10,
 		ParallelReads:   1,
-		CommandTimeout:  time.Second,
+		CommandTimeout:  windowsCommandTestTimeout,
 	})
 	result := registry.Execute(context.Background(), []agent.ToolCall{
 		toolCall("command", "run_command", map[string]any{
@@ -229,7 +233,7 @@ func TestAutoWritesStillAsksForCommands(t *testing.T) {
 		MaxResultBytes:  4096,
 		MaxSearchResult: 10,
 		ParallelReads:   1,
-		CommandTimeout:  time.Second,
+		CommandTimeout:  windowsCommandTestTimeout,
 	})
 	result := registry.Execute(context.Background(), []agent.ToolCall{
 		toolCall("command", "run_command", map[string]any{
@@ -251,7 +255,7 @@ func TestAutoRunsCommandsWithoutPrompt(t *testing.T) {
 		MaxResultBytes:  4096,
 		MaxSearchResult: 10,
 		ParallelReads:   1,
-		CommandTimeout:  time.Second,
+		CommandTimeout:  windowsCommandTestTimeout,
 	})
 	result := registry.Execute(context.Background(), []agent.ToolCall{
 		toolCall("command", "run_command", map[string]any{
@@ -276,7 +280,7 @@ func TestRunCommandPreviewRejectsSensitivePath(t *testing.T) {
 		MaxResultBytes:  4096,
 		MaxSearchResult: 10,
 		ParallelReads:   1,
-		CommandTimeout:  time.Second,
+		CommandTimeout:  windowsCommandTestTimeout,
 	})
 	result := registry.Execute(context.Background(), []agent.ToolCall{
 		toolCall("command", "run_command", map[string]any{
@@ -303,7 +307,7 @@ func TestRunCommandDoesNotLoadCallerProfiles(t *testing.T) {
 		MaxResultBytes:  4096,
 		MaxSearchResult: 10,
 		ParallelReads:   1,
-		CommandTimeout:  time.Second,
+		CommandTimeout:  windowsCommandTestTimeout,
 	})
 
 	result := registry.Execute(context.Background(), []agent.ToolCall{
