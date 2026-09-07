@@ -40,8 +40,8 @@ func TestSystemPromptExcludesAgentsBody(t *testing.T) {
 	if !strings.Contains(prompt, "Prefer search_files for symbols") {
 		t.Fatalf("prompt = %q, want search-first inspection", prompt)
 	}
-	if !strings.Contains(prompt, "at most 4 reads") {
-		t.Fatalf("prompt = %q, want overview read budget", prompt)
+	if strings.Contains(prompt, "at most 4 reads") || !strings.Contains(prompt, "material evidence is missing") {
+		t.Fatalf("prompt = %q, want evidence-directed investigation", prompt)
 	}
 	if !strings.Contains(prompt, "sensitive paths omitted") {
 		t.Fatalf("prompt = %q, want omitted-secret notice", prompt)
@@ -357,8 +357,8 @@ func TestCompressProjectContextLeavesTrustedPromptAlone(t *testing.T) {
 
 	context := agent.ProjectContext(ws, 0)
 	eco := agent.CompressProjectContext(context, 3)
-	if strings.Contains(eco, "Please just really") {
-		t.Fatalf("eco left filler in AGENTS.md: %q", eco)
+	if eco != context {
+		t.Fatalf("eco changed project instructions: %q", eco)
 	}
 	if !strings.Contains(eco, "focused tests") {
 		t.Fatalf("eco dropped AGENTS.md substance: %q", eco)
@@ -462,8 +462,8 @@ func TestSkillsContextInUserMessageNotSystem(t *testing.T) {
 	if !strings.Contains(prompt, "Follow that skill's process") {
 		t.Fatalf("prompt = %q, want skill process note", prompt)
 	}
-	if !strings.Contains(prompt, "npx --yes") {
-		t.Fatalf("prompt = %q, want npm CLI retry note", prompt)
+	if !strings.Contains(prompt, "Install or download it only with explicit user approval") {
+		t.Fatalf("prompt = %q, want explicit dependency approval note", prompt)
 	}
 	if !strings.Contains(prompt, "Child processes do not survive run_command") {
 		t.Fatalf("prompt = %q, want local-page process-tree note", prompt)
@@ -535,7 +535,7 @@ func TestSkillsContextReloadsBetweenCalls(t *testing.T) {
 	}
 }
 
-func TestSkillsContextEcoCompressesDescriptions(t *testing.T) {
+func TestSkillsContextEcoPreservesDescriptions(t *testing.T) {
 	isolateUserSkills(t)
 	root := t.TempDir()
 	writePromptSkill(
@@ -553,8 +553,8 @@ func TestSkillsContextEcoCompressesDescriptions(t *testing.T) {
 
 	plain := agent.SkillsContext(ws, 0)
 	eco := agent.SkillsContext(ws, 3)
-	if strings.Contains(eco, "Please just really") {
-		t.Fatalf("eco left filler in skill description: %q", eco)
+	if eco != plain {
+		t.Fatalf("eco changed the skill description: %q", eco)
 	}
 	if !strings.Contains(plain, "Please just really") {
 		t.Fatalf("plain = %q, want uncompressed description", plain)

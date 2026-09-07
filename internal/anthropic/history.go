@@ -23,7 +23,6 @@ import (
 
 	"gxx/internal/agent"
 	"gxx/internal/budget"
-	"gxx/internal/caveman"
 )
 
 const (
@@ -157,12 +156,10 @@ func slimInput(messages []anthropicsdk.MessageParam, level, keep, clip int) []an
 	if level <= 0 {
 		return messages
 	}
-	messages = compressInputProse(messages, level)
 	switch {
 	case level >= 3:
 		messages = dropAllThinking(messages)
 		messages = clipOldToolOutputs(messages, keep, clip)
-		messages = clipOldUserMessages(messages, 1, 400)
 	case level >= 2:
 		messages = keepLatestThinking(messages)
 		messages = clipOldToolOutputs(messages, keep, clip)
@@ -170,34 +167,6 @@ func slimInput(messages []anthropicsdk.MessageParam, level, keep, clip int) []an
 		messages = clipOldToolOutputs(messages, keep, clip)
 	}
 	return messages
-}
-
-func compressInputProse(messages []anthropicsdk.MessageParam, level int) []anthropicsdk.MessageParam {
-	lastTurn := lastUserTurnIndex(messages)
-	out := cloneMessages(messages)
-	for index := range out {
-		if index == lastTurn {
-			continue
-		}
-		if text := userTurnText(out[index]); text != "" {
-			compressed := caveman.Compress(text, level)
-			if compressed != text {
-				out[index] = replaceUserTurnText(out[index], compressed)
-			}
-		}
-		for blockIdx := range out[index].Content {
-			block := out[index].Content[blockIdx]
-			if block.OfToolResult == nil {
-				continue
-			}
-			text := toolResultOutput(block)
-			compressed := caveman.Compress(text, level)
-			if compressed != text {
-				out[index].Content[blockIdx] = replaceToolResultOutput(block, compressed)
-			}
-		}
-	}
-	return out
 }
 
 func clipOldToolOutputs(messages []anthropicsdk.MessageParam, keep, maxBytes int) []anthropicsdk.MessageParam {
@@ -523,12 +492,6 @@ func toolParams(definitions []agent.ToolDefinition, eco int) []anthropicsdk.Tool
 	for _, definition := range definitions {
 		description := definition.Description
 		parameters := definition.Parameters
-		if eco > 0 {
-			description = caveman.Compress(description, eco)
-			if compressed, ok := caveman.CompressDescriptions(cloneJSON(parameters), eco).(map[string]any); ok {
-				parameters = compressed
-			}
-		}
 		tool := anthropicsdk.ToolUnionParamOfTool(toolInputSchema(parameters), definition.Name)
 		if tool.OfTool != nil && description != "" {
 			tool.OfTool.Description = anthropicsdk.String(description)

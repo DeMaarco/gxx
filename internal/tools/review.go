@@ -33,7 +33,7 @@ const (
 	maxReviewFindings  = 8
 	maxReviewFiles     = 8
 	reviewThinkFooter  = "Think through remaining defects before the final answer. Fix findings or say why they are false."
-	reviewStaticFooter = "For static HTML/CSS/JS this review is the validation; do not skip it because there are no automated tests."
+	reviewStaticFooter = "Partial static checks only. No findings does not verify behavior or appearance. Run relevant existing tests or browser checks when available and permitted; report any checks that could not be completed."
 )
 
 var (

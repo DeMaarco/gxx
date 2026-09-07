@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "configurations": [
+    {
+      "id": "eco-0",
+      "provider": "openai",
+      "model": "gpt-5.6-sol",
+      "effort": "medium",
+      "context": "272k",
+      "eco": 0
+    },
+    {
+      "id": "eco-1",
+      "provider": "openai",
+      "model": "gpt-5.6-sol",
+      "effort": "medium",
+      "context": "272k",
+      "eco": 1
+    },
+    {
+      "id": "eco-2",
+      "provider": "openai",
+      "model": "gpt-5.6-sol",
+      "effort": "medium",
+      "context": "272k",
+      "eco": 2
+    },
+    {
+      "id": "eco-3",
+      "provider": "openai",
+      "model": "gpt-5.6-sol",
+      "effort": "medium",
+      "context": "272k",
+      "eco": 3
+    }
+  ]
+}

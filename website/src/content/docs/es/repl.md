@@ -4,7 +4,7 @@ description: Atajos de teclado, modos de sesión y comandos slash.
 ---
 
 ```text
-◆ gxx  v0.0.25     badge y versión
+◆ gxx  v0.0.26     badge y versión
 >                 escribe aquí  ·  Shift+Tab →  > ask  ·  Shift+Tab →  agente otra vez
 gpt-5.6-sol · auto · medium · 272k · 0%
 ```
@@ -26,7 +26,7 @@ Tras generar un plan, una terminal muestra un menú con flechas: ejecutar el pla
 
 Las conversaciones se guardan automáticamente tras cada turno en `~/.config/gxx/conversations/` (por workspace). `Ctrl+O` o `/history` abre un menú con flechas para cargar un hilo anterior. La pantalla no reproduce turnos antiguos; el contexto del modelo se restaura en memoria. `/clear` archiva el hilo actual e inicia uno nuevo.
 
-`/eco` también es solo de sesión. Pinta verde en el prompt como plan. `/eco` alterna; `/eco lite` `full` `ultra` fijan la intensidad (alias: 1/2/3). Eco nunca cambia el modelo. Comprime la entrada de la petición al estilo Caveman: elimina relleno, conserva código, rutas, URLs e identificadores. Las descripciones de herramientas también se reducen. Ultra también elimina el replay de razonamiento.
+`/eco` también es solo de sesión. Pinta verde en el prompt como plan. `/eco` alterna; `/eco lite` `full` `ultra` fijan la intensidad (alias: 1/2/3). Eco nunca cambia el modelo. Está desactivado por defecto. Conserva íntegros los mensajes que permanecen en el historial, las instrucciones del proyecto y las descripciones de skills y herramientas. El ahorro se concentra en resultados antiguos de herramientas y en los umbrales de compactación; las respuestas usan frases completas. Ultra también elimina el replay de razonamiento.
 
 ## Comandos
 
@@ -34,7 +34,7 @@ Las conversaciones se guardan automáticamente tras cada turno en `~/.config/gxx
 | --- | --- |
 | `/help` | Comandos |
 | `/model` | Modelos solo para la cuenta conectada · Tab para context, effort, fast |
-| `/eco` | Ahorrador de entrada Caveman · `lite` `full` `ultra` · verde en el prompt · solo sesión |
+| `/eco` | Ahorro de contexto · `lite` `full` `ultra` · verde en el prompt · solo sesión |
 | `/compact` | Resume turnos antiguos para liberar contexto · texto de enfoque opcional |
 | `/mode` | Permiso para **agente**: `ask` (confirmar escrituras y comandos) · `auto-writes` · `auto` |
 | `/config` | Guardar la OpenAI API key |
@@ -66,3 +66,9 @@ La línea de estado es modelo · modo de permiso · effort · tamaño de context
 Tras cada turno el footer añade USD estimado. Las tarifas se re-leen de las
 páginas oficiales de precios de OpenAI y Anthropic para que un cambio de precio
 se detecte sin una nueva release de gxx.
+
+## Continuidad y verificación
+
+La compactación conserva el objetivo, las correcciones posteriores, las restricciones, los criterios de aceptación, las verificaciones y sus resultados, y el siguiente paso. Si el resumen del modelo falla, gxx conserva extractos del inicio y el final e indica que la continuidad es parcial.
+
+Una revisión estática sin hallazgos no demuestra que la interfaz funcione o se vea correctamente. gxx debe usar pruebas relevantes y el navegador disponible cuando los permisos lo permitan, e indicar qué comprobaciones quedaron pendientes. Las capturas siguen requiriendo una petición explícita.

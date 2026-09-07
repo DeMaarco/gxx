@@ -67,8 +67,8 @@ func TestEcoLabelAndStatus(t *testing.T) {
 		Fast:    true,
 		Eco:     2,
 	})
-	if !strings.Contains(got, "eco full") || !strings.Contains(got, "caveman") {
-		t.Fatalf("status = %q, want eco full caveman", got)
+	if !strings.Contains(got, "eco full") || !strings.Contains(got, "instructions preserved") {
+		t.Fatalf("status = %q, want eco full with preserved instructions", got)
 	}
 	if strings.Contains(got, "gpt-5.6-sol") {
 		t.Fatalf("status = %q, eco must not mention sol", got)

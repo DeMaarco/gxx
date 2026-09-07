@@ -1677,7 +1677,7 @@ func TestReadFileStopsAroundByteBudget(t *testing.T) {
 	}
 }
 
-func TestReadFileSamplesDenseFilesAndRefusesPaging(t *testing.T) {
+func TestReadFilePaginatesDenseFiles(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, root, "min.css", strings.Repeat("a{x:1}", 2000)+"\n/* Footer styles */\n"+strings.Repeat("b{y:2}", 2000)+"\n")
 	registry := newTestRegistry(t, root, &staticApprover{}, tools.Options{
@@ -1694,8 +1694,8 @@ func TestReadFileSamplesDenseFilesAndRefusesPaging(t *testing.T) {
 	if first.IsError {
 		t.Fatalf("dense read failed: %s", first.Output)
 	}
-	if !strings.Contains(first.Output, "dense file") {
-		t.Fatalf("dense read = %q, want dense notice", first.Output)
+	if !strings.Contains(first.Output, "next offset_line=3") {
+		t.Fatalf("dense read = %q, want next range", first.Output)
 	}
 	if !strings.Contains(first.Output, "Footer styles") {
 		t.Fatalf("dense read = %q, want later comment markers", first.Output)
@@ -1705,17 +1705,30 @@ func TestReadFileSamplesDenseFilesAndRefusesPaging(t *testing.T) {
 	}
 	second := registry.Execute(context.Background(), []agent.ToolCall{
 		toolCall("read", "read_file", map[string]any{
-			"path": "min.css", "offset_line": 2, "limit_lines": nil,
+			"path": "min.css", "offset_line": 3, "limit_lines": nil,
 		}),
 	}, nil)[0]
 	if second.IsError {
 		t.Fatalf("dense page failed: %s", second.Output)
 	}
-	if !strings.Contains(second.Output, "Do not page") {
-		t.Fatalf("dense page = %q, want paging refusal", second.Output)
+	if !strings.Contains(second.Output, "b{y:2}") || !strings.Contains(second.Output, "end of file") {
+		t.Fatal("dense pagination did not reach the remaining source")
 	}
-	if len(second.Output) > 512 {
-		t.Fatalf("dense page length = %d, want a short refusal", len(second.Output))
+}
+
+func TestReadFileOversizedLineReportsOmissionAndAdvances(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, root, "long.txt", strings.Repeat("x", 20000)+"\nrequired-tail\n")
+	registry := newTestRegistry(t, root, &staticApprover{}, tools.Options{
+		MaxResultBytes: 64 * 1024, MaxSearchResult: 10, ParallelReads: 1, CommandTimeout: time.Second,
+	})
+	first := registry.Execute(context.Background(), []agent.ToolCall{toolCall("first", "read_file", map[string]any{"path": "long.txt", "offset_line": 1, "limit_lines": 10})}, nil)[0]
+	if first.IsError || !strings.Contains(first.Output, "remainder of that line omitted") || !strings.Contains(first.Output, "next offset_line=2") {
+		t.Fatal("oversized line did not provide an honest omission notice and advancing offset")
+	}
+	second := registry.Execute(context.Background(), []agent.ToolCall{toolCall("second", "read_file", map[string]any{"path": "long.txt", "offset_line": 2, "limit_lines": 10})}, nil)[0]
+	if second.IsError || !strings.Contains(second.Output, "required-tail") || !strings.Contains(second.Output, "end of file") {
+		t.Fatal("could not reach the line after an oversized line")
 	}
 }
 

@@ -5,6 +5,17 @@ description: What changed in each gxx release.
 
 Newest first. Install a pin with `--version` on the [install](../install/) script, or `gxx version` to see what you have.
 
+## v0.0.26
+
+Better context retention, more complete investigation, and repeatable quality checks.
+
+- Eco keeps your instructions, project rules, and skills intact while shortening older tool output.
+- Large and dense files can be read in successive chunks, and the agent can continue investigating until it has enough evidence.
+- Compaction keeps key constraints, acceptance criteria, verification results, and the next action in view.
+- Reviews distinguish static inspection from checks actually run, and call out pending tests or browser verification.
+- Developers can compare models and Eco levels with a 24-case evaluation suite, offline runs, and explicit budgets for live requests.
+- Refreshed the product website.
+
 ## v0.0.25
 
 More reliable file reads and commands.

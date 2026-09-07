@@ -35,7 +35,6 @@ import (
 
 	"gxx/internal/agent"
 	"gxx/internal/budget"
-	"gxx/internal/caveman"
 	"gxx/internal/config"
 )
 
@@ -288,9 +287,15 @@ func (p *Provider) Respond(
 				return result, err
 			}
 		}
+		finishRequest, observeErr := agent.BeginRequest(ctx, agent.Request{Provider: "openai", Model: string(params.Model), Kind: "response", Attempt: attempt + 1})
+		if observeErr != nil {
+			rollbackUserAppend()
+			return result, observeErr
+		}
 		requestContext, cancel := context.WithTimeout(ctx, timeout)
 		completed, raw, lastErr = streamResponse(requestContext, client, params, emit)
 		cancel()
+		finishRequest(usageFromResponse(completed), lastErr)
 		if lastErr == nil {
 			break
 		}
@@ -367,9 +372,9 @@ func (p *Provider) requestParamsLocked(
 		}, staged...)
 	}
 	params := responses.ResponseNewParams{
-		Model:             shared.ResponsesModel(p.model),
-		Instructions:      openaisdk.String(instructions),
-		Store:             openaisdk.Bool(false),
+		Model:        shared.ResponsesModel(p.model),
+		Instructions: openaisdk.String(instructions),
+		Store:        openaisdk.Bool(false),
 		// Responses Lite rejects parallel_tool_calls=true (HTTP 400).
 		ParallelToolCalls: openaisdk.Bool(!lite),
 		PromptCacheKey:    openaisdk.String(promptCacheKey(p.model, instructions)),
@@ -600,10 +605,6 @@ func toolParams(definitions []agent.ToolDefinition, eco int, strict, programmati
 	for _, definition := range definitions {
 		description := definition.Description
 		parameters := definition.Parameters
-		if eco > 0 {
-			description = caveman.Compress(description, eco)
-			parameters = compressToolParameters(parameters, eco)
-		}
 		function := responses.FunctionToolParam{
 			Name:        definition.Name,
 			Description: openaisdk.String(description),
@@ -618,17 +619,6 @@ func toolParams(definitions []agent.ToolDefinition, eco int, strict, programmati
 		params = append(params, responses.ToolUnionParam{OfFunction: &function})
 	}
 	return params
-}
-
-func compressToolParameters(parameters map[string]any, eco int) map[string]any {
-	if len(parameters) == 0 {
-		return parameters
-	}
-	compressed, ok := caveman.CompressDescriptions(cloneJSON(parameters), eco).(map[string]any)
-	if !ok {
-		return parameters
-	}
-	return compressed
 }
 
 func cloneJSON(value map[string]any) map[string]any {

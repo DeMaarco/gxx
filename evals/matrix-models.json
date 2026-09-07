@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "configurations": [
+    {
+      "id": "openai-medium",
+      "provider": "openai",
+      "model": "gpt-5.6-sol",
+      "effort": "medium",
+      "context": "272k",
+      "eco": 0
+    },
+    {
+      "id": "openai-high",
+      "provider": "openai",
+      "model": "gpt-5.6-sol",
+      "effort": "high",
+      "context": "272k",
+      "eco": 0
+    },
+    {
+      "id": "claude-medium",
+      "provider": "anthropic",
+      "model": "claude-sonnet-5",
+      "effort": "medium",
+      "context": "300k",
+      "eco": 0
+    }
+  ]
+}

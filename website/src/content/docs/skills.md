@@ -53,3 +53,5 @@ Instructions go here.
 ## Privacy
 
 The catalog on every turn, and any skill body or file loaded via `read_skill`, go to the active provider. See [Privacy](../privacy/).
+
+Skill descriptions remain intact at every Eco level. Post-edit static checks are partial; unavailable tests or browser checks must be reported.

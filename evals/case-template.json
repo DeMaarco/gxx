@@ -1,0 +1,16 @@
+{
+  "id": "regression-example",
+  "category": "investigation",
+  "fixture": { "value.txt": "expected-value\n" },
+  "mode": "ask",
+  "permission": "ask",
+  "turns": [{ "prompt": "Read value.txt and report its exact value without changing any files." }],
+  "checks": [
+    { "kind": "final_answer_contains", "want": "expected-value" },
+    { "kind": "file_unchanged", "path": "value.txt" }
+  ],
+  "script": [
+    { "ToolCalls": [{ "id": "read", "name": "read_file", "arguments": { "path": "value.txt", "offset_line": 1, "limit_lines": 10 } }] },
+    { "Text": "expected-value" }
+  ]
+}

@@ -889,7 +889,7 @@ func TestRunREPLAppliesEcoCommand(t *testing.T) {
 	}
 	text := output.String()
 	for _, expected := range []string{
-		"eco full · caveman input · model unchanged",
+		"eco full · instructions preserved · model unchanged",
 		"* eco full",
 		"eco off",
 		"> eco full",

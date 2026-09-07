@@ -4,7 +4,7 @@ description: Keyboard shortcuts, session modes, and slash commands.
 ---
 
 ```text
-◆ gxx  v0.0.25     badge and version
+◆ gxx  v0.0.26     badge and version
 >                 type here  ·  Shift+Tab →  > ask  ·  Shift+Tab →  agent again
 gpt-5.6-sol · auto · medium · 272k · 0%
 ```
@@ -26,7 +26,7 @@ After a plan is generated, a terminal shows an arrow-key menu: execute the plan,
 
 Conversations are saved automatically after each turn to `~/.config/gxx/conversations/` (per workspace). `Ctrl+O` or `/history` opens an arrow-key menu to load a previous thread. The screen does not replay old turns; the model context is restored in memory. `/clear` archives the current thread and starts a new one.
 
-`/eco` is also session-only. It paints green on the prompt like plan. `/eco` toggles; `/eco lite` `full` `ultra` set the strength (aliases: 1/2/3). Eco never changes the model. It compresses request input the way Caveman does: drop filler, keep code, paths, URLs, and identifiers. Tool descriptions shrink too. Ultra also drops reasoning replay.
+`/eco` is also session-only. It paints green on the prompt like plan. `/eco` toggles; `/eco lite` `full` `ultra` set the strength (aliases: 1/2/3). Eco never changes the model. It is off by default. Retained user messages, project instructions, and skill and tool descriptions stay intact. Savings come from older tool results and compaction thresholds; answers use complete sentences. Ultra also drops reasoning replay.
 
 ## Commands
 
@@ -34,7 +34,7 @@ Conversations are saved automatically after each turn to `~/.config/gxx/conversa
 | --- | --- |
 | `/help` | Commands |
 | `/model` | Models for the connected account only · Tab for context, effort, fast |
-| `/eco` | Caveman input saver · `lite` `full` `ultra` · green on the prompt · session-only |
+| `/eco` | Context saver · `lite` `full` `ultra` · green on the prompt · session-only |
 | `/compact` | Summarize older turns to free context · optional focus text |
 | `/mode` | Permission for **agent**: `ask` (confirm writes and commands) · `auto-writes` · `auto` |
 | `/config` | Save the OpenAI API key |
@@ -66,3 +66,9 @@ The status line is model · permission mode · effort · context size · window 
 After each turn the footer adds estimated USD. Rates are re-read from the
 official OpenAI and Anthropic pricing pages so a price change is picked up
 without a new gxx release.
+
+## Continuity and verification
+
+Compaction carries the goal, later corrections, constraints, acceptance criteria, verification outcomes, and next action. If the model summary fails, gxx retains beginning and ending excerpts and reports partial continuity.
+
+A static review with no findings does not establish correct behavior or appearance. gxx should use relevant tests and the available browser when permissions allow, and report checks that remain pending. Screenshots still require an explicit request.

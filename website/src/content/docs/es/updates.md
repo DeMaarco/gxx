@@ -5,6 +5,17 @@ description: Qué cambió en cada release de gxx.
 
 Lo más nuevo primero. Fija una versión con `--version` en el script de [instalación](../install/), o `gxx version` para ver la tuya.
 
+## v0.0.26
+
+Mejor conservación del contexto, investigación más completa y comprobaciones de calidad repetibles.
+
+- Eco conserva tus instrucciones, las reglas del proyecto y las skills mientras acorta resultados antiguos de herramientas.
+- Los archivos grandes y densos se pueden leer por tramos, y el agente puede seguir investigando hasta reunir evidencia suficiente.
+- La compactación mantiene presentes las restricciones, los criterios de aceptación, las verificaciones y la siguiente acción.
+- Las revisiones distinguen la inspección estática de las comprobaciones ejecutadas e indican los tests o la verificación en navegador pendientes.
+- Los desarrolladores pueden comparar modelos y niveles de Eco con una suite de 24 casos, ejecuciones offline y presupuestos explícitos para peticiones reales.
+- Web del producto renovada.
+
 ## v0.0.25
 
 Lecturas de archivos y comandos más fiables.

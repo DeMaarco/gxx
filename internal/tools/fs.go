@@ -112,7 +112,7 @@ func (r *Registry) readFileSpec() toolSpec {
 	return toolSpec{
 		definition: agent.ToolDefinition{
 			Name:        "read_file",
-			Description: "Read a range of lines from a workspace-relative text file. Lines are returned with line numbers. Default reads stop around 12KB. Minified or densely packed files are sampled once; use search_files for a selector instead of paging with offset_line. Prefer search_files for a selector in a large CSS, JSON, or lockfile.",
+			Description: "Read a range of lines from a workspace-relative text file. Lines are returned with line numbers. Default reads stop around 12KB. Use next offset_line to read another relevant range, including dense files. Oversized lines are clipped with an explicit omission notice; use search_files for a specific token within them. Prefer search_files for a selector in a large CSS, JSON, or lockfile.",
 			ReadOnly:    true,
 			Parameters: objectSchema(map[string]any{
 				"path": map[string]any{
@@ -640,14 +640,6 @@ func (r *Registry) readFile(ctx context.Context, raw json.RawMessage) (string, e
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
 		return "", err
 	}
-	dense, size := fileLooksDense(file)
-	if dense && offset > 1 {
-		kb := (size + 1023) / 1024
-		if kb < 1 {
-			kb = 1
-		}
-		return fmt.Sprintf("%s is dense (%dKB). Do not page it; this file was already sampled.", args.Path, kb), nil
-	}
 
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
@@ -657,6 +649,7 @@ func (r *Registry) readFile(ctx context.Context, raw json.RawMessage) (string, e
 	written := 0
 	stoppedEarly := false
 	stoppedBytes := false
+	clippedLine := false
 	for scanner.Scan() {
 		if err := ctx.Err(); err != nil {
 			return "", err
@@ -677,6 +670,7 @@ func (r *Registry) readFile(ctx context.Context, raw json.RawMessage) (string, e
 		}
 		if len(line) > budget && written == 0 {
 			line = clipToBytes(line, budget)
+			clippedLine = true
 			stoppedBytes = true
 			stoppedEarly = true
 		}
@@ -696,8 +690,8 @@ func (r *Registry) readFile(ctx context.Context, raw json.RawMessage) (string, e
 	if stoppedEarly {
 		nextOffset := lineNumber
 		if stoppedBytes {
-			if dense {
-				return body + denseFileSuffix(scanner, lineNumber, size), nil
+			if clippedLine {
+				return fmt.Sprintf("%s\n… line %d exceeds the read byte limit; remainder of that line omitted. Use search_files for a specific token; next offset_line=%d", body, lineNumber, lineNumber+1), nil
 			}
 			return fmt.Sprintf(
 				"%s\n… truncated at %dKB; prefer search_files for more of this file; next offset_line=%d",
@@ -709,40 +703,6 @@ func (r *Registry) readFile(ctx context.Context, raw json.RawMessage) (string, e
 		return fmt.Sprintf("%s\n… more lines follow; next offset_line=%d", body, nextOffset), nil
 	}
 	return fmt.Sprintf("%s\n(end of file, %d lines)", body, lineNumber), nil
-}
-
-func denseFileSuffix(scanner *bufio.Scanner, startLine int, size int64) string {
-	kb := (size + 1023) / 1024
-	if kb < 1 {
-		kb = 1
-	}
-	var extra strings.Builder
-	fmt.Fprintf(&extra, "\n… dense file (%dKB). Later markers:", kb)
-	n := 0
-	lineNumber := startLine
-	for scanner.Scan() {
-		lineNumber++
-		text := scanner.Text()
-		idx := strings.Index(text, "/*")
-		if idx < 0 {
-			continue
-		}
-		marker := strings.TrimSpace(text[idx:])
-		if end := strings.Index(marker, "*/"); end >= 0 {
-			marker = marker[:end+2]
-		} else {
-			marker = truncateLine(marker, 80)
-		}
-		fmt.Fprintf(&extra, "\n%d %s", lineNumber, marker)
-		n++
-		if n >= 20 {
-			break
-		}
-	}
-	if n == 0 {
-		return fmt.Sprintf("\n… dense file (%dKB); this sample is enough to summarize", kb)
-	}
-	return extra.String()
 }
 
 func clipToBytes(value string, limit int) string {

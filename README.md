@@ -154,7 +154,7 @@ model · permission · effort · context size · how full the window is
 
 Drop an `AGENTS.md` in the project root if you want extra project notes loaded every turn. Those notes cannot override gxx safety rules.
 
-Agent Skills (`SKILL.md` under `.agents/skills`, `.gxx/skills`, or `~/.config/gxx/skills`) load as a name+description catalog each turn; `read_skill` fetches the body first when a skill matches. `/<name> <request>` forces that. After each write, `review_file` checks the file. See the [Skills](https://demaarco.github.io/gxx/skills/) docs.
+Agent Skills (`SKILL.md` under `.agents/skills`, `.gxx/skills`, or `~/.config/gxx/skills`) load as a name+description catalog each turn; `read_skill` fetches the body first when a skill matches. `/<name> <request>` forces that. After each write, `review_file` performs partial static checks. Relevant tests and available browser checks provide additional verification; missing checks are reported. See the [Skills](https://demaarco.github.io/gxx/skills/) docs.
 
 ---
 
@@ -166,7 +166,7 @@ Agent Skills (`SKILL.md` under `.agents/skills`, `.gxx/skills`, or `~/.config/gx
 | **Ask / Plan built in** | Read-only modes with one key (`Shift+Tab`). Plan ends with a clear menu: execute, revise, or cancel. |
 | **Secret-aware** | `.env`, keys, and credential paths are blocked on read, search, patch, git, and shell. |
 | **Honest cost line** | After each turn, an estimated USD cost — rates refreshed from official OpenAI and Anthropic pricing. |
-| **Eco mode** | `/eco` shrinks filler in requests (keeps code, paths, URLs) to save tokens. Session-only. |
+| **Eco mode** | `/eco` trims older tool output and adjusts compaction while preserving user requests, project instructions, skill descriptions, and tool contracts. Session-only; off by default. |
 | **Plain terminal** | No heavy TUI. A prompt, a status line, slash commands. Works over SSH. |
 | **OpenAI or Claude** | API key, ChatGPT login, or Claude Pro/Max — pick what you already have. |
 
@@ -190,7 +190,7 @@ gxx version
 Pin a version or install path:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/DeMaarco/gxx/main/install.sh | sh -s -- --version v0.0.25
+curl -fsSL https://raw.githubusercontent.com/DeMaarco/gxx/main/install.sh | sh -s -- --version v0.0.26
 curl -fsSL https://raw.githubusercontent.com/DeMaarco/gxx/main/install.sh | sh -s -- --dir /usr/local/bin
 ```
 
@@ -200,7 +200,7 @@ curl -fsSL https://raw.githubusercontent.com/DeMaarco/gxx/main/install.sh | sh -
 irm https://raw.githubusercontent.com/DeMaarco/gxx/main/install.ps1 | iex
 ```
 
-Installs to `%LOCALAPPDATA%\gxx` and puts that folder on your PATH. Pin a version with `$env:GXX_VERSION = "v0.0.25"` before running the installer.
+Installs to `%LOCALAPPDATA%\gxx` and puts that folder on your PATH. Pin a version with `$env:GXX_VERSION = "v0.0.26"` before running the installer.
 
 `run_command` uses PowerShell. Git tools need [Git for Windows](https://git-scm.com/download/win). Config lives in `%APPDATA%\gxx\config.json`.
 
@@ -312,3 +312,13 @@ go test ./test/...
 Copyright 2026 DeMarco
 
 Licensed under the [Apache License, Version 2.0](LICENSE).
+
+## Development evaluations
+
+The development runner uses the production agent loop, tools, and provider adapters with a new temporary workspace for every trial:
+
+```sh
+go run ./cmd/gxx-eval --trials 1 --out eval-results-smoke
+```
+
+The default is an offline simulation of 24 cases; it checks orchestration and graders, not model quality. Real model comparisons require `--live`, `--max-tokens`, and `--max-requests`. CI only runs offline tests. See [the evaluation guide](evals/README.md) ([español](evals/README.es.md)) for matrices, budgets, reports, and adding regression cases.

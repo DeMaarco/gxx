@@ -27,7 +27,7 @@ type slashCommand struct {
 var slashCommands = []slashCommand{
 	{name: "/help", help: "Show this help"},
 	{name: "/model", help: "Select model, context size, effort, and fast"},
-	{name: "/eco", help: "Caveman input saver: lite, full, ultra"},
+	{name: "/eco", help: "Context saver: lite, full, ultra; instructions preserved"},
 	{name: "/compact", help: "Summarize older turns to free context"},
 	{name: "/mode", help: "Select permission mode for agent: ask, auto-writes, or auto"},
 	{name: "/skills", help: "List discovered Agent Skills"},

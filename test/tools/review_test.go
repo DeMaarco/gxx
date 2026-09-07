@@ -56,7 +56,7 @@ func TestReviewFileFlagsHTMLDefects(t *testing.T) {
 		"in-page link #missing has no matching id",
 		"3 in-page links share the same target #carta",
 		"Think through remaining defects",
-		"do not skip it because there are no automated tests",
+		"Partial static checks only",
 	} {
 		if !strings.Contains(result.Output, want) {
 			t.Fatalf("review = %q, want %q", result.Output, want)

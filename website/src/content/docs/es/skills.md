@@ -53,3 +53,5 @@ Las instrucciones van aquí.
 ## Privacidad
 
 El catálogo en cada turno, y cualquier cuerpo o fichero de skill cargado con `read_skill`, van al proveedor activo. Ver [Privacidad](../privacy/).
+
+La descripción de cada skill se conserva íntegra en todos los niveles Eco. Las comprobaciones estáticas posteriores a una edición son parciales; las pruebas o comprobaciones de navegador que falten deben indicarse.

@@ -25,7 +25,6 @@ import (
 
 	"gxx/internal/agent"
 	"gxx/internal/budget"
-	"gxx/internal/caveman"
 )
 
 func decodeOpenAIHistory(raw json.RawMessage) ([]responses.ResponseInputItemUnionParam, error) {
@@ -61,9 +60,9 @@ func decodeOpenAIHistory(raw json.RawMessage) ([]responses.ResponseInputItemUnio
 }
 
 const (
-	compactNotice          = budget.CompactNotice
-	unansweredToolOutput   = "error: tool call was not executed"
-	compactSummaryMaxBytes = budget.SummaryMaxBytes
+	compactNotice           = budget.CompactNotice
+	unansweredToolOutput    = "error: tool call was not executed"
+	compactSummaryMaxBytes  = budget.SummaryMaxBytes
 	compactSummaryClipRunes = budget.SummaryClipRunes
 )
 
@@ -239,12 +238,10 @@ func slimInput(items []responses.ResponseInputItemUnionParam, level, keep, clip 
 	if level <= 0 {
 		return items
 	}
-	items = compressInputProse(items, level)
 	switch {
 	case level >= 3:
 		items = dropAllReasoning(items)
 		items = clipOldToolOutputs(items, keep, clip)
-		items = clipOldUserMessages(items, 1, 400)
 	case level >= 2:
 		items = keepLatestReasoning(items)
 		items = clipOldToolOutputs(items, keep, clip)
@@ -252,41 +249,6 @@ func slimInput(items []responses.ResponseInputItemUnionParam, level, keep, clip 
 		items = clipOldToolOutputs(items, keep, clip)
 	}
 	return items
-}
-
-func compressInputProse(items []responses.ResponseInputItemUnionParam, level int) []responses.ResponseInputItemUnionParam {
-	lastUser := -1
-	for index, item := range items {
-		if itemKind(item) == "user" {
-			lastUser = index
-		}
-	}
-	out := append([]responses.ResponseInputItemUnionParam(nil), items...)
-	for index, item := range out {
-		if index == lastUser {
-			continue
-		}
-		if text := userMessageText(item); text != "" {
-			compressed := caveman.Compress(text, level)
-			if compressed != text {
-				out[index] = responses.ResponseInputItemParamOfMessage(
-					compressed,
-					responses.EasyInputMessageRoleUser,
-				)
-			}
-			continue
-		}
-		id, _, isOutput := functionCallID(item)
-		if !isOutput {
-			continue
-		}
-		text := functionCallOutput(item)
-		compressed := caveman.Compress(text, level)
-		if compressed != text {
-			out[index] = functionCallOutputParam(id, compressed)
-		}
-	}
-	return out
 }
 
 func clipOldToolOutputs(items []responses.ResponseInputItemUnionParam, keep, maxBytes int) []responses.ResponseInputItemUnionParam {

@@ -63,9 +63,11 @@ func (p *Provider) compactSession(ctx context.Context, emit agent.EmitFunc, focu
 	baseURL := p.baseURL
 	p.mu.Unlock()
 
-	summary := heuristic
+	summary := heuristic + "\n" + compact.FallbackSummary(transcript)
+	usedFallback := true
 	if text, usage, sumErr := summarizeWithClaude(ctx, token, model, timeout, httpClient, baseURL, transcript, focus); sumErr == nil && strings.TrimSpace(text) != "" {
 		summary = compact.NoticeWithSummary(text)
+		usedFallback = false
 		p.mu.Lock()
 		if p.generation == generation {
 			p.session.Add(usage)
@@ -76,6 +78,9 @@ func (p *Provider) compactSession(ctx context.Context, emit agent.EmitFunc, focu
 		return sumErr
 	}
 
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	defer p.refreshContextLocked()
@@ -85,7 +90,11 @@ func (p *Provider) compactSession(ctx context.Context, emit agent.EmitFunc, focu
 	notice := anthropicsdk.NewUserMessage(anthropicsdk.NewTextBlock(summary))
 	p.history = append([]anthropicsdk.MessageParam{notice}, kept...)
 	p.lastInputTokens = historyTokens(p.history, p.instructions)
-	agent.Emit(emit, agent.Event{Kind: agent.EventNotice, Text: compactNotice})
+	noticeText := compactNotice
+	if usedFallback {
+		noticeText += " Model summary unavailable; continuity is partial."
+	}
+	agent.Emit(emit, agent.Event{Kind: agent.EventNotice, Text: noticeText})
 	return nil
 }
 
@@ -131,7 +140,7 @@ func renderAnthropicTranscript(messages []anthropicsdk.MessageParam) string {
 			case block.OfToolResult != nil:
 				out := toolResultOutput(block)
 				if len(out) > 800 {
-					out = clipBytes(out, 800) + "\n… [clipped]"
+					out = compact.SelectTranscript(out, 800)
 				}
 				fmt.Fprintf(&b, "[tool_result %s]\n%s\n", block.OfToolResult.ToolUseID, out)
 			case block.OfThinking != nil:
@@ -203,9 +212,14 @@ func summarizeWithClaude(
 				return "", usage, err
 			}
 		}
+		finishRequest, observeErr := agent.BeginRequest(ctx, agent.Request{Provider: "anthropic", Model: model, Kind: "summary", Attempt: attempt + 1})
+		if observeErr != nil {
+			return "", usage, observeErr
+		}
 		requestContext, cancel := context.WithTimeout(ctx, timeout)
 		message, raw, lastErr = streamOnce(requestContext)
 		cancel()
+		finishRequest(usageFromMessage(message), lastErr)
 		if lastErr == nil {
 			break
 		}

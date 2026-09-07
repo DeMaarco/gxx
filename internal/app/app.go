@@ -42,13 +42,14 @@ import (
 	"gxx/internal/models"
 	openaiProvider "gxx/internal/openai"
 	"gxx/internal/pricing"
+	"gxx/internal/session"
 	"gxx/internal/skills"
 	"gxx/internal/tools"
 	"gxx/internal/ui"
 	"gxx/internal/workspace"
 )
 
-var Version = "0.0.25"
+var Version = "0.0.26"
 
 type runtime struct {
 	config    config.Config
@@ -578,29 +579,12 @@ func newRuntimeFromConfig(
 		})
 	}
 	policy := approval.NewPolicy(settings.PermissionMode, prompt)
-	registry := tools.NewRegistry(ws, policy, tools.Options{
-		MaxResultBytes:  settings.MaxToolResultBytes,
-		MaxSearchResult: settings.MaxSearchResults,
-		ParallelReads:   settings.ParallelReads,
-		CommandTimeout:  settings.CommandTimeout,
-	})
-	registry.SetSkillsCatalog(func() []skills.Skill {
-		userDir, err := config.UserSkillsDir()
-		if err != nil {
-			return skills.Discover(ws, "")
-		}
-		return skills.Discover(ws, userDir)
-	})
-	model, err := newBackend(settings, ws)
+	core, err := session.New(settings, ws, policy, session.Options{})
 	if err != nil {
 		return nil, err
 	}
-	loop := &agent.Loop{
-		Model:    model,
-		Executor: registry,
-		MaxSteps: settings.MaxSteps,
-		Overview: registry.WorkspaceOverview,
-	}
+	registry, model, loop := core.Registry, core.Backend, core.Loop
+
 	renderer := ui.NewRendererWithColor(stdout, ui.ColorEnabled(stdout))
 	prompt.SetHold(func() func() {
 		renderer.HoldForPrompt()
@@ -616,12 +600,7 @@ func newRuntimeFromConfig(
 		policy:    policy,
 		registry:  registry,
 	}
-	loop.ProjectContext = func() string {
-		return agent.ProjectContext(ws, rt.eco)
-	}
-	loop.SkillsContext = func() string {
-		return agent.SkillsContext(ws, rt.eco)
-	}
+
 	if store, err := conversations.NewStore(); err == nil {
 		rt.conversationStore = store
 	}
@@ -856,51 +835,7 @@ func terminalFile(reader io.Reader) *os.File {
 }
 
 func newBackend(settings config.Config, ws *workspace.Workspace) (agent.Backend, error) {
-	instructions := ""
-	if ws != nil {
-		instructions = agent.SystemPromptWithOptions(ws, false, false, 0)
-	}
-	switch config.ProviderForModel(settings.Model) {
-	case config.ProviderAnthropic:
-		provider := anthropicProvider.New(
-			claude.NewSource(nil),
-			settings.Model,
-			instructions,
-			settings.APITimeout,
-		)
-		provider.SetEffort(settings.Effort)
-		provider.SetContext(settings.Context)
-		provider.SetFast(settings.Fast)
-		return provider, nil
-	default:
-		var provider *openaiProvider.Provider
-		if settings.HasOpenAIAPIKey() {
-			provider = openaiProvider.New(
-				settings.APIKey,
-				settings.Model,
-				instructions,
-				settings.APITimeout,
-			)
-		} else if strings.TrimSpace(settings.OpenAITokens.AccessToken) != "" {
-			provider = openaiProvider.NewWithSource(
-				openaiAuth.NewSource(nil),
-				settings.Model,
-				instructions,
-				settings.APITimeout,
-			)
-		} else {
-			provider = openaiProvider.New(
-				"",
-				settings.Model,
-				instructions,
-				settings.APITimeout,
-			)
-		}
-		provider.SetEffort(settings.Effort)
-		provider.SetContext(settings.Context)
-		provider.SetFast(settings.Fast)
-		return provider, nil
-	}
+	return session.NewBackend(settings, ws)
 }
 
 func (rt *runtime) swapBackend() error {

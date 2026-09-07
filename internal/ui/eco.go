@@ -68,17 +68,17 @@ func formatEcoStatus(settings REPLSettings) string {
 	if settings.Eco <= 0 {
 		return "eco off"
 	}
-	return ecoLabel(settings.Eco) + " · caveman input · model unchanged"
+	return ecoLabel(settings.Eco) + " · instructions preserved · model unchanged"
 }
 
 func ecoHelp(level int) string {
 	switch level {
 	case 1:
-		return "lite · drop filler/hedging · compress tool prose · keep articles"
+		return "lite · trim older tool output · preserve instructions"
 	case 2:
-		return "full · drop articles · caveman · compress tools and old prompts"
+		return "full · trim more old output · earlier compaction · preserve instructions"
 	case 3:
-		return "ultra · strip extra phrases · no reasoning replay · smallest payloads"
+		return "ultra · smallest old output · no reasoning replay · preserve instructions"
 	default:
 		return "off · send full conversation input"
 	}

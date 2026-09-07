@@ -308,9 +308,15 @@ func (p *Provider) Respond(
 				return result, err
 			}
 		}
+		finishRequest, observeErr := agent.BeginRequest(ctx, agent.Request{Provider: "anthropic", Model: string(params.Model), Kind: "response", Attempt: attempt + 1})
+		if observeErr != nil {
+			rollbackUserAppend()
+			return result, observeErr
+		}
 		requestContext, cancel := context.WithTimeout(ctx, timeout)
 		message, raw, lastErr = p.stream(requestContext, client, params, emit)
 		cancel()
+		finishRequest(usageFromMessage(message), lastErr)
 		if lastErr == nil {
 			break
 		}
