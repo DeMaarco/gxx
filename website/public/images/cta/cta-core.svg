@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 700" fill="none">
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="50%" r="68%"><stop stop-color="#152229"/><stop offset=".46" stop-color="#070d11"/><stop offset="1" stop-color="#030405"/></radialGradient>
+    <radialGradient id="core"><stop stop-color="#dffffb"/><stop offset=".12" stop-color="#67f4e6"/><stop offset=".32" stop-color="#4a8fff" stop-opacity=".42"/><stop offset="1" stop-color="#141c29" stop-opacity="0"/></radialGradient>
+    <filter id="blur"><feGaussianBlur stdDeviation="28"/></filter>
+    <pattern id="grid" width="44" height="44" patternUnits="userSpaceOnUse"><path d="M44 0H0V44" stroke="#c4d2d8" stroke-opacity=".07"/></pattern>
+  </defs>
+  <rect width="1200" height="700" fill="url(#bg)"/><rect width="1200" height="700" fill="url(#grid)"/>
+  <ellipse cx="602" cy="350" rx="220" ry="190" fill="url(#core)" filter="url(#blur)"/>
+  <g stroke="#8df8ef" stroke-opacity=".55"><ellipse cx="602" cy="350" rx="238" ry="94" transform="rotate(-18 602 350)"/><ellipse cx="602" cy="350" rx="238" ry="94" transform="rotate(54 602 350)"/><circle cx="602" cy="350" r="156" stroke-dasharray="2 18"/></g>
+  <g transform="translate(602 350)"><path d="M0-120 100-58 86 64 0 120-86 64-100-58Z" fill="#0d171c" stroke="#cfe4e6" stroke-opacity=".72" stroke-width="3"/><circle r="58" fill="url(#core)"/><circle r="13" fill="#effffb"/><path d="M-128 0h42m172 0h42M0-146v42m0 172v42" stroke="#d1fffa" stroke-width="3"/></g>
+  <g fill="#bcfff7"><circle cx="166" cy="160" r="3"/><circle cx="1000" cy="204" r="4"/><circle cx="946" cy="544" r="3"/><circle cx="220" cy="560" r="4"/></g>
+</svg>

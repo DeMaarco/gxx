@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 900" fill="none">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#111b20"/><stop offset=".55" stop-color="#071014"/><stop offset="1" stop-color="#030506"/></linearGradient>
+    <linearGradient id="wire" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#6bf4e6"/><stop offset="1" stop-color="#8877ff"/></linearGradient>
+    <filter id="glow"><feGaussianBlur stdDeviation="10"/></filter>
+    <pattern id="grid" width="42" height="42" patternUnits="userSpaceOnUse"><path d="M42 0H0V42" stroke="#adbec5" stroke-opacity=".09"/></pattern>
+  </defs>
+  <rect width="1200" height="900" fill="url(#bg)"/><rect width="1200" height="900" fill="url(#grid)"/>
+  <path d="M100 684 520 502 1085 620 690 828Z" fill="#0d181d" stroke="#8df8ef" stroke-opacity=".3"/>
+  <path d="M100 684 100 720 690 868 1085 658 1085 620" stroke="#a2b4bb" stroke-opacity=".2"/>
+  <g stroke="url(#wire)" stroke-width="2" stroke-opacity=".7"><path d="M190 614 338 428 512 540 654 334 850 462 1012 304"/><path d="M338 428 390 224 654 334"/><path d="M512 540 574 252 850 462"/><path d="M654 334 754 166 1012 304"/></g>
+  <g fill="#a8fff6"><circle cx="190" cy="614" r="7"/><circle cx="338" cy="428" r="6"/><circle cx="512" cy="540" r="7"/><circle cx="654" cy="334" r="8"/><circle cx="850" cy="462" r="6"/><circle cx="1012" cy="304" r="8"/><circle cx="390" cy="224" r="4"/><circle cx="574" cy="252" r="4"/><circle cx="754" cy="166" r="4"/></g>
+  <g fill="#152329" stroke="#9feee9" stroke-opacity=".35"><rect x="146" y="560" width="118" height="74" rx="8" transform="rotate(-24 146 560)"/><rect x="470" y="498" width="124" height="72" rx="8" transform="rotate(19 470 498)"/><rect x="608" y="292" width="124" height="72" rx="8" transform="rotate(-18 608 292)"/><rect x="810" y="422" width="124" height="72" rx="8" transform="rotate(18 810 422)"/></g>
+  <g stroke="#89f8f0" stroke-opacity=".16" fill="none"><ellipse cx="604" cy="478" rx="462" ry="210" transform="rotate(-12 604 478)"/><ellipse cx="604" cy="478" rx="520" ry="266" transform="rotate(24 604 478)"/></g>
+  <ellipse cx="650" cy="490" rx="230" ry="110" fill="#3be1d8" fill-opacity=".12" filter="url(#glow)"/>
+</svg>

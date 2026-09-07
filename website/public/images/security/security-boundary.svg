@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 900" fill="none">
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="45%" r="70%"><stop stop-color="#1b202e"/><stop offset=".44" stop-color="#0b0f16"/><stop offset="1" stop-color="#030506"/></radialGradient>
+    <linearGradient id="bar" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#ff5f7a"/><stop offset=".5" stop-color="#ffb35e"/><stop offset="1" stop-color="#f6ffad"/></linearGradient>
+    <filter id="glow"><feGaussianBlur stdDeviation="16"/></filter>
+    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse"><path d="M40 0H0V40" stroke="#c6ccd6" stroke-opacity=".07"/></pattern>
+  </defs>
+  <rect width="1200" height="900" fill="url(#bg)"/><rect width="1200" height="900" fill="url(#grid)"/>
+  <ellipse cx="848" cy="440" rx="230" ry="200" fill="#ff657b" fill-opacity=".13" filter="url(#glow)"/>
+  <g stroke="#a8b7c2" stroke-opacity=".22" fill="#131b23"><path d="M660 208 1018 302 984 696 626 604Z"/><path d="M708 258 962 325 940 640 686 574Z"/></g>
+  <g stroke="url(#bar)" stroke-width="5" stroke-opacity=".9"><path d="M676 240 1004 326 976 664 648 578Z"/><path d="M764 236 736 604M854 260 826 628M944 284 916 652"/></g>
+  <g fill="#141d25" stroke="#ff8c98" stroke-opacity=".72"><rect x="218" y="300" width="188" height="104" rx="10" transform="rotate(-12 218 300)"/><rect x="264" y="456" width="188" height="104" rx="10" transform="rotate(7 264 456)"/><rect x="332" y="610" width="188" height="104" rx="10" transform="rotate(-8 332 610)"/></g>
+  <g stroke="#ff758b" stroke-width="3" stroke-dasharray="10 16" stroke-opacity=".7"><path d="M406 366 668 400"/><path d="M440 506 664 482"/><path d="M508 646 652 564"/></g>
+  <g fill="#ffe5e8" font-family="monospace" font-size="18"><text x="270" y="354">.env</text><text x="320" y="516">id_rsa</text><text x="378" y="670">credentials</text></g>
+  <g fill="#ffb3be"><circle cx="550" cy="386" r="5"/><circle cx="594" cy="476" r="5"/><circle cx="614" cy="564" r="5"/></g>
+  <g stroke="#fff" stroke-opacity=".18" fill="none"><circle cx="824" cy="450" r="282" stroke-dasharray="3 18"/><circle cx="824" cy="450" r="326" stroke-dasharray="1 24"/></g>
+</svg>

@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 900" fill="none">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#101923"/><stop offset=".5" stop-color="#071014"/><stop offset="1" stop-color="#040506"/></linearGradient>
+    <linearGradient id="stream" x1="0" y1="0" x2="1" y2="0"><stop stop-color="#8cf8ef"/><stop offset=".55" stop-color="#73a7ff"/><stop offset="1" stop-color="#bd75ff"/></linearGradient>
+    <filter id="glow"><feGaussianBlur stdDeviation="18"/></filter>
+    <pattern id="grid" width="44" height="44" patternUnits="userSpaceOnUse"><path d="M44 0H0V44" stroke="#c7d1d7" stroke-opacity=".08"/></pattern>
+  </defs>
+  <rect width="1200" height="900" fill="url(#bg)"/><rect width="1200" height="900" fill="url(#grid)"/>
+  <path d="M124 462C244 204 380 726 538 434S780 152 1070 482" stroke="url(#stream)" stroke-width="26" stroke-opacity=".14" filter="url(#glow)"/>
+  <path d="M124 462C244 204 380 726 538 434S780 152 1070 482" stroke="url(#stream)" stroke-width="3" stroke-dasharray="3 16"/>
+  <g stroke="#a5faf2" stroke-opacity=".5"><path d="M164 460h144m-72-72v144"/><path d="M486 422h170m-85-85v170"/><path d="M840 322h160m-80-80v160"/></g>
+  <g fill="#101b21" stroke="#8df7ee" stroke-opacity=".5"><circle cx="164" cy="460" r="48"/><circle cx="570" cy="434" r="64"/><circle cx="920" cy="342" r="88"/></g>
+  <g fill="#d7fffb"><circle cx="164" cy="460" r="7"/><circle cx="570" cy="434" r="8"/><circle cx="920" cy="342" r="10"/></g>
+  <g font-family="monospace" font-size="15" fill="#c8d7dc" letter-spacing="2"><text x="128" y="555">PROMPT</text><text x="522" y="536">CONTEXT</text><text x="882" y="468">MODEL</text><text x="956" y="718">ACTION</text></g>
+  <path d="M920 342 1054 492 956 710" stroke="#c17aff" stroke-width="2" stroke-dasharray="8 14" opacity=".75"/>
+  <g fill="#bb86ff" fill-opacity=".9"><circle cx="1054" cy="492" r="4"/><circle cx="956" cy="710" r="5"/></g>
+</svg>

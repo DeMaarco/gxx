@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1200" fill="none">
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="46%" r="64%"><stop stop-color="#18242e"/><stop offset=".46" stop-color="#0a1015"/><stop offset="1" stop-color="#030506"/></radialGradient>
+    <radialGradient id="core" cx="50%" cy="50%"><stop stop-color="#d8fbff"/><stop offset=".12" stop-color="#55f4e4" stop-opacity=".96"/><stop offset=".38" stop-color="#0faaa9" stop-opacity=".58"/><stop offset="1" stop-color="#0b727d" stop-opacity="0"/></radialGradient>
+    <linearGradient id="metal" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#d8e0e2" stop-opacity=".9"/><stop offset=".25" stop-color="#4e5b62" stop-opacity=".82"/><stop offset=".52" stop-color="#11191e"/><stop offset=".78" stop-color="#84959b" stop-opacity=".66"/><stop offset="1" stop-color="#10181d"/></linearGradient>
+    <linearGradient id="line" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#8cf5ec" stop-opacity="0"/><stop offset=".5" stop-color="#8cf5ec"/><stop offset="1" stop-color="#8775ff" stop-opacity="0"/></linearGradient>
+    <filter id="blur"><feGaussianBlur stdDeviation="26"/></filter>
+    <filter id="soft"><feGaussianBlur stdDeviation="8"/></filter>
+    <pattern id="grid" width="48" height="48" patternUnits="userSpaceOnUse"><path d="M48 0H0V48" stroke="#9bb0b8" stroke-opacity=".08"/></pattern>
+  </defs>
+  <rect width="1600" height="1200" fill="url(#bg)"/>
+  <rect width="1600" height="1200" fill="url(#grid)"/>
+  <ellipse cx="840" cy="602" rx="260" ry="220" fill="#45e8e0" fill-opacity=".13" filter="url(#blur)"/>
+  <ellipse cx="840" cy="602" rx="112" ry="98" fill="url(#core)" filter="url(#soft)"/>
+  <g stroke="url(#line)" stroke-width="2" opacity=".68">
+    <ellipse cx="840" cy="602" rx="325" ry="142" transform="rotate(-18 840 602)"/>
+    <ellipse cx="840" cy="602" rx="325" ry="142" transform="rotate(56 840 602)"/>
+    <ellipse cx="840" cy="602" rx="420" ry="190" transform="rotate(28 840 602)" opacity=".4"/>
+  </g>
+  <g stroke="#89f7ee" stroke-opacity=".34" stroke-width="1">
+    <path d="M178 934C400 784 490 836 652 650S920 330 1374 256"/>
+    <path d="M232 198C494 232 556 402 710 452s310-8 626 190"/>
+    <path d="M84 614h402m630 0h402M840 118v250m0 470v254" stroke-dasharray="7 18"/>
+  </g>
+  <g fill="#b7fff8">
+    <circle cx="312" cy="836" r="4"/><circle cx="508" cy="762" r="3"/><circle cx="1298" cy="301" r="4"/><circle cx="1268" cy="742" r="3"/><circle cx="216" cy="214" r="2"/><circle cx="1430" cy="944" r="2"/>
+  </g>
+  <g transform="translate(840 602)">
+    <path d="M0-162 132-76 112 82 0 162-112 82-132-76Z" fill="#111a20" fill-opacity=".88" stroke="url(#metal)" stroke-width="7"/>
+    <path d="M0-112 86-58 72 61 0 112-72 61-86-58Z" fill="#0b171c" stroke="#8ef8f0" stroke-opacity=".46" stroke-width="2"/>
+    <circle r="62" fill="url(#core)"/>
+    <circle r="22" fill="#efffff" fill-opacity=".88"/>
+    <path d="M-160-16h48m224 0h48M-22-184v46m0 224v46" stroke="#bafdf8" stroke-width="4" stroke-linecap="round"/>
+  </g>
+  <g stroke="#ffffff" stroke-opacity=".16" fill="none"><circle cx="840" cy="602" r="247" stroke-dasharray="2 16"/><circle cx="840" cy="602" r="470" stroke-dasharray="1 28"/></g>
+</svg>

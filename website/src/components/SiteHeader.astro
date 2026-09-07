@@ -41,54 +41,33 @@ const docsBase = locale === 'es' ? `${base}es/` : base;
 const home = locale === 'es' ? homeEs : homeEn;
 ---
 
-<header class="sticky top-0 z-20 flex h-12 flex-wrap items-center justify-between gap-4 border-b border-line bg-paper px-6">
-	<a href={home} class="text-[0.8125rem] font-semibold tracking-tight text-ink no-underline hover:text-accent">
-		gxx
-	</a>
-	<nav class="flex flex-wrap items-center gap-5" aria-label={t.nav}>
-		<a
-			href={`${docsBase}install/`}
-			class="text-[0.6875rem] uppercase tracking-wider text-muted no-underline hover:text-ink"
-			aria-current={current === 'docs' ? 'page' : undefined}
-		>
-			{t.docs}
-		</a>
-		<a href={`${home}#install`} class="text-[0.6875rem] uppercase tracking-wider text-muted no-underline hover:text-ink">
-			{t.install}
-		</a>
-		<a href={`${docsBase}quick-start/`} class="text-[0.6875rem] uppercase tracking-wider text-muted no-underline hover:text-ink">
-			{t.quickStart}
-		</a>
-		<a href={`${docsBase}updates/`} class="text-[0.6875rem] uppercase tracking-wider text-muted no-underline hover:text-ink">
-			{t.updates}
-		</a>
-		<a
-			href="https://github.com/DeMaarco/gxx"
-			target="_blank"
-			rel="noopener noreferrer"
-			class="text-[0.6875rem] uppercase tracking-wider text-muted no-underline hover:text-ink"
-		>
-			{t.source}
-		</a>
-		<div class="flex items-center gap-1" role="group" aria-label={t.lang}>
-			<a
-				href={enHref}
-				class:list={['px-1.5 text-[0.6875rem] no-underline', locale === 'en' ? 'font-medium text-accent' : 'text-muted hover:text-ink']}
-				lang="en"
-				hreflang="en"
-				aria-current={locale === 'en' ? 'true' : undefined}
-			>
-				EN
-			</a>
-			<a
-				href={esHref}
-				class:list={['px-1.5 text-[0.6875rem] no-underline', locale === 'es' ? 'font-medium text-accent' : 'text-muted hover:text-ink']}
-				lang="es"
-				hreflang="es"
-				aria-current={locale === 'es' ? 'true' : undefined}
-			>
-				ES
-			</a>
-		</div>
-	</nav>
+<header class="site-header">
+	<div class="site-header__inner shell">
+		<a href={home} class="site-brand" aria-label="gxx home"><span class="brand-mark">gxx</span><span class="site-brand__tag">TERMINAL AGENT</span></a>
+		<button class="site-header__toggle" type="button" aria-expanded="false" aria-controls="site-navigation" data-nav-toggle><span></span><span></span><span></span><b class="sr-only">Open navigation</b></button>
+		<nav id="site-navigation" class="site-nav" aria-label={t.nav} data-site-nav>
+			<a href={`${home}#why`}>WHY GXX</a>
+			<a href={`${home}#workspace`}>WORKSPACE</a>
+			<a href={`${home}#benchmarks`}>BENCHMARKS</a>
+			<a href={`${home}#install`}>{t.install}</a>
+			<a href={`${docsBase}quick-start/`}>{t.docs}</a>
+			<a href="https://github.com/DeMaarco/gxx" target="_blank" rel="noopener noreferrer">GITHUB <span>↗</span></a>
+			<div class="lang-switch" role="group" aria-label={t.lang}><a href={enHref} class={locale === 'en' ? 'active' : ''} lang="en" hreflang="en" aria-current={locale === 'en' ? 'true' : undefined}>EN</a><a href={esHref} class={locale === 'es' ? 'active' : ''} lang="es" hreflang="es" aria-current={locale === 'es' ? 'true' : undefined}>ES</a></div>
+		</nav>
+	</div>
 </header>
+
+<script>
+	const toggle = document.querySelector('[data-nav-toggle]');
+	const nav = document.querySelector('[data-site-nav]');
+	if (toggle && nav) {
+		toggle.addEventListener('click', () => {
+			const open = nav.classList.toggle('is-open');
+			toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+		});
+		nav.querySelectorAll('a').forEach((link) => link.addEventListener('click', () => {
+			nav.classList.remove('is-open');
+			toggle.setAttribute('aria-expanded', 'false');
+		}));
+	}
+</script>

@@ -1,49 +1,25 @@
-# Starlight Starter Kit: Basics
+# gxx website
 
-[![Built with Starlight](https://astro.badg.es/v2/built-with-starlight/tiny.svg)](https://starlight.astro.build)
+The official gxx website is a static Astro site with a Three.js layer, documented 3D credits, responsive product storytelling, and an explicit empty state for unpublished benchmark data.
 
-```
-npm create astro@latest -- --template starlight
-```
+## Development
 
-> 🧑‍🚀 **Seasoned astronaut?** Delete this file. Have fun!
-
-## 🚀 Project Structure
-
-Inside of your Astro + Starlight project, you'll see the following folders and files:
-
-```
-.
-├── public/
-├── src/
-│   ├── assets/
-│   ├── content/
-│   │   └── docs/
-│   └── content.config.ts
-├── astro.config.mjs
-├── package.json
-└── tsconfig.json
+```sh
+npm install
+npm run dev
 ```
 
-Starlight looks for `.md` or `.mdx` files in the `src/content/docs/` directory. Each file is exposed as a route based on its file name.
+## Production build
 
-Images can be added to `src/assets/` and embedded in Markdown with a relative link.
+```sh
+npm run build
+npm run preview
+```
 
-Static assets, like favicons, can be placed in the `public/` directory.
+The site is configured for GitHub Pages at `/gxx/` in production. The WebGL scenes lazy-load the GLB asset and fall back to the original art system when WebGL is unavailable or reduced motion is enabled.
 
-## 🧞 Commands
+## Asset notes
 
-All commands are run from the root of the project, from a terminal:
-
-| Command                   | Action                                           |
-| :------------------------ | :----------------------------------------------- |
-| `npm install`             | Installs dependencies                            |
-| `npm run dev`             | Starts local dev server at `localhost:4321`      |
-| `npm run build`           | Build your production site to `./dist/`          |
-| `npm run preview`         | Preview your build locally, before deploying     |
-| `npm run astro ...`       | Run CLI commands like `astro add`, `astro check` |
-| `npm run astro -- --help` | Get help using the Astro CLI                     |
-
-## 👀 Want to learn more?
-
-Check out [Starlight’s docs](https://starlight.astro.build/), read [the Astro documentation](https://docs.astro.build), or jump into the [Astro Discord server](https://astro.build/chat).
+- `public/models/gxx-core-module.glb` is the selected Kenney Modular Space Kit 1.0 module. See [`public/credits/3d-credits.md`](public/credits/3d-credits.md).
+- `public/images/` contains original procedural SVG art for the hero, workspace, security, context, open source, and final CTA compositions.
+- The benchmark dashboard intentionally contains no fabricated measurements. It is ready for reproducible results when the repository publishes them.
