@@ -14,6 +14,7 @@ Better context retention, more complete investigation, and repeatable quality ch
 - Compaction keeps key constraints, acceptance criteria, verification results, and the next action in view.
 - Reviews distinguish static inspection from checks actually run, and call out pending tests or browser verification.
 - Developers can compare models and Eco levels with a 24-case evaluation suite, offline runs, and explicit budgets for live requests.
+- Local file URLs support paths containing tildes, including Windows short directory names.
 - Refreshed the product website.
 
 ## v0.0.25

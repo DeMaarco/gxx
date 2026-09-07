@@ -14,6 +14,7 @@ Mejor conservación del contexto, investigación más completa y comprobaciones 
 - La compactación mantiene presentes las restricciones, los criterios de aceptación, las verificaciones y la siguiente acción.
 - Las revisiones distinguen la inspección estática de las comprobaciones ejecutadas e indican los tests o la verificación en navegador pendientes.
 - Los desarrolladores pueden comparar modelos y niveles de Eco con una suite de 24 casos, ejecuciones offline y presupuestos explícitos para peticiones reales.
+- Las URLs de archivos locales admiten rutas con `~`, incluidos los nombres abreviados de directorios de Windows.
 - Web del producto renovada.
 
 ## v0.0.25

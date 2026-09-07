@@ -152,7 +152,11 @@ func TestRewriteLocalBrowserOpen(t *testing.T) {
 }
 
 func TestHasEscapingFileURL(t *testing.T) {
-	root := t.TempDir()
+	// Exercise a tilde even when the host does not use Windows 8.3 paths.
+	root := filepath.Join(t.TempDir(), "RUNNER~1")
+	if err := os.Mkdir(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(root, "index.html"), []byte("<html></html>\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -271,7 +275,12 @@ func TestRunCommandPreviewRewritesLocalBrowserScreenshot(t *testing.T) {
 	if len(approver.actions) != 1 {
 		t.Fatalf("preview actions = %#v result=%+v", approver.actions, result)
 	}
-	want := filepath.Join(root, "hero.png")
+	// The registry resolves symlinks and Windows short names at creation.
+	realRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(realRoot, "hero.png")
 	if !strings.Contains(approver.actions[0].Preview, want) && !strings.Contains(approver.actions[0].Preview, filepath.ToSlash(want)) {
 		t.Fatalf("preview = %q, want workspace path %s", approver.actions[0].Preview, want)
 	}

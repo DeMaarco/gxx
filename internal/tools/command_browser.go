@@ -199,6 +199,9 @@ func hasURLScheme(token string) bool {
 func fileURLTokens(command string) []string {
 	var tokens []string
 	for _, candidate := range []string{command, stripShellQuotes(command)} {
+		// Tildes belong to URL paths, including Windows 8.3 names. Escape
+		// them before shell tokenization; url.Parse restores the path below.
+		candidate = strings.ReplaceAll(candidate, "~", "%7E")
 		for _, token := range sensitivePathTokens(candidate) {
 			if strings.HasPrefix(strings.ToLower(token), "file:") {
 				tokens = append(tokens, strings.Trim(token, `"'`))
